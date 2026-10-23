@@ -1,0 +1,33 @@
+# Données, poids et sorties locaux : jamais de données patient dans Git
+/data/
+/models/
+/results/
+/runs/
+/artifacts/
+*.wav
+*.mp3
+*.flac
+*.m4a
+*.ogg
+*.opus
+*.mp4
+*.gguf
+*.safetensors
+*.pt
+*.pth
+*.ckpt
+*.onnx
+
+# Secrets et environnements locaux
+.env
+.env.*
+!.env.example
+.venv/
+venv/
+__pycache__/
+*.pyc
+node_modules/
+.DS_Store
+
+# État local des agents ; la mémoire Markdown .basic-memory/ reste versionnable
+.pi/
