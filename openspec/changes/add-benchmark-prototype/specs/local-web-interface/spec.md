@@ -1,0 +1,67 @@
+# Spec Delta
+
+## Purpose
+
+Permet de lancer l'outil de benchmark sur un poste Windows ou Linux et de le piloter entièrement depuis une page web locale sans CSS ni JavaScript.
+
+## ADDED Requirements
+
+### Requirement: Lancement par une commande unique
+Le programme SHALL se lancer par une seule commande uv documentée, identique sous Windows x64 et Linux x64, qui prépare au premier lancement l'environnement Python 3.12 du serveur et ses dépendances, sans droits administrateur ni modification du Python système.
+
+#### Scenario: Premier lancement
+- **WHEN** l'utilisateur exécute la commande de lancement sur un poste disposant de uv mais sans environnement préparé
+- **THEN** l'environnement du serveur est créé avec les versions verrouillées, puis le serveur démarre
+
+#### Scenario: uv absent
+- **WHEN** la documentation de lancement est suivie sur un poste sans uv
+- **THEN** elle indique la procédure officielle d'installation utilisateur de uv pour Windows et Linux
+
+### Requirement: Aucun moteur ni modèle installé au lancement
+Le lancement du serveur MUST NOT installer de moteur, télécharger de modèle ni accéder au réseau pour ces ressources.
+
+#### Scenario: Lancement sur une machine de développement
+- **WHEN** le serveur est lancé sur un poste où aucun moteur n'est installé
+- **THEN** l'interface est utilisable et indique les moteurs comme non installés, sans téléchargement
+
+### Requirement: Écoute locale uniquement
+Le serveur SHALL écouter uniquement sur l'adresse de bouclage locale, sur un port configurable, et afficher l'URL de l'interface au démarrage.
+
+#### Scenario: Démarrage
+- **WHEN** le serveur démarre
+- **THEN** il est accessible depuis la machine via l'URL affichée et n'écoute sur aucune interface réseau externe
+
+### Requirement: Interface HTML sans CSS ni JavaScript
+Toutes les pages SHALL être produites en HTML seul, sans feuille de style, attribut de style ni script ; les actions passent par des liens et formulaires HTML.
+
+#### Scenario: Inspection d'une page
+- **WHEN** une page quelconque de l'interface est chargée
+- **THEN** elle ne contient aucun élément `script`, `style`, attribut `style` ni lien vers une feuille de style
+
+### Requirement: Suivi des opérations longues par actualisation
+Les opérations longues (installation, téléchargement, exécution) SHALL se dérouler en arrière-plan, le serveur restant disponible ; leur état est consultable sur une page actualisée manuellement par un lien ou bouton.
+
+#### Scenario: Consultation pendant une exécution
+- **WHEN** une opération longue est en cours et l'utilisateur actualise la page d'état
+- **THEN** la page affiche l'état courant de l'opération sans bloquer les autres pages
+
+### Requirement: Une seule opération longue à la fois
+Le programme SHALL n'exécuter qu'une opération longue à la fois (installation, téléchargement ou exécution) afin de ne pas fausser les mesures ; une nouvelle demande MUST être refusée tant qu'une opération est en cours.
+
+#### Scenario: Téléchargement demandé pendant une exécution
+- **WHEN** l'utilisateur demande un téléchargement pendant une exécution
+- **THEN** la demande est refusée avec l'indication de l'opération en cours
+
+### Requirement: Échappement des contenus affichés
+Tout contenu provenant de fichiers, de modèles ou de saisies utilisateur MUST être échappé avant insertion dans le HTML.
+
+#### Scenario: Transcription contenant du balisage
+- **WHEN** une transcription contient des caractères tels que `<` ou `&`
+- **THEN** ils sont affichés comme texte et ne sont pas interprétés comme du HTML
+
+### Requirement: Dossiers de données prédéfinis
+Le programme SHALL utiliser des dossiers locaux prédéfinis sous `data/` pour les audios, les modèles, les environnements des moteurs et les résultats, créés au besoin et exclus du dépôt Git.
+
+#### Scenario: Premier démarrage sans dossiers
+- **WHEN** le serveur démarre et que les dossiers de données n'existent pas
+- **THEN** ils sont créés et leur emplacement est affiché dans l'interface
