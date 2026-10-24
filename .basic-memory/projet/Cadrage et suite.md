@@ -2,7 +2,7 @@
 title: Cadrage et suite
 type: note
 permalink: transcription-bench/projet/cadrage-et-suite
-status: exploratoire
+status: historique du besoin produit ; prototype cadré dans OpenSpec
 provenance: conversation initiale
 date: '2026-10-23'
 tags:
@@ -13,11 +13,9 @@ tags:
 # Cadrage et suite
 
 ## Provenance et état
+Historique de l'exploration du 2026-10-23, conservé pour comprendre le besoin produit. Depuis, le prototype a été cadré dans [[Décisions du prototype de benchmark]] et dans le change OpenSpec `add-benchmark-prototype`, consolidé le 2026-10-24 (repo `transcription-bench`, branche `main`, base `b3f126c`). Aucun essai réel ni code applicatif à cette étape.
 
-Synthèse de la conversation exploratoire du 2026-10-23. Aucun essai d’inférence, téléchargement de poids, entraînement ou prototype n’a été réalisé. Cette note transmet le contexte, pas un cahier des charges définitif.
-
-Le besoin initial était de comparer des modèles open weight de reconnaissance vocale française en local, en privilégiant la fidélité à la vitesse. Deux cas étaient envisagés : dictée éventuellement bruitée de 1 à 3 minutes, et entretien de 20 à 40 minutes avec au moins deux voix distinguées. La réflexion s’est recentrée sur une application de transcription de consultations médicales pour un porteur de projet nommé David, utilisable sur un maximum de machines.
-
+Le besoin initial comparait des modèles open weight français en local, en privilégiant la fidélité à la vitesse : dictée bruitée de 1 à 3 minutes et entretien de 20 à 40 minutes avec plusieurs voix. L'application de consultations médicales envisagée pour David est un objectif produit distinct du prototype de benchmark. Diarisation et streaming ne font pas partie de ce premier jalon.
 ## Observations
 - [requirement] La transcription française et la fidélité du texte priment sur la rapidité ; aucun seuil acceptable de latence ou d’erreur n’est fixé.
 - [requirement] Pour les consultations, distinguer au minimum deux intervenants, sans présumer leurs rôles ou connaître leur identité.
@@ -27,7 +25,7 @@ Le besoin initial était de comparer des modèles open weight de reconnaissance 
 - [proposal] Une interface de transcription provisoire suivie d’une passe finale a été évoquée, sans engagement de réalisation.
 - [proposal] Fine-tuning et location de serveur GPU sont des pistes ultérieures, pas des travaux démarrés.
 - [decision] Initialiser ici un dépôt GitHub privé benjaminbach-dev/transcription-bench et une mémoire locale versionnable.
-- [decision] Prochaine intention utilisateur : réaliser un petit prototype de benchmark portable ; son périmètre reste à convenir avant implémentation.
+- [decision] Intention initiale désormais cadrée : réaliser le prototype portable décrit dans le change OpenSpec `add-benchmark-prototype` ; la faisabilité réelle reste à valider sur PC avant implémentation complète.
 - [constraint] Ne pas assimiler la machine de développement à la configuration minimale du produit.
 
 ## Environnement observé, non cible produit

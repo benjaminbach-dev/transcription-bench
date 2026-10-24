@@ -8,10 +8,12 @@ Le projet doit choisir des modèles de transcription française utilisables en l
 
 - Création d'un programme Python local, lancé par uv, qui démarre un serveur web accessible uniquement depuis la machine.
 - Interface en HTML pur (ni CSS ni JavaScript) pour piloter installations, modèles, exécutions et résultats.
-- Trois moteurs d'inférence CPU dès le départ : faster-whisper, transcribe.cpp et Hugging Face Transformers, chacun dans un environnement isolé installé à la demande ; structure prévue pour en ajouter d'autres ; moteur factice pour le développement sans modèle.
+- Trois moteurs d'inférence CPU dès le départ : faster-whisper, transcribe.cpp et Hugging Face Transformers, chacun dans un environnement isolé installé à la demande ; structure prévue pour en ajouter d'autres ; moteur factice pour le développement sans modèle. Pour Transformers, seules les familles Whisper et Parakeet TDT sont retenues au premier jalon ; les autres familles sont des extensions futures.
 - Ajout libre d'un modèle par identifiant Hugging Face, vérifié avant téléchargement contre les familles prises en charge par le moteur choisi, puis téléchargé explicitement à une révision figée.
+- Inférence strictement hors ligne à partir des fichiers locaux, sans exécution de code distant ; pour Transformers, uniquement des poids au format safetensors.
 - Exécutions unitaires ou par lot séquentiel sur les audios déposés dans un dossier prédéfini, un seul traitement à la fois, exclusivement sur CPU.
-- Conservation sans écrasement de chaque transcription avec ses métadonnées (audio, modèle, moteur, réglages effectifs, machine) et ses mesures (temps de chargement et de transcription, RTF, pic de mémoire, temps CPU).
+- Conservation sans écrasement de chaque transcription avec ses métadonnées (audio, modèle, moteur, réglages effectifs, machine, versions) et ses mesures (durée totale de l'opération, temps de chargement et de transcription, RTF, pic de mémoire, temps CPU).
+- Un jalon 0 de faisabilité sur PC Linux puis Windows (résolution des verrous, import des moteurs, exécution CPU, court audio et mode hors ligne) précède l'implémentation complète.
 - Consultation des transcriptions et comparaison, pour un même audio, des résultats produits par différents modèles, moteurs et réglages.
 
 Hors périmètre : diarisation, correction par LLM, streaming, score WER automatique, accélération GPU, support macOS.
@@ -35,5 +37,6 @@ Aucune.
 - Nouveau code Python à la racine du dépôt, fichiers de dépendances verrouillées par environnement, documentation de lancement.
 - Dossiers de données locaux sous `data/` (audios, modèles, environnements des moteurs, résultats), ignorés par Git.
 - Dépendances : uv, Python 3.12 géré par uv ; PyAV, huggingface_hub, numpy, psutil ; faster-whisper, transcribe-cpp, transformers et torch CPU dans leurs environnements respectifs.
-- Accès réseau uniquement sur action explicite : installation d'un moteur, consultation ou téléchargement d'un modèle.
+- Accès réseau uniquement sur action explicite : installation d'un moteur, consultation ou téléchargement d'un modèle. Une fois les fichiers présents, l'inférence ne fait aucun appel réseau.
+- Les versions, roues et comportements de long-form cités par la recherche documentaire restent des hypothèses à vérifier au jalon 0 ; aucun essai n'a été exécuté à ce stade.
 - Le serveur de développement ne télécharge ni moteur ni modèle ; inférences et mesures uniquement sur les PC Linux et Windows des utilisateurs.

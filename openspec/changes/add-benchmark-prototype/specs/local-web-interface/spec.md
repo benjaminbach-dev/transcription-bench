@@ -31,6 +31,24 @@ Le serveur SHALL écouter uniquement sur l'adresse de bouclage locale, sur un po
 - **WHEN** le serveur démarre
 - **THEN** il est accessible depuis la machine via l'URL affichée et n'écoute sur aucune interface réseau externe
 
+### Requirement: Requêtes locales vérifiées
+Le serveur MUST refuser toute requête dont l'en-tête `Host` ne correspond pas à une adresse de bouclage locale avec le port d'écoute. Toute requête POST MUST porter un jeton anti-CSRF renouvelé à chaque démarrage du serveur et émis dans le formulaire ; si un en-tête `Origin` est présent, il MUST correspondre à l'origine locale, sinon la requête est refusée, y compris pour `Origin: null`.
+
+#### Scenario: Host étranger
+- **WHEN** une requête arrive avec un en-tête `Host` qui ne correspond pas à l'adresse locale et au port d'écoute
+- **THEN** le serveur la refuse sans exécuter d'action
+
+#### Scenario: POST sans jeton ou origine distante
+- **WHEN** un formulaire est soumis sans jeton anti-CSRF valide, ou avec un en-tête `Origin` distant
+- **THEN** le serveur refuse la demande et aucune action n'est lancée
+
+### Requirement: Chemins contrôlés
+Tout nom de fichier, dossier ou identifiant fourni par l'utilisateur MUST être résolu et vérifié comme restant sous le dossier de données prévu. Un chemin absolu, une remontée `..` ou un lien symbolique sortant MUST être refusé.
+
+#### Scenario: Tentative de traversée de dossier
+- **WHEN** une demande contient un nom de fichier ou un identifiant tentant de sortir du dossier autorisé
+- **THEN** la demande est refusée avec un message explicite et aucun fichier hors du dossier n'est lu ni écrit
+
 ### Requirement: Interface HTML sans CSS ni JavaScript
 Toutes les pages SHALL être produites en HTML seul, sans feuille de style, attribut de style ni script ; les actions passent par des liens et formulaires HTML.
 
@@ -46,11 +64,18 @@ Les opérations longues (installation, téléchargement, exécution) SHALL se d�
 - **THEN** la page affiche l'état courant de l'opération sans bloquer les autres pages
 
 ### Requirement: Une seule opération longue à la fois
-Le programme SHALL n'exécuter qu'une opération longue à la fois (installation, téléchargement ou exécution) afin de ne pas fausser les mesures ; une nouvelle demande MUST être refusée tant qu'une opération est en cours.
+Le programme SHALL n'exécuter qu'une opération longue à la fois (installation, téléchargement ou exécution) afin de ne pas fausser les mesures ; les vérifications distantes de modèles MUST aussi être refusées pendant une exécution ; une nouvelle demande MUST être refusée tant qu'une opération est en cours.
 
 #### Scenario: Téléchargement demandé pendant une exécution
 - **WHEN** l'utilisateur demande un téléchargement pendant une exécution
 - **THEN** la demande est refusée avec l'indication de l'opération en cours
+
+### Requirement: Arrêt du serveur
+L'arrêt normal du serveur MUST terminer le processus du moteur en cours d'exécution, conserver les résultats déjà écrits et marquer l'exécution interrompue.
+
+#### Scenario: Arrêt pendant une exécution
+- **WHEN** le serveur reçoit une demande d'arrêt normal alors qu'un moteur transcrit un audio
+- **THEN** le processus du moteur est terminé, l'exécution est marquée interrompue et les résultats déjà enregistrés restent consultables ; une installation ou un téléchargement interrompu laisse sa ressource non prête
 
 ### Requirement: Échappement des contenus affichés
 Tout contenu provenant de fichiers, de modèles ou de saisies utilisateur MUST être échappé avant insertion dans le HTML.

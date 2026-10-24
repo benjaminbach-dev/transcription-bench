@@ -2,7 +2,7 @@
 title: Modèles et sources
 type: note
 permalink: transcription-bench/recherche/modeles-et-sources
-status: exploratoire
+status: recherche documentaire historique ; candidats non évalués
 provenance: conversation initiale
 date: '2026-10-23'
 tags:
@@ -13,9 +13,9 @@ tags:
 # Modèles et sources
 
 ## Statut de la recherche
+Exploration web du 2026-10-23. Les fiches sont des déclarations d'auteurs ou mainteneurs, non des résultats reproduits. Depuis, trois moteurs ont été retenus : faster-whisper, transcribe.cpp et Transformers (voir [[Décisions du prototype de benchmark]]). Consolidation du 2026-10-24 : l'adaptateur Transformers du premier jalon est limité à Whisper et Parakeet TDT ; les autres candidats restent des pistes, pas des intégrations promises.
 
-Première exploration web durant la conversation du 2026-10-23. Les fiches sont des déclarations d’auteurs ou mainteneurs ; aucune reproduction locale. Vérifier existence des artefacts, version, licence, conversion, support CPU et compatibilité OS au moment de l’implémentation. Aucun moteur définitivement retenu.
-
+Vérifier artefacts, licences, versions, conversion et support CPU/OS lors du jalon préalable sur PC prévu par OpenSpec. Aucune installation ni inférence effectuée ici. Provenance : repo `transcription-bench`, branche `main`, base `b3f126c`.
 ## Candidats généralistes
 
 | Candidat | Rôle proposé | Point à vérifier |

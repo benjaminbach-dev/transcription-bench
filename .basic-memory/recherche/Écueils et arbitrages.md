@@ -48,3 +48,9 @@ Un fine-tuning adapte un modèle existant ; il ne crée pas automatiquement une 
 ## Relations
 - relates_to [[Cadrage et suite]]
 - informs [[Protocole à définir]]
+
+## Mise en perspective du prototype — 2026-10-24
+
+Provenance : repo `transcription-bench`, branche `main`, base `b3f126c`, consolidation approuvée du change `add-benchmark-prototype`. Les risques produit ci-dessus restent pertinents, mais le premier jalon exclut diarisation, streaming, correction LLM et score WER. La contrainte de continuité des voix ne s'applique donc pas à son découpage ASR. Le prototype ne revendique aucune validation clinique.
+
+Les mesures comparées restent sensibles au cache disque, à l'ordre du lot et au contexte de la machine. Le pic RSS est cumulatif et inclut potentiellement les poids mappés. Les specs précisent les limites des mesures ; aucun résultat de performance n'a été produit. Aucun audio ni transcription ne doit être envoyé à un service externe.
