@@ -67,3 +67,16 @@ Le jalon préalable doit aussi confirmer les fichiers de prétraitement/tokenize
 ### Métadonnées Parakeet contrôlées — 2026-10-24
 
 Source primaire : https://huggingface.co/api/models/nvidia/parakeet-tdt-0.6b-v3 et fichiers de ce dépôt, consultés en lecture seule lors de la relecture documentaire. Le dépôt est déclaré pour Transformers avec `model_type=parakeet_tdt` et contient notamment `model.safetensors`, `processor_config.json`, `generation_config.json`, des fichiers `tokenizer*.json`, ainsi que des variantes `.nemo` et `.gguf`. Ce constat valide la nécessité d'une liste blanche par famille et ne prouve pas le fonctionnement de l'inférence. Le jalon 0 doit confirmer fichiers minimaux, APIs et fonctionnement CPU hors ligne sur les deux OS.
+
+## Couche web — recherche documentaire du 2026-10-24
+
+Provenance : repo `transcription-bench`, branche `main`, base `09b366f` ; trois investigations scout et arbitrage advisor, sans installation ni exécution.
+
+- [decision] Flask/Jinja2/Waitress retenus : modèle synchrone adapté aux formulaires, templates proches de Twig, client de test intégré utilisable avec unittest, service Windows/Linux. Références : Flask 3.1.3 et Waitress 3.0.2, dépendances transitives à verrouiller par uv.
+- [tradeoff] Bottle apporte moins de conventions/outillage ; Django ajoute des briques inutilisées sans ORM ni comptes ; Starlette/FastAPI/Litestar ajoutent l'ASGI sans besoin identifié. Aucun de ces frameworks ne remplace la supervision des moteurs ni les contrôles locaux spécifiques.
+- [documentaire] Les docs Flask déconseillent le serveur de développement même pour un usage privé local. Waitress est proposé pour le déploiement ; l'application utilise seulement son API publique `serve`, sans accès aux objets internes de serveur ou de dispatcher. La source taggée 3.0.2 montre un retour après traitement de KeyboardInterrupt/SystemExit ; le nettoyage applicatif reste garanti par son propre finally, à éprouver sur les PC autorisés.
+- [limitation] Compatibilité combinée Python 3.12, Ctrl+C via uv sous Windows/Linux, SIGTERM Linux, double signal, port occupé et absence de moteur orphelin non testés ; sonde préalable ajoutée en OpenSpec 1.7. Aucune capacité n'est présentée comme validée par cette recherche.
+
+Sources officielles : https://flask.palletsprojects.com/en/stable/installation/ ; https://flask.palletsprojects.com/en/stable/templating/ ; https://flask.palletsprojects.com/en/stable/testing/ ; https://flask.palletsprojects.com/en/stable/deploying/ ; https://docs.pylonsproject.org/projects/waitress/en/stable/api.html ; https://github.com/Pylons/waitress/tree/v3.0.2/src/waitress .
+
+Précisions après relecture du diff web par advisor et principal : Flask ne limite pas le tampon préalable du serveur WSGI ; Waitress est donc borné séparément à 1 Mio et peut renvoyer ses erreurs propres avant l'application. L'arrêt de la supervision ne garantit pas une sortie globale bornée pendant `snapshot_download` : même un thread démon peut avoir lancé des threads internes attendus à la sortie de Python. L'état d'arrêt interdit les marqueurs prêts et le verrou d'instance reste détenu tant qu'un worker actif pourrait encore toucher les données. Ces limites sont inscrites au design, sans ajout d'une architecture de téléchargement en sous-processus.

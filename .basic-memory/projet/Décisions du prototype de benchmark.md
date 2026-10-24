@@ -61,3 +61,19 @@ La restriction Safetensors concerne uniquement Transformers : `model.bin` reste 
 ### État de la consolidation documentaire
 
 Relecture intégrale par le principal et advisor, puis vérification ciblée des corrections le 2026-10-24. `AGENTS.md`, les huit artefacts du change et les six notes ont été réconciliés. Validation OpenSpec stricte et contrôle des espaces Git réussis. Aucun code applicatif, moteur ni poids ajouté ; aucune validation réelle Linux/Windows effectuée. Prochaine action fonctionnelle : jalon 0 sur PC avec accord explicite ; la publication de ces documents n'autorise pas les téléchargements ou installations.
+
+## Révision de la couche web — 2026-10-24
+
+Provenance : dépôt `transcription-bench`, branche `main`, base `09b366f` ; décision utilisateur d'adopter un framework dès le départ, comparaison documentaire par trois scouts puis arbitrage avec advisor.
+
+- [decision] Flask 3.1.3 pour les conventions requête/réponse, formulaires, erreurs et client de test ; templates Jinja2 `.html` avec échappement automatique ; Waitress 3.0.2 pour servir sur Windows/Linux. Le routage stdlib et les f-strings HTML prévus initialement sont remplacés. Le choix et ses alternatives sont décrits dans OpenSpec D1/D2.
+- [decision] Routes minces, fabrique d'application sans effets de bord, services et supervision indépendants de Flask. Pas de base de données, d'asynchrone, d'extension de formulaires ni de nouveau lanceur de tests.
+- [decision] Lancement par la CLI et la seule API publique `waitress.serve`, sans débogueur, reloader ni workers multiples. Le serveur de développement Werkzeug n'est pas utilisé en fonctionnement normal. Le jeton anti-CSRF par démarrage reste sans cookie/session ; le contrôle Host conserve le port.
+- [constraint] L'arrêt du moteur reste sous la responsabilité de la supervision CLI, pas du framework. Le cycle de vie via uv et les signaux Windows/Linux doivent être vérifiés par une sonde factice préalable sur PC (tâche 1.7), avant implémentation complète.
+- [validation] Recherche documentaire uniquement ; aucune pile web installée, aucune sonde réelle exécutée. La révision n'autorise pas de nouvelles installations sur le serveur de développement. Le prototype reste non implémenté. Relecture finale advisor : publiable après corrections appliquées (signaux, verrous, attente du worker et limites de corps) ; `openspec validate --all --strict` et `git diff --check` réussis. Les validations réelles restent au jalon 0.
+
+### Précisions de la relecture web
+
+- [decision] Deux limites distinctes : 64 Kio pour les formulaires dans Flask, 1 Mio pour le corps tamponné par Waitress. Les refus HTTP de Waitress avant appel de l'application ne passent pas par les templates ; ils ne déclenchent aucune action. Les pages normales et d'erreur de l'application restent en HTML seul.
+- [decision] Dès le premier signal d'arrêt, les signaux suivants sont ignorés ; mutation et publication de marqueurs prêts sont interdites sous le verrou du créneau. L'attente du thread d'opération est bornée, pas la durée globale de sortie pendant un téléchargement : les E/S et threads internes peuvent encore retarder la fin du processus. Aucun thread Python n'est tué.
+- [constraint] Si le worker n'est pas terminé, le verrou d'instance reste détenu jusqu'à la fin réelle du processus et aucun marqueur prêt n'est publié. Un arrêt forcé reste brutal et relève de la récupération existante. La sonde PC doit confirmer ces comportements ; aucune validation réelle n'est revendiquée.

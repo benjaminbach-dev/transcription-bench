@@ -50,11 +50,30 @@ Tout nom de fichier, dossier ou identifiant fourni par l'utilisateur MUST être 
 - **THEN** la demande est refusée avec un message explicite et aucun fichier hors du dossier n'est lu ni écrit
 
 ### Requirement: Interface HTML sans CSS ni JavaScript
-Toutes les pages SHALL être produites en HTML seul, sans feuille de style, attribut de style ni script ; les actions passent par des liens et formulaires HTML.
+Toutes les pages produites par l'application SHALL être en HTML seul, sans feuille de style, attribut de style ni script ; les actions passent par des liens et formulaires HTML. Les erreurs du serveur HTTP avant appel de l'application ne sont pas des pages de l'interface.
 
 #### Scenario: Inspection d'une page
 - **WHEN** une page quelconque de l'interface est chargée
 - **THEN** elle ne contient aucun élément `script`, `style`, attribut `style` ni lien vers une feuille de style
+
+#### Scenario: Page d'erreur
+- **WHEN** une requête parvenue à l'application vise une route inexistante, utilise une méthode non autorisée ou provoque une erreur interne
+- **THEN** la réponse conserve le statut HTTP approprié et présente une page HTML sans CSS ni JavaScript, sans trace d'exception ni débogueur interactif
+
+### Requirement: Formulaires bornés
+Les POST transmis à l'application SHALL être des formulaires `application/x-www-form-urlencoded` d'au plus 64 Kio : dépassement refusé en 413, type non pris en charge en 415, sans action. Les requêtes rejetées par le serveur HTTP avant l'application (HTTP malformé, en-têtes ou corps au-delà de ses propres limites) reçoivent sa réponse d'erreur sans déclencher d'action.
+
+#### Scenario: Corps de formulaire trop volumineux
+- **WHEN** un POST local autorisé soumet un formulaire de plus de 64 Kio parvenu à l'application
+- **THEN** le serveur répond en 413 et aucune opération n'est lancée
+
+#### Scenario: Type de formulaire non pris en charge
+- **WHEN** un POST local autorisé soumet un corps avec un type autre que `application/x-www-form-urlencoded`
+- **THEN** le serveur répond en 415 et aucune opération n'est lancée
+
+#### Scenario: Rejet avant l'application
+- **WHEN** une requête dépasse la limite de corps du serveur HTTP ou ne peut pas être interprétée par celui-ci
+- **THEN** le serveur renvoie sa propre erreur HTTP sans appeler l'application ni lancer d'opération
 
 ### Requirement: Suivi des opérations longues par actualisation
 Les opérations longues (installation, téléchargement, exécution) SHALL se dérouler en arrière-plan, le serveur restant disponible ; leur état est consultable sur une page actualisée manuellement par un lien ou bouton.
@@ -74,7 +93,7 @@ Le programme SHALL n'exécuter qu'une opération longue à la fois (installation
 L'arrêt normal du serveur MUST terminer le processus du moteur en cours d'exécution, conserver les résultats déjà écrits et marquer l'exécution interrompue.
 
 #### Scenario: Arrêt pendant une exécution
-- **WHEN** le serveur reçoit une demande d'arrêt normal alors qu'un moteur transcrit un audio
+- **WHEN** le serveur reçoit Ctrl+C sous Windows ou Linux, ou SIGTERM sous Linux, alors qu'un moteur transcrit un audio
 - **THEN** le processus du moteur est terminé, l'exécution est marquée interrompue et les résultats déjà enregistrés restent consultables ; une installation ou un téléchargement interrompu laisse sa ressource non prête
 
 ### Requirement: Échappement des contenus affichés
