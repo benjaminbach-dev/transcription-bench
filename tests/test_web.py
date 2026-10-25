@@ -6,6 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from transcription_bench.operations import CreneauOperations
 from transcription_bench.paths import DOSSIERS_DATA
 from transcription_bench.web import (
     LIMITE_CORPS_APPLICATION,
@@ -28,13 +29,18 @@ class SocleWebTest(unittest.TestCase):
         temporaire = tempfile.TemporaryDirectory()
         self.addCleanup(temporaire.cleanup)
         self.dossier_data = Path(temporaire.name) / "data"
+        self.creneau = CreneauOperations()
         self.app = self.construire_app()
         self.client = self.app.test_client()
+
+    def services(self, **options) -> ServicesApplication:
+        """Services de test partageant le même créneau d'opération."""
+        return ServicesApplication(creneau=self.creneau, **options)
 
     def construire_app(self, services: ServicesApplication | None = None):
         return create_app(
             ConfigApplication(port=PORT_TEST, dossier_data=self.dossier_data),
-            services or ServicesApplication(),
+            services or self.services(),
         )
 
     def base_url(self, port: int = PORT_TEST) -> str:
@@ -106,7 +112,7 @@ class WebTest(SocleWebTest):
         dossier_piege = self.dossier_data / "<script>alert(1)</script>"
         app = create_app(
             ConfigApplication(port=PORT_TEST, dossier_data=dossier_piege),
-            ServicesApplication(),
+            self.services(),
         )
         reponse = app.test_client().get("/", base_url=self.base_url())
         corps = reponse.get_data(as_text=True)
@@ -122,7 +128,7 @@ class WebTest(SocleWebTest):
             appels.append(base)
             return {}
 
-        app = self.construire_app(ServicesApplication(preparer_dossiers=preparer))
+        app = self.construire_app(self.services(preparer_dossiers=preparer))
         reponse = self.post_autorise("/dossiers/verifier", app=app)
 
         self.assertEqual(reponse.status_code, 303)
@@ -188,7 +194,7 @@ class ProtectionsRequetesTest(SocleWebTest):
             self.appels.append(base)
             return {}
 
-        self.app = self.construire_app(ServicesApplication(preparer_dossiers=preparer))
+        self.app = self.construire_app(self.services(preparer_dossiers=preparer))
         self.client = self.app.test_client()
 
     def test_jetons_differents_a_chaque_demarrage(self) -> None:

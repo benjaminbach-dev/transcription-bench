@@ -15,6 +15,7 @@ from unittest import mock
 from flask import Flask
 
 from transcription_bench import cli, paths
+from transcription_bench.operations import CreneauOperations
 
 PAQUETS_MOTEURS = ("ctranslate2", "faster_whisper", "torch", "transcribe_cpp", "transformers")
 CONFIGURATION_ATTENDUE = {
@@ -108,6 +109,33 @@ class CliTest(unittest.TestCase):
                             self.assertIn("port invalide", erreur.getvalue())
                             self.assertEqual(os.listdir(dossier), [])
                     self.assertFalse(base.exists())
+
+    def test_cree_et_injecte_un_creneau_partage_sans_thread(self) -> None:
+        instances: list[CreneauOperations] = []
+
+        class CreneauEspion(CreneauOperations):
+            def __init__(self) -> None:
+                super().__init__()
+                instances.append(self)
+
+        with tempfile.TemporaryDirectory() as donnees:
+            base = Path(donnees) / "data-projet"
+            with mock.patch.object(paths, "DOSSIER_DATA", base):
+                with mock.patch.object(cli, "CreneauOperations", CreneauEspion):
+                    with mock.patch.object(cli, "serve") as servir:
+                        with contextlib.redirect_stdout(io.StringIO()):
+                            self.assertEqual(cli.main([]), 0)
+
+        self.assertEqual(len(instances), 1)
+        self.assertIsNone(instances[0].thread_travailleur)
+        instances[0].arreter()
+        application = servir.call_args.args[0]
+        page = application.test_client().get(
+            "/operation", base_url="http://127.0.0.1:8765"
+        )
+        self.assertEqual(page.status_code, 200)
+        self.assertIn("arrêt demandé", page.get_data(as_text=True))
+        self.assertNotIn("Set-Cookie", page.headers)
 
     def test_import_du_cli_ne_charge_aucun_paquet_moteur(self) -> None:
         code = (

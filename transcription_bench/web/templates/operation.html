@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block titre %}Opération — transcription-bench{% endblock %}
+{% block contenu %}
+<h2>Opération longue</h2>
+<p><a href="{{ url_for('operation') }}">Actualiser</a></p>
+<dl>
+<dt>État</dt>
+<dd>{{ libelles_etats[instantane.etat] }}</dd>
+{% if instantane.arrete %}
+<dt>Serveur</dt>
+<dd>arrêt demandé : aucune nouvelle opération ni mutation n'est acceptée</dd>
+{% endif %}
+{% if instantane.type_operation %}
+<dt>Type</dt>
+<dd>{{ libelles_types[instantane.type_operation] }}</dd>
+{% endif %}
+{% if instantane.cible %}
+<dt>Cible</dt>
+<dd>{{ instantane.cible }}</dd>
+{% endif %}
+{% if instantane.debut %}
+<dt>Début</dt>
+<dd>{{ instantane.debut }}</dd>
+{% endif %}
+{% if instantane.fin %}
+<dt>Fin</dt>
+<dd>{{ instantane.fin }}</dd>
+{% endif %}
+{% if instantane.erreur %}
+<dt>Dernière erreur</dt>
+<dd>{{ instantane.erreur }}</dd>
+{% endif %}
+</dl>
+<h3>Journal</h3>
+{% if instantane.journal %}
+<ul>
+{% for ligne in instantane.journal %}
+<li>{{ ligne }}</li>
+{% endfor %}
+</ul>
+{% else %}
+<p>Aucune opération enregistrée depuis le démarrage.</p>
+{% endif %}
+<p>Une seule opération longue (installation, téléchargement ou exécution) peut être en cours à la fois ; aucune autre opération du programme ne s'exécute en parallèle.</p>
+{% endblock %}

@@ -1,8 +1,10 @@
 """Point d'entrée en ligne de commande du prototype.
 
-La CLI prépare les dossiers de données, construit l'application Flask puis sert
-celle-ci avec la seule API publique `waitress.serve`, sur l'adresse de bouclage
-locale. Aucun moteur, poids ou accès réseau n'est mis en jeu au lancement.
+La CLI prépare les dossiers de données, crée l'unique créneau d'opération
+longue, construit l'application Flask puis sert celle-ci avec la seule API
+publique `waitress.serve`, sur l'adresse de bouclage locale. Aucun moteur, poids
+ou accès réseau n'est mis en jeu au lancement ; la supervision complète du
+créneau et de son thread relève de la tâche 6.6.
 """
 
 from __future__ import annotations
@@ -12,6 +14,7 @@ import argparse
 from waitress import serve
 
 from transcription_bench import paths
+from transcription_bench.operations import CreneauOperations
 from transcription_bench.web import ConfigApplication, ServicesApplication, create_app
 
 DESCRIPTION = (
@@ -57,9 +60,10 @@ def main(argv: list[str] | None = None) -> int:
     arguments = analyseur.parse_args(argv)
     dossier_data = paths.DOSSIER_DATA
     paths.preparer_dossiers_data(dossier_data)
+    creneau = CreneauOperations()
     application = create_app(
         ConfigApplication(port=arguments.port, dossier_data=dossier_data),
-        ServicesApplication(),
+        ServicesApplication(creneau=creneau),
     )
     print(
         f"Interface disponible : http://{ADRESSE_ECOUTE}:{arguments.port}",

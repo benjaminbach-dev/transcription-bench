@@ -138,3 +138,12 @@ Provenance : dépôt `transcription-bench`, branche `main`, base `6ec2145`.
 - [constraint] Les services futurs des lots 5 à 7 doivent utiliser ces fonctions ; aucune route actuelle ne reçoit de nom de fichier. Pas de garantie contre une mutation concurrente du disque (TOCTOU). Liens/jonctions Windows non qualifiés : vérifier que les tests ne sont pas tous ignorés sur PC.
 - [risk] À résoudre avant le stockage des modèles au lot 5 : `<org>__<nom>` du design est ambigu (`a__b/c` et `a/b__c` entrent en collision). Ne pas restreindre les identifiants valides pour contourner ce problème ; vérifier la stratégie de clé et réconcilier le design avant intégration. L'hypothèse d'un identifiant canonique retourné par `model_info` pour les noms seuls n'est pas validée.
 - [next] Lot 6 : n'accepter comme audio qu'un fichier ordinaire présent dans la liste autorisée, notamment pour éviter les noms de périphériques Windows. Aucun moteur ni poids installé.
+
+## Lot 3 — créneau unique (3.4), 2026-10-25
+
+Provenance : dépôt `transcription-bench`, branche `main`, base `6bb9a8d`.
+
+- [validation] Tâche 3.4 terminée, revue et corrections puis feu vert du même advisor. Créneau injecté dans les services, admission unique et thread démon indépendant de Flask, instantané immuable, état/journal et page `/operation` avec actualisation. Refus 409 si occupé, 503 après arrêt ; mutation et publication prêt protégées par le même verrou que le passage à l'arrêt. Échec de démarrage du thread testé et corrigé, sans blocage du créneau ni tentative de join sur un thread non démarré.
+- [validation] Soixante-dix-sept tests passent avec plusieurs graines, contrôles du verrou et OpenSpec strict réussis. Sonde locale `/operation` 200 et POST sans jeton 403 ; aucune qualification PC.
+- [constraint] Les routes doivent utiliser `executer_mutation` ; `publier_pret` est réservée au travailleur. Ces callbacks sous verrou restent courts et non réentrants ; le travail de fond est hors verrou. Pour 6.6 et le lot 6, l'état en mémoire du créneau ne remplace pas les marqueurs persistants ou `run.json` comme source de vérité : une course entre fin normale et arrêt peut le noter interrompu après une publication légitime antérieure à l'arrêt.
+- [status] Progression 6/39, 3.2 toujours ouverte pour validation PC. Pas de supervision complète (6.6) ni verrou d'instance/accueil complet (3.5) à ce stade.

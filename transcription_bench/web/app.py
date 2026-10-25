@@ -10,6 +10,11 @@ l'ordre Host, Origin, type de corps, taille puis jeton anti-CSRF ; il protège
 aussi les routes inexistantes. Le jeton est propre à chaque `create_app` et
 reste sans session ni cookie. Les pages restent volontairement limitées à ce qui
 est réellement implémenté : aucun succès n'est affiché pour une fonction absente.
+
+Les mutations passent par le créneau unique injecté : la vérification des
+dossiers s'exécute sous son verrou et est refusée (409) pendant une opération
+longue, comme après le passage à l'arrêt (503). La page `/operation` n'affiche
+que l'instantané du créneau, sans lancer de travail.
 """
 
 from __future__ import annotations
@@ -23,6 +28,13 @@ from pathlib import Path
 from flask import Flask, abort, redirect, render_template, request, url_for
 from werkzeug.exceptions import HTTPException
 
+from transcription_bench.operations import (
+    LIBELLES_ETATS,
+    LIBELLES_TYPES,
+    CreneauOccupe,
+    CreneauOperations,
+    ServiceArrete,
+)
 from transcription_bench.paths import DOSSIERS_DATA, preparer_dossiers_data
 
 LIMITE_CORPS_APPLICATION = 64 * 1024
@@ -38,9 +50,11 @@ MESSAGES_ERREUR = {
     403: "Requête refusée : adresse, origine ou jeton invalide.",
     404: "Page introuvable.",
     405: "Méthode non autorisée pour cette adresse.",
+    409: "Une opération longue est déjà en cours : la demande a été refusée.",
     413: "Formulaire trop volumineux : 64 Kio au maximum.",
     415: "Type de formulaire non pris en charge : formulaire HTML attendu.",
     500: "Erreur interne du serveur.",
+    503: "Le serveur est en cours d'arrêt : la demande a été refusée.",
 }
 
 MESSAGE_ERREUR_GENERIQUE = "La requête n'a pas pu être traitée."
@@ -60,8 +74,13 @@ class ConfigApplication:
 
 @dataclass(frozen=True)
 class ServicesApplication:
-    """Services appelés par les routes, injectés pour rester testables."""
+    """Services appelés par les routes, injectés pour rester testables.
 
+    `creneau` est l'unique créneau d'opération longue : la CLI le crée et
+    l'injecte. Il n'est ni global au module ni construit par `create_app`.
+    """
+
+    creneau: CreneauOperations
     preparer_dossiers: Callable[[Path], dict[str, Path]] = preparer_dossiers_data
 
 
@@ -148,9 +167,25 @@ def _enregistrer_routes(
             message=_message_action(),
         )
 
+    @application.get("/operation")
+    def operation() -> str:
+        return render_template(
+            "operation.html",
+            instantane=services.creneau.instantane(),
+            libelles_etats=LIBELLES_ETATS,
+            libelles_types=LIBELLES_TYPES,
+        )
+
     @application.post("/dossiers/verifier")
     def verifier_dossiers():
-        services.preparer_dossiers(config.dossier_data)
+        try:
+            services.creneau.executer_mutation(
+                lambda: services.preparer_dossiers(config.dossier_data)
+            )
+        except CreneauOccupe:
+            abort(409)
+        except ServiceArrete:
+            abort(503)
         return redirect(url_for("accueil", action="dossiers-verifies"), code=303)
 
 
