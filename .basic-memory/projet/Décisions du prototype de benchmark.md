@@ -166,3 +166,12 @@ Provenance : dépôt `transcription-bench`, branche `main`, base `1ec5c0d`.
 - [decision] Les réglages appartiennent aux familles, pas au moteur global. Aucun réglage réel n'est fixé avant les tâches 8.x : ni langue modifiable (français imposé par l'adaptateur lorsque possible), ni traduction, ni défaut de décodage supposé. Durée native strictement positive et finie, sans plafond arbitraire.
 - [next] En 4.2, conserver la commande du design `python engines/runner.py job.json` par un bootstrap limité à la racine calculée depuis `__file__`, jamais un chemin du job. Vérifier en 4.3 ce lancement exact sans dépendre de l'installation éditable du serveur. La distribution wheel n'est pas une cible : lancement depuis le clone par uv.
 - [status] Progression 8/39 ; 3.2 et validations PC restent ouvertes. Aucun moteur réel, poids ou inférence réelle.
+
+## Lot 4 — runner isolé (4.2), 2026-10-25
+
+Provenance : dépôt `transcription-bench`, branche `main`, base `4b7d36c`.
+
+- [validation] Tâche 4.2 terminée et relue après corrections : runner autonome du serveur, job JSON, adaptateur issu du registre, chargement unique, audios séquentiels, fenêtres 30 s, texte/segments décalés, mesures secondes/octets et pic cumulatif Linux/Windows. Protocole stdout préfixé partagé sans dépendance serveur ; lignes parasites journalisées sans interrompre les événements. Cent trente-neuf tests passent avec deux graines ; vérification du verrou et OpenSpec strict réussies.
+- [decision] Fichiers bruts float32 little-endian 16 kHz mono : taille multiple de quatre exigée, durée nulle en erreur. Métadonnées effectives, langue et threads appliqués doivent rester constants entre fenêtres d'un audio, sinon erreur explicite. Méthode `fenetres-fixes` consignée. Une erreur audio ne bloque pas les suivants.
+- [constraint] Lancement direct `python engines/runner.py job.json` avec bootstrap limité à la racine issue de `__file__` ; aucune importation de module indiqué par un job. Chaque futur environnement moteur doit fournir numpy et, sous Windows, psutil 7.2.2 (`peak_wset`). Branche Windows testée par doublure seulement. Aucun adaptateur réel ni durée native activée avant validation PC/8.x.
+- [status] Progression 9/39. 4.3 doit encore rendre le factice exécutable et marquer textes/mesures comme simulés ; 3.2 et validations PC restent ouvertes.
