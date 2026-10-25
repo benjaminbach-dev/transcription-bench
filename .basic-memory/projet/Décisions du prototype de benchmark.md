@@ -195,3 +195,26 @@ Provenance : dépôt `transcription-bench`, branche `main`, base `1ccdca1`.
 - [constraint] En 6.6, passer d'abord le créneau à l'arrêt sans attendre, puis collecter l'installation : actuellement le nettoyage minimal arrête l'installation avant le créneau, et une installation réellement complète peut encore publier juste avant ce passage. L'arrêt minimal vise uv, pas tous ses éventuels enfants ; la supervision complète et son comportement Windows restent dus en 1.7/6.6. Aucun succès PC revendiqué.
 - [decision] Continuité advisor : conserver la même session par lot ; si le fournisseur expire sa session, reconstitution du contexte autorisée sans nouvel accord, en le signalant. Ce repli ne dispense pas de transmettre les décisions et corrections précédentes.
 - [status] Progression 11/39 : lot 4 complet. Le factice est testé de bout en bout au niveau runner ; parcours web d'exécution et stockage des résultats toujours au lot 6. 3.2, validations PC, récupération 6.5 et supervision 6.6 restent ouvertes. Avant le stockage des modèles au lot 5, résoudre et documenter la collision de la clé `<org>__<nom>` déjà relevée.
+
+## Point de reprise après le lot 4 — 2026-10-25
+
+Provenance : `transcription-bench`, `main`, HEAD publié `90a7c34` (11/39 tâches, 177 tests passants).
+
+- [continuity] Lire [[Reprise du développement après le lot 4]] pour la synthèse de reprise : méthode worker/advisor/corrections/publication, reconstitution autorisée des sessions expirées, état du code, limites et suite possible. Cette synthèse n'autorise pas le lancement d'un nouveau lot à elle seule.
+- [status] Lot 5 non commencé. Pour reprendre, relire les instructions et artefacts OpenSpec concernés ; les décisions récentes priment sur les états historiques de cette note. Les notes de reprise ajoutées ici restent documentaires et ne sont pas encore committées.
+
+## Lot 5 commencé — 5.1 en attente d'arbitrage, 2026-10-25
+
+Provenance : `transcription-bench`, `main`, base publiée `90a7c34` ; code local non committé. Cette section remplace l'état précédent « lot 5 non commencé ».
+
+- [status] Voir [[Reprise du lot 5 — compatibilité en attente d’arbitrage]] : règles de compatibilité implémentées dans deux nouveaux fichiers, corrections de revue validées techniquement ; **220 tests passent**. 5.1 reste ouverte et non publiée, progression officielle 11/39 ; 5.2 non commencée.
+- [pending] Avant de clore/publier 5.1, l'utilisateur doit trancher deux restrictions de profil non encore approuvées : exiger `tokenizer.json` pour Transformers même si vocab/merges suffisent à la bibliothèque, et exiger `preprocessor_config.json` pour tous les dépôts faster-whisper (ce qui exclut certains petits modèles). Ne pas adopter ces exclusions silencieusement.
+- [constraint] Toutes les familles réelles restent non qualifiées. Aucun moteur, poids ni inférence réelle ; consultations documentaires publiques seulement, tests hors ligne. Les notes de mémoire et les deux nouveaux fichiers de code/tests restent des modifications locales à préserver jusqu'à la publication autorisée après arbitrage.
+
+## Lot 5 — arbitrage clos et tâche 5.1 terminée, 2026-10-25
+
+Provenance : `transcription-bench`, `main`, base `90a7c34` ; clôture relue et publication préparée. Cette décision remplace l'attente d'arbitrage précédente.
+
+- [decision] Profil simplifié accepté : Transformers exige `tokenizer.json` + `tokenizer_config.json` ; faster-whisper exige `preprocessor_config.json` pour tout modèle CTranslate2 Whisper, sans mode alternatif ni valeurs de prétraitement par défaut. Certains dépôts utilisables par les bibliothèques sont donc volontairement exclus. Motif : simplicité et réduction des variantes ; réexamen au jalon PC, pas de promesse générale de sécurité.
+- [validation] Spec des modèles, design D10 et tâche 5.1 alignés ; revue finale advisor favorable. **221 tests passent**, 44 ciblés, deux graines hors ligne ; verrou et OpenSpec strict valides. 5.1 cochée : **12/39**. Toutes les familles réelles restent non qualifiées, aucune installation moteur, aucun poids ni inférence réelle.
+- [continuity] [[Reprise du lot 5 — compatibilité en attente d’arbitrage]] a été réécrite pour refléter la clôture, malgré son titre historique. Advisor du lot à reprendre : `c3afe5e6-b0f8-44e` (session précédente expirée, contexte reconstitué). Prochaine tâche 5.2, non commencée.

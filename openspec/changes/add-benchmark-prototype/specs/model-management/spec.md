@@ -54,6 +54,17 @@ Les fichiers téléchargés et chargés MUST appartenir à une liste blanche com
 - **WHEN** un dépôt ne déclare pas de `auto_map` mais ne fournit pas la liste de fichiers attendue pour sa famille
 - **THEN** l'ajout est refusé : l'absence de `auto_map` n'est pas traitée comme une preuve de compatibilité
 
+### Requirement: Profil strict de fichiers du prototype
+Pour le prototype, Transformers MUST exiger `tokenizer.json` et `tokenizer_config.json` par famille ; un tokenizer fourni seulement en `vocab.json` et `merges.txt` MUST être refusé, même si la bibliothèque sait le lire. faster-whisper MUST exiger `preprocessor_config.json` pour tout point de contrôle CTranslate2 Whisper, sans repli sur les valeurs par défaut, y compris pour `Systran/faster-whisper-small`. Ces choix de simplicité réduisent les variantes et restent à confirmer sur PC.
+
+#### Scenario: Tokenizer Transformers réduit à un vocabulaire et des fusions
+- **WHEN** un dépôt Transformers fournit `vocab.json` et `merges.txt` mais pas `tokenizer.json`
+- **THEN** l'ajout est refusé en indiquant `tokenizer.json` manquant, sans accepter ce tokenizer bien que la bibliothèque sache le lire
+
+#### Scenario: Préprocesseur manquant pour un petit modèle CTranslate2
+- **WHEN** un dépôt CTranslate2 Whisper sans `preprocessor_config.json`, par exemple `Systran/faster-whisper-small`, est proposé à faster-whisper
+- **THEN** l'ajout est refusé en indiquant `preprocessor_config.json` manquant, sans appliquer les valeurs par défaut de la bibliothèque
+
 ### Requirement: Aucun code distant ni poids pickle
 Le programme MUST NOT exécuter de code fourni par un dépôt de modèle et MUST refuser un dépôt qui l'exige. Pour Transformers, seuls les poids au format safetensors sont acceptés ; les variantes `.bin`, `.pt` ou `.pth` MUST NOT être téléchargées ni chargées pour ce moteur.
 
