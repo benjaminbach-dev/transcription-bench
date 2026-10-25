@@ -13,6 +13,7 @@
 {% endfor %}
 </ul>
 <form method="post" action="{{ url_for('verifier_dossiers') }}">
+<input type="hidden" name="jeton_csrf" value="{{ jeton_csrf }}">
 <p><button type="submit">Vérifier les dossiers de données</button></p>
 </form>
 {% endblock %}

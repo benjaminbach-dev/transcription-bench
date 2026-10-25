@@ -73,7 +73,11 @@ class CliTest(unittest.TestCase):
             )
 
     def test_port_par_defaut_sans_ouvrir_le_port(self) -> None:
-        self.assertEqual(cli.construire_analyseur().parse_args([]).port, 8765)
+        analyseur = cli.construire_analyseur()
+
+        self.assertEqual(analyseur.parse_args([]).port, 8765)
+        self.assertEqual(analyseur.parse_args(["--port", "1024"]).port, 1024)
+        self.assertEqual(analyseur.parse_args(["--port", "65535"]).port, 65535)
         with tempfile.TemporaryDirectory() as donnees:
             base = Path(donnees) / "data-projet"
             with mock.patch.object(paths, "DOSSIER_DATA", base):
@@ -87,7 +91,7 @@ class CliTest(unittest.TestCase):
             self.assertEqual(servir.call_args.kwargs["port"], 8765)
 
     def test_refuse_un_port_invalide_au_parsing_sans_effet(self) -> None:
-        for valeur in ("0", "65536", "-1", "abc", ""):
+        for valeur in ("0", "80", "1023", "65536", "-1", "abc", ""):
             with self.subTest(valeur=valeur):
                 with tempfile.TemporaryDirectory() as dossier, tempfile.TemporaryDirectory() as donnees:
                     base = Path(donnees) / "data-projet"

@@ -120,3 +120,12 @@ Provenance : dépôt `transcription-bench`, branche `main`, base `8f8b366`.
 - [decision] `POST /dossiers/verifier` réutilise provisoirement le service idempotent de préparation des dossiers pour un parcours POST → 303 → GET réel. Il ne prétend pas implémenter les opérations futures. Il devra être protégé par le jeton en 3.2.
 - [validation] Sonde HTTP locale sur serveur, port 8799 : accueil 200, action 303, erreur 404 ; processus arrêté ensuite. Contrôle de fonctionnement uniquement, ne remplace pas la sonde 1.7 sur les PC.
 - [status] Progression 4/39. Host/Origin/jeton et limite applicative (3.2), chemins (3.3), créneau (3.4), verrou/accueil complet (3.5) et supervision complète (6.6) restent à réaliser. Aucun moteur ni poids.
+
+## Lot 3 — protections serveur (3.2 partielle), 2026-10-25
+
+Provenance : dépôt `transcription-bench`, branche `main`, base `baa424b`.
+
+- [validation] Partie serveur 3.2 implémentée et relue favorablement après corrections : hook global Host → Origin → type → taille → jeton, y compris routes inconnues ; formulaires urlencoded 64 Kio, jeton aléatoire par démarrage sans session/cookie, refus sans action. Trente-quatre tests passent avec plusieurs graines ; sonde locale Waitress factice vérifie refus avant appel de l'application.
+- [decision] Ports CLI limités à 1024–65535 : le port 80 est exclu, car navigateur/Werkzeug peuvent retirer son suffixe, incompatible avec le contrôle Host exact incluant le port. Port par défaut inchangé (8765).
+- [observation] Waitress 3.0.2 rejette dès Content-Length = 1 048 576 (comparaison >=), et au-delà. La sonde envoie les en-têtes seuls pour éviter un reset de connexion sur Windows ; le petit corps de contrôle atteint l'application.
+- [status] Case 3.2 laissée ouverte, progression 4/39 : sonde PC 1.7 sur Linux puis Windows toujours due. Les tests du serveur de développement ne la remplacent pas. Aucun moteur, poids ou inférence réelle.

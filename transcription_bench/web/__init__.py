@@ -8,9 +8,17 @@ templates `.html`.
 from __future__ import annotations
 
 from transcription_bench.web.app import (
+    LIMITE_CORPS_APPLICATION,
+    NOM_CHAMP_JETON,
     ConfigApplication,
     ServicesApplication,
     create_app,
 )
 
-__all__ = ["ConfigApplication", "ServicesApplication", "create_app"]
+__all__ = [
+    "LIMITE_CORPS_APPLICATION",
+    "NOM_CHAMP_JETON",
+    "ConfigApplication",
+    "ServicesApplication",
+    "create_app",
+]
