@@ -103,3 +103,11 @@ Provenance : dépôt `transcription-bench`, branche `main`, base `3b340a2`.
 - [validation] Tâche 2.2 terminée et revue favorable sans correction. `pyproject.toml`, paquet racine `transcription_bench`, CLI minimale, `.python-version` et `uv.lock` créés. `uv run --locked transcription-bench --help`, vérification du verrou, trois tests unittest, validation OpenSpec stricte et contrôle Git réussis. Sans argument, la CLI refuse explicitement le démarrage : serveur non encore implémenté.
 - [validation] Dépendances serveur installées uniquement dans `.venv` : Flask 3.1.3, Waitress 3.0.2, Jinja2 3.1.6, Werkzeug 3.1.9, av 19.0.2, numpy 2.5.4, huggingface_hub 2.3.0, psutil 7.2.2. Verrou universel PyPI ; aucun paquet moteur installé. Cela ne valide ni les PC ni la sonde web 1.7.
 - [status] Progression 2/39. Prochaine tâche : 2.3, création des dossiers de données au démarrage. Aucun serveur web ni moteur réel à ce stade.
+
+## Lot 2 terminé — tâche 2.3, 2026-10-25
+
+Provenance : dépôt `transcription-bench`, branche `main`, base `df9f776`.
+
+- [decision] `data/` est ancré à la racine du projet, pas au répertoire courant : `uv run` peut être lancé depuis un sous-dossier, alors que la règle Git `/data/` ne couvre que la racine. Cela évite la dispersion des modèles/résultats et leur suivi Git accidentel. Initialisation idempotente des dossiers audio/models/engines/results, sans écraser leur contenu.
+- [validation] Tâche 2.3 terminée ; advisor du lot repris pour revue, correction de l'ancrage appliquée par worker puis relue favorablement dans la même session. Sept tests unittest réussis, aide CLI sans effet, verrou et OpenSpec strict validés, contrôle des espaces Git et exclusion des quatre dossiers vérifiés. Tests limités aux dossiers temporaires.
+- [status] Progression 3/39 : lot 2 complet. Prochain lot : serveur web et créneau d'opération (3.x), avec nouveau contexte advisor au changement de lot. La CLI prépare les dossiers mais refuse encore explicitement de démarrer un serveur non implémenté. Aucune validation PC, installation moteur, poids ou inférence réelle.
