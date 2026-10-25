@@ -55,6 +55,16 @@ sous Linux (Kio vers octets) et `psutil.Process().memory_info().peak_wset` sous
 Windows (octets, psutil 7.2.2). Si ce champ manque, la mesure est absente
 (`None`) : aucun repli inventé.
 
+Moteur factice (tâche 4.3) : seule une déclaration portant `factice=True`, fixée
+par le code du dépôt et jamais par le job, est exécutée malgré des familles non
+qualifiées. Ses mesures ne sont pas des mesures du runner : elles sont
+remplacées par des valeurs simulées déterministes (`DUREE_CHARGEMENT_SIMULEE_S`,
+`RTF_SIMULE`, `FACTEUR_TEMPS_CPU_SIMULE`, `PIC_MEMOIRE_SIMULE_OCTETS`), sans
+aucune prétention de représentativité d'un PC. Ces constantes ne servent qu'à
+exercer le protocole et la durée décodée de l'audio, elle, reste réelle. Chaque
+événement porte `factice` et `mesures_simulees` à `True` ; un moteur réel émet
+ces deux champs à `False`.
+
 Codes de sortie : 0 exécution terminée (même avec des audios en erreur),
 2 job invalide, 3 moteur refusé ou chargement du modèle impossible.
 """
@@ -80,7 +90,7 @@ if __name__ == "__main__" and not __package__:
     if str(_RACINE_PROJET) not in sys.path:
         sys.path.insert(0, str(_RACINE_PROJET))
 
-from engines.declarations import Famille
+from engines.declarations import DeclarationAdaptateur, Famille
 from engines.protocole import (
     TYPE_AUDIO,
     TYPE_AUDIO_ERREUR,
@@ -108,6 +118,14 @@ CHAMPS_RESULTAT_FACULTATIFS = (
     "langue_imposee",
     "threads_appliques",
 )
+
+# Mesures simulées du moteur factice : valeurs arbitraires, constantes et
+# cohérentes entre elles (rtf = transcription / durée réelle). Elles n'ont
+# aucune valeur de mesure PC et ne sont jamais présentées comme telles.
+DUREE_CHARGEMENT_SIMULEE_S = 1.2
+RTF_SIMULE = 0.5
+FACTEUR_TEMPS_CPU_SIMULE = 1.5
+PIC_MEMOIRE_SIMULE_OCTETS = 314572800
 
 
 class ErreurJob(ValueError):
@@ -187,7 +205,9 @@ def executer(
     d'audio est émis en `audio_erreur` et le lot continue.
     """
     registre = creer_registre_fourni() if registre is None else registre
-    adaptateur = _charger_adaptateur(job, registre)
+    adaptateur, declaration = _charger_adaptateur(job, registre)
+    factice = declaration.factice
+    provenance = {"factice": factice, "mesures_simulees": factice}
     reglages = MappingProxyType(job.reglages)
 
     debut_chargement = time.perf_counter()
@@ -200,11 +220,17 @@ def executer(
             f"chargement du modèle impossible : {exception}"
         ) from exception
     duree_chargement = time.perf_counter() - debut_chargement
+    pic_chargement = pic_memoire()
+    if factice:
+        # Les compteurs réels ne sont jamais émis pour le factice.
+        duree_chargement = DUREE_CHARGEMENT_SIMULEE_S
+        pic_chargement = PIC_MEMOIRE_SIMULE_OCTETS
     emettre(
         {
             "type": TYPE_CHARGEMENT,
             "duree_s": duree_chargement,
-            "pic_memoire_octets": pic_memoire(),
+            "pic_memoire_octets": pic_chargement,
+            **provenance,
         }
     )
 
@@ -213,7 +239,13 @@ def executer(
     for index, audio in enumerate(job.audios):
         try:
             evenement = _traiter_audio(
-                index, audio, adaptateur, moteur, job.threads_demandes, reglages
+                index,
+                audio,
+                adaptateur,
+                moteur,
+                job.threads_demandes,
+                reglages,
+                factice,
             )
         except Exception as exception:  # un audio en erreur ne bloque pas le lot
             audios_erreur += 1
@@ -223,6 +255,7 @@ def executer(
                     "index": index,
                     "nom": audio.nom,
                     "erreur": str(exception) or type(exception).__name__,
+                    **provenance,
                 }
             )
             continue
@@ -233,9 +266,12 @@ def executer(
         {
             "type": TYPE_FIN,
             "duree_chargement_s": duree_chargement,
-            "pic_memoire_octets": pic_memoire(),
+            "pic_memoire_octets": (
+                PIC_MEMOIRE_SIMULE_OCTETS if factice else pic_memoire()
+            ),
             "audios_ok": audios_ok,
             "audios_erreur": audios_erreur,
+            **provenance,
         }
     )
 
@@ -296,7 +332,9 @@ def _configurer_stdout() -> None:
         pass
 
 
-def _charger_adaptateur(job: Job, registre: RegistreMoteurs) -> ModuleType:
+def _charger_adaptateur(
+    job: Job, registre: RegistreMoteurs
+) -> tuple[ModuleType, DeclarationAdaptateur]:
     """Résout la déclaration, vérifie la qualification, puis importe l'adaptateur."""
     try:
         declaration = registre.obtenir(job.moteur)
@@ -314,7 +352,7 @@ def _charger_adaptateur(job: Job, registre: RegistreMoteurs) -> ModuleType:
         raise ErreurMoteur(
             f"famille {job.famille!r} non déclarée pour le moteur {job.moteur!r}"
         )
-    _verifier_famille(job, famille)
+    _verifier_famille(job, famille, declaration.factice)
     try:
         adaptateur = registre.charger_adaptateur(job.moteur)
     except AdaptateurIndisponible as exception:
@@ -324,17 +362,20 @@ def _charger_adaptateur(job: Job, registre: RegistreMoteurs) -> ModuleType:
             raise ErreurMoteur(
                 f"adaptateur incomplet pour {job.moteur!r} : {nom}() manquant"
             )
-    return adaptateur
+    return adaptateur, declaration
 
 
-def _verifier_famille(job: Job, famille: Famille) -> None:
+def _verifier_famille(job: Job, famille: Famille, factice: bool) -> None:
     """Refuse une famille non qualifiée et un mécanisme natif non pris en charge.
 
-    Aucune déclaration fournie n'est qualifiée : les moteurs réels sont donc
-    refusés tant que le jalon PC et les tâches 8.x ne l'ont pas prouvé. Ce
-    contrôle ne remplace jamais une validation sur PC.
+    Aucune famille fournie n'est qualifiée sur PC : les trois moteurs réels sont
+    donc refusés tant que le jalon PC et les tâches 8.x ne l'ont pas prouvé.
+    Seul le moteur factice, marqué `factice=True` dans sa déclaration, est
+    exécuté sans qualification PC : il ne charge aucun modèle et n'effectue
+    aucune inférence, ce qui n'est pas une qualification PC. Ce contrôle ne
+    remplace jamais une validation sur un PC de test.
     """
-    if not famille.qualifiee:
+    if not famille.qualifiee and not factice:
         raise ErreurMoteur(
             f"famille {job.famille!r} du moteur {job.moteur!r} non qualifiée "
             "sur PC (jalon 0 et tâches 8.x) : exécution refusée"
@@ -353,6 +394,7 @@ def _traiter_audio(
     moteur: Any,
     threads_demandes: int,
     reglages: Mapping[str, Any],
+    factice: bool,
 ) -> dict[str, Any]:
     """Transcrit un audio en fenêtres fixes et renvoie son événement `audio`."""
     # Un fichier brut float32 doit contenir un nombre entier d'échantillons :
@@ -402,8 +444,16 @@ def _traiter_audio(
                 )
             nb_fenetres += 1
             del fenetre
-        duree_transcription = time.perf_counter() - debut
-        temps_cpu = time.process_time() - cpu_debut
+        if factice:
+            # Mesures simulées déterministes : les compteurs réels mesurés
+            # ci-dessus ne sont ni conservés ni émis.
+            duree_transcription = duree_audio * RTF_SIMULE
+            temps_cpu = duree_transcription * FACTEUR_TEMPS_CPU_SIMULE
+            pic_audio = PIC_MEMOIRE_SIMULE_OCTETS
+        else:
+            duree_transcription = time.perf_counter() - debut
+            temps_cpu = time.process_time() - cpu_debut
+            pic_audio = pic_memoire()
         return {
             "type": TYPE_AUDIO,
             "index": index,
@@ -417,11 +467,13 @@ def _traiter_audio(
             "fenetre_s": float(FENETRE_SECONDES),
             "decoupage": "fenetres-fixes",
             "nb_fenetres": nb_fenetres,
-            "pic_memoire_octets": pic_memoire(),
+            "pic_memoire_octets": pic_audio,
             "reglages_effectifs": reglages_effectifs,
             "langue_imposee": langue_imposee,
             "threads_demandes": threads_demandes,
             "threads_appliques": threads_appliques,
+            "factice": factice,
+            "mesures_simulees": factice,
         }
     finally:
         # Libère le signal avant l'audio suivant (hygiène mémoire Windows).

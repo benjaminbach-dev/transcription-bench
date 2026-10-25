@@ -7,13 +7,21 @@ leurs réglages. Elle ne fait que des imports de la bibliothèque standard et ne
 charge aucun paquet moteur : c'est le serveur qui l'importe, pas le processus du
 moteur.
 
-Aucune capacité n'est qualifiée ici. Les familles restent `qualifiee=False` et
-aucune durée native n'est annoncée tant que le jalon 0 sur PC n'a pas prouvé le
-mécanisme correspondant ; sans durée native déclarée, le runner appliquera les
-fenêtres fixes de 30 s. Aucun réglage réel n'est fourni : les réglages
-réellement exposés par famille seront fixés par le jalon PC et les tâches 8.x.
-Les fichiers `requirements/*.txt` sont déclarés par leur chemin conventionnel
-mais ne sont pas créés ici : les verrous ne sont pas encore validés.
+Aucune capacité réelle n'est qualifiée ici. Les familles restent
+`qualifiee=False` et aucune durée native n'est annoncée tant que le jalon 0 sur
+PC n'a pas prouvé le mécanisme correspondant ; sans durée native déclarée, le
+runner appliquera les fenêtres fixes de 30 s. Aucun réglage réel n'est fourni :
+les réglages réellement exposés par famille seront fixés par le jalon PC et les
+tâches 8.x. Les fichiers `requirements/*.txt` sont déclarés par leur chemin
+conventionnel mais ne sont pas créés ici : les verrous ne sont pas encore
+validés.
+
+Le moteur factice est le seul dont la déclaration porte `factice=True` (tâche
+4.3). Ce drapeau, fixé par le code du dépôt et jamais par un job, autorise le
+runner à exécuter ses familles non qualifiées et à marquer ses textes et
+mesures comme simulés. Il ne vaut pas qualification PC : aucune inférence
+réelle n'est effectuée et les trois moteurs réels restent refusés tant que le
+jalon PC et les tâches 8.x ne les ont pas prouvés.
 
 La référence `module_adaptateur` pointe vers du code de ce dépôt uniquement
 (`engines.adaptateurs.*`) ; elle est importée à la demande par le registre, et
@@ -95,6 +103,11 @@ class Famille:
     0 puis tâches 8.x) : elle est déclarée pour la structure et l'interface,
     jamais annoncée comme opérationnelle. Les réglages appartiennent à la famille
     qui les expose ; leurs noms y sont uniques.
+
+    Cette valeur reste `False` pour la famille factice : exécuter le moteur
+    factice ne demande aucune validation PC, car il ne charge aucun modèle et
+    n'effectue aucune inférence. Le runner s'appuie pour cela sur
+    `DeclarationAdaptateur.factice`, jamais sur cet indicateur de qualification.
     """
 
     identifiant: str
@@ -162,6 +175,12 @@ class DeclarationAdaptateur:
     désigne la règle de compatibilité implémentée aux tâches 5.x. `module_adaptateur`
     est une référence pointée vers du code local, importée seulement au moment
     où une exécution est demandée (`RegistreMoteurs.charger_adaptateur`).
+
+    `factice=True` est réservé au moteur factice du dépôt : le runner exécute
+    alors ses familles malgré `qualifiee=False` et marque textes et mesures comme
+    simulés. Ce drapeau n'est jamais lu depuis un job et ne se déduit pas d'un
+    identifiant fourni : une déclaration qui ne le porte pas reste soumise à la
+    qualification PC, même si elle s'appelle « factice ».
     """
 
     identifiant: str
@@ -170,9 +189,12 @@ class DeclarationAdaptateur:
     regle_compatibilite: str
     familles: tuple[Famille, ...]
     module_adaptateur: str | None = None
+    factice: bool = False
 
     def __post_init__(self) -> None:
         _exiger_identifiant(self.identifiant, "identifiant de moteur")
+        if not isinstance(self.factice, bool):
+            raise ValueError("factice doit être un booléen")
         _exiger_texte_non_vide(self.nom, "nom de moteur")
         _exiger_identifiant(self.regle_compatibilite, "règle de compatibilité")
         if self.fichier_requirements is not None and not _MOTIF_REQUIREMENTS.fullmatch(
@@ -238,6 +260,7 @@ DECLARATION_FACTICE = DeclarationAdaptateur(
     regle_compatibilite="aucune",
     familles=(Famille("factice", "Moteur factice", qualifiee=False),),
     module_adaptateur="engines.adaptateurs.factice",
+    factice=True,
 )
 
 DECLARATIONS_FOURNIES: tuple[DeclarationAdaptateur, ...] = (
@@ -253,7 +276,7 @@ def declarations_fournies() -> tuple[DeclarationAdaptateur, ...]:
 
     Les trois moteurs réels sont déclarés même si leurs environnements ne sont
     pas installés : le lot 4.4 affichera leur état, et leurs adaptateurs seront
-    ajoutés aux tâches 8.x. Le moteur factice est déclaré pour le développement
-    sans modèle ; son comportement sera implémenté en 4.3.
+    ajoutés aux tâches 8.x. Le moteur factice est exécutable sans modèle ni
+    qualification PC ; son adaptateur est ajouté en 4.3.
     """
     return DECLARATIONS_FOURNIES

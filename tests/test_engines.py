@@ -122,6 +122,25 @@ class DeclarationsFourniesTest(unittest.TestCase):
                     self.assertFalse(famille.qualifiee)
                     self.assertIsNone(famille.duree_native)
 
+    def test_seule_la_declaration_factice_porte_le_drapeau(self) -> None:
+        drapeaux = {
+            declaration.identifiant: declaration.factice
+            for declaration in declarations_fournies()
+        }
+        self.assertEqual(
+            drapeaux,
+            {
+                "faster-whisper": False,
+                "transcribe-cpp": False,
+                "transformers": False,
+                "factice": True,
+            },
+        )
+        # Le drapeau ne vaut pas qualification PC : la famille reste non qualifiée.
+        factice = creer_registre_fourni().obtenir("factice")
+        self.assertEqual(factice.familles_qualifiees, ())
+        self.assertIsNone(factice.fichier_requirements)
+
     def test_requirements_declares_sans_creation_de_verrou(self) -> None:
         attendus = {
             "faster-whisper": "requirements/faster-whisper.txt",
@@ -213,6 +232,20 @@ class ValidationDeclarationTest(unittest.TestCase):
                 regle_compatibilite="aucune",
                 familles=(),
             )
+
+    def test_drapeau_factice_non_booleen_refuse(self) -> None:
+        for valeur in ("oui", 1, None):
+            with self.subTest(valeur=valeur):
+                with self.assertRaises(ValueError):
+                    DeclarationAdaptateur(
+                        identifiant="moteur-de-test",
+                        nom="Moteur de test",
+                        fichier_requirements=None,
+                        regle_compatibilite="aucune",
+                        familles=(Famille("factice", "Moteur de test"),),
+                        factice=valeur,  # type: ignore[arg-type]
+                    )
+        self.assertFalse(declaration_de_test().factice)
 
 
 class RegistreMoteursTest(unittest.TestCase):

@@ -175,3 +175,12 @@ Provenance : dépôt `transcription-bench`, branche `main`, base `4b7d36c`.
 - [decision] Fichiers bruts float32 little-endian 16 kHz mono : taille multiple de quatre exigée, durée nulle en erreur. Métadonnées effectives, langue et threads appliqués doivent rester constants entre fenêtres d'un audio, sinon erreur explicite. Méthode `fenetres-fixes` consignée. Une erreur audio ne bloque pas les suivants.
 - [constraint] Lancement direct `python engines/runner.py job.json` avec bootstrap limité à la racine issue de `__file__` ; aucune importation de module indiqué par un job. Chaque futur environnement moteur doit fournir numpy et, sous Windows, psutil 7.2.2 (`peak_wset`). Branche Windows testée par doublure seulement. Aucun adaptateur réel ni durée native activée avant validation PC/8.x.
 - [status] Progression 9/39. 4.3 doit encore rendre le factice exécutable et marquer textes/mesures comme simulés ; 3.2 et validations PC restent ouvertes.
+
+## Lot 4 — moteur factice (4.3), 2026-10-25
+
+Provenance : dépôt `transcription-bench`, branche `main`, base `e3f0d90`.
+
+- [validation] Tâche 4.3 terminée, revue et correction puis feu vert du même advisor. Adaptateur factice sans réseau, modèle ni I/O ; test de bout en bout via l'interpréteur serveur et la commande directe du runner, depuis un dossier temporaire : audio court, audio vide en erreur, audio 31 s ; un seul chargement et poursuite du lot. Cent quarante-huit tests passent avec deux graines, OpenSpec strict et verrou vérifiés.
+- [decision] Le drapeau `factice` vient exclusivement de la déclaration du dépôt, pas du job. Sa famille reste non qualifiée sur PC ; ce drapeau autorise son exécution sans modifier le refus des moteurs réels. Chaque événement porte deux booléens obligatoires `factice` et `mesures_simulees`, vérifiés par le parseur et à préserver dans les futures vues.
+- [constraint] Textes marqués `[FACTICE]`, mesures simulées déterministes (chargement 1,2 s, RTF 0,5, pic 300 Mio, temps CPU calculé fictivement) ; seule la durée audio est réelle. Ce ne sont ni des performances du serveur ni des PC. Le test couvre job → runner → événements, pas une exécution web ni le stockage des résultats du lot 6.
+- [status] Progression 10/39. Prochaine tâche 4.4 ; 3.2 et validations PC toujours ouvertes.

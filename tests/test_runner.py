@@ -137,7 +137,13 @@ def executer_et_lire(
 class ProtocoleTest(unittest.TestCase):
     def test_evenements_prevus_analysables(self) -> None:
         evenements = [
-            {"type": TYPE_CHARGEMENT, "duree_s": 1.5, "pic_memoire_octets": None},
+            {
+                "type": TYPE_CHARGEMENT,
+                "duree_s": 1.5,
+                "pic_memoire_octets": None,
+                "factice": False,
+                "mesures_simulees": False,
+            },
             {
                 "type": TYPE_AUDIO,
                 "index": 0,
@@ -156,20 +162,59 @@ class ProtocoleTest(unittest.TestCase):
                 "langue_imposee": "fr",
                 "threads_demandes": 4,
                 "threads_appliques": None,
+                "factice": False,
+                "mesures_simulees": False,
             },
-            {"type": TYPE_AUDIO_ERREUR, "index": 1, "nom": "b.wav", "erreur": "échec"},
+            {
+                "type": TYPE_AUDIO_ERREUR,
+                "index": 1,
+                "nom": "b.wav",
+                "erreur": "échec",
+                "factice": False,
+                "mesures_simulees": False,
+            },
             {
                 "type": TYPE_FIN,
                 "duree_chargement_s": 1.5,
                 "pic_memoire_octets": 2048,
                 "audios_ok": 1,
                 "audios_erreur": 1,
+                "factice": False,
+                "mesures_simulees": False,
             },
         ]
         for evenement in evenements:
             with self.subTest(type_evenement=evenement["type"]):
                 self.assertEqual(
                     analyser_ligne(formater_ligne(evenement)), evenement
+                )
+
+    def test_provenance_obligatoire_dans_chaque_evenement(self) -> None:
+        evenement = {
+            "type": TYPE_AUDIO_ERREUR,
+            "index": 0,
+            "nom": "a",
+            "erreur": "x",
+            "factice": True,
+            "mesures_simulees": True,
+        }
+        self.assertEqual(analyser_ligne(formater_ligne(evenement)), evenement)
+        for champ in ("factice", "mesures_simulees"):
+            with self.subTest(champ=champ):
+                sans_champ = dict(evenement)
+                del sans_champ[champ]
+                self.assertIsNone(analyser_ligne(formater_ligne(sans_champ)))
+                for valeur in (None, 0, "true"):
+                    with self.subTest(champ=champ, valeur=valeur):
+                        invalide = dict(evenement)
+                        invalide[champ] = valeur
+                        self.assertIsNone(analyser_ligne(formater_ligne(invalide)))
+                # Un booléen `False` reste valide : aucune égalité entre les
+                # deux champs de provenance n'est exigée.
+                desaccorde = dict(evenement)
+                desaccorde[champ] = False
+                self.assertEqual(
+                    analyser_ligne(formater_ligne(desaccorde)), desaccorde
                 )
 
     def test_lignes_parasites_ignorees(self) -> None:
@@ -187,7 +232,14 @@ class ProtocoleTest(unittest.TestCase):
 
     def test_non_ascii_conserve_et_ligne_unique(self) -> None:
         ligne = formater_ligne(
-            {"type": TYPE_AUDIO_ERREUR, "index": 0, "nom": "é", "erreur": "échec"}
+            {
+                "type": TYPE_AUDIO_ERREUR,
+                "index": 0,
+                "nom": "é",
+                "erreur": "échec",
+                "factice": False,
+                "mesures_simulees": False,
+            }
         )
         self.assertTrue(ligne.startswith(PREFIXE_EVENEMENT))
         self.assertEqual(ligne.count("\n"), 1)
@@ -196,7 +248,17 @@ class ProtocoleTest(unittest.TestCase):
 
     def test_emettre_ecrit_et_vide_le_tampon(self) -> None:
         sortie = io.StringIO()
-        emettre({"type": TYPE_AUDIO_ERREUR, "index": 0, "nom": "a", "erreur": "x"}, sortie)
+        emettre(
+            {
+                "type": TYPE_AUDIO_ERREUR,
+                "index": 0,
+                "nom": "a",
+                "erreur": "x",
+                "factice": False,
+                "mesures_simulees": False,
+            },
+            sortie,
+        )
         self.assertEqual(sortie.getvalue().count("\n"), 1)
         self.assertIsNone(analyser_ligne("parasite"))
 
@@ -487,6 +549,9 @@ class ExecutionTest(unittest.TestCase):
         self.assertIsInstance(audio["pic_memoire_octets"], int)
         self.assertGreater(audio["pic_memoire_octets"], 0)
         self.assertIsInstance(evenements[-1]["pic_memoire_octets"], int)
+        for evenement in evenements:
+            self.assertIs(evenement["factice"], False)
+            self.assertIs(evenement["mesures_simulees"], False)
 
 
 class MoteurRefuseTest(unittest.TestCase):

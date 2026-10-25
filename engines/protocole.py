@@ -14,6 +14,13 @@ interrompre le flux.
 Le préfixe, les types et leurs champs requis forment le contrat : seul
 `engines/runner.py` émet ici, et aucun autre module ne doit analyser ces lignes
 lui-même.
+
+Chaque événement porte sa provenance : `factice` et `mesures_simulees` valent
+`False` pour un moteur réel et `True` pour le moteur factice (tâche 4.3). Ces
+deux champs sont obligatoires pour que le serveur, la comparaison et toute
+exploitation ultérieure ne puissent pas confondre un texte ou une mesure simulés
+avec une mesure de moteur réel. Ils sont fixés par la déclaration du moteur dans
+le code, jamais par le job.
 """
 
 from __future__ import annotations
@@ -29,10 +36,17 @@ TYPE_AUDIO = "audio"
 TYPE_AUDIO_ERREUR = "audio_erreur"
 TYPE_FIN = "fin"
 
+# Champs de provenance présents dans chaque événement : jamais facultatifs,
+# pour qu'aucun consommateur ne puisse ignorer qu'un résultat est simulé.
+CHAMPS_PROVENANCE: tuple[str, ...] = ("factice", "mesures_simulees")
+
 # Champs dont la présence est exigée pour chaque type. Les valeurs peuvent être
 # `null` (mesure indisponible) : le contrat distingue « absente » de « zéro ».
 CHAMPS_REQUIS: dict[str, tuple[str, ...]] = {
-    TYPE_CHARGEMENT: ("duree_s", "pic_memoire_octets"),
+    TYPE_CHARGEMENT: (
+        "duree_s",
+        "pic_memoire_octets",
+    ) + CHAMPS_PROVENANCE,
     TYPE_AUDIO: (
         "index",
         "nom",
@@ -50,14 +64,14 @@ CHAMPS_REQUIS: dict[str, tuple[str, ...]] = {
         "langue_imposee",
         "threads_demandes",
         "threads_appliques",
-    ),
-    TYPE_AUDIO_ERREUR: ("index", "nom", "erreur"),
+    ) + CHAMPS_PROVENANCE,
+    TYPE_AUDIO_ERREUR: ("index", "nom", "erreur") + CHAMPS_PROVENANCE,
     TYPE_FIN: (
         "duree_chargement_s",
         "pic_memoire_octets",
         "audios_ok",
         "audios_erreur",
-    ),
+    ) + CHAMPS_PROVENANCE,
 }
 
 TYPES_EVENEMENTS: tuple[str, ...] = tuple(CHAMPS_REQUIS)
@@ -85,8 +99,11 @@ def analyser_ligne(ligne: str) -> dict[str, Any] | None:
     """Renvoie l'événement contenu dans une ligne, ou `None`.
 
     Une ligne non préfixée, un JSON invalide, un objet qui n'est pas un
-    dictionnaire, un type inconnu ou un champ requis manquant donnent `None` :
-    c'est une sortie parasite à journaliser, jamais une erreur bloquante.
+    dictionnaire, un type inconnu, un champ requis manquant ou un champ de
+    provenance qui n'est pas un booléen donnent `None` : c'est une sortie
+    parasite à journaliser, jamais une erreur bloquante. Les deux champs de
+    provenance sont validés indépendamment : aucune égalité entre eux n'est
+    exigée.
     """
     if not isinstance(ligne, str) or not ligne.startswith(PREFIXE_EVENEMENT):
         return None
@@ -101,5 +118,9 @@ def analyser_ligne(ligne: str) -> dict[str, Any] | None:
     if type_evenement not in CHAMPS_REQUIS:
         return None
     if any(champ not in evenement for champ in CHAMPS_REQUIS[type_evenement]):
+        return None
+    if any(
+        not isinstance(evenement[champ], bool) for champ in CHAMPS_PROVENANCE
+    ):
         return None
     return evenement
