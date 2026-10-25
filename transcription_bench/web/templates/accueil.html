@@ -24,6 +24,12 @@
 <p><a href="{{ url_for('operation') }}">Consulter l'état détaillé de l'opération</a></p>
 <h3>Moteurs</h3>
 <p>{{ message_moteurs }}</p>
+<ul>
+{% for moteur in moteurs %}
+<li>{{ moteur.nom }} : {{ libelles_etats_moteur[moteur.etat] }}{% if moteur.factice %} (FACTICE, non représentatif){% endif %}</li>
+{% endfor %}
+</ul>
+<p><a href="{{ url_for('moteurs') }}">Consulter la page des moteurs</a></p>
 <h3>Dossiers de données</h3>
 <ul>
 {% for dossier in dossiers %}

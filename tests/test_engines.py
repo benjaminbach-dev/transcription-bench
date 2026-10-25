@@ -76,6 +76,7 @@ def declaration_de_test(
     *,
     identifiant: str = "moteur-de-test",
     module_adaptateur: str | None = MODULE_ADAPTATEUR_DE_TEST,
+    modules_verification: tuple[str, ...] = (),
 ) -> DeclarationAdaptateur:
     return DeclarationAdaptateur(
         identifiant=identifiant,
@@ -84,6 +85,7 @@ def declaration_de_test(
         regle_compatibilite="aucune",
         familles=(Famille("factice", "Moteur de test"),),
         module_adaptateur=module_adaptateur,
+        modules_verification=modules_verification,
     )
 
 
@@ -162,6 +164,36 @@ class DeclarationsFourniesTest(unittest.TestCase):
                     declaration.module_adaptateur,
                     f"engines.adaptateurs.{declaration.identifiant.replace('-', '_')}",
                 )
+
+    def test_modules_de_verification_declares_sans_version(self) -> None:
+        attendus = {
+            "faster-whisper": ("faster_whisper",),
+            "transcribe-cpp": ("transcribe_cpp",),
+            "transformers": ("transformers",),
+            "factice": (),
+        }
+        for declaration in declarations_fournies():
+            with self.subTest(moteur=declaration.identifiant):
+                self.assertEqual(
+                    declaration.modules_verification,
+                    attendus[declaration.identifiant],
+                )
+
+    def test_declaration_installable_sans_module_de_verification_refusee(self) -> None:
+        with self.assertRaises(ValueError):
+            DeclarationAdaptateur(
+                identifiant="moteur-de-test",
+                nom="Moteur de test",
+                fichier_requirements="requirements/test.txt",
+                regle_compatibilite="aucune",
+                familles=(Famille("factice", "Moteur de test"),),
+            )
+
+    def test_module_de_verification_invalide_refuse(self) -> None:
+        for module in ("../moteur", "/tmp/moteur.py", "module version==1", ""):
+            with self.subTest(module=module):
+                with self.assertRaises(ValueError):
+                    declaration_de_test(modules_verification=(module,))
 
     def test_aucun_reglage_reel_fourni(self) -> None:
         for declaration in declarations_fournies():

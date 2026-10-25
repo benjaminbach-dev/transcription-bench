@@ -14,11 +14,13 @@ est réellement implémenté : aucun succès n'est affiché pour une fonction ab
 Les mutations passent par le créneau unique injecté : la vérification des
 dossiers s'exécute sous son verrou et est refusée (409) pendant une opération
 longue, comme après le passage à l'arrêt (503). L'accueil affiche l'état du
-créneau, les emplacements des dossiers et des liens vers les pages des moteurs,
-modèles, audios, exécutions et résultats. Ces pages n'existent pas encore :
-elles sont servies comme pages provisoires explicites, sans simulation de
-capacité absente et sans lien mort. La page `/operation` n'affiche que
-l'instantané du créneau, sans lancer de travail.
+créneau, les emplacements des dossiers, l'état des moteurs et des liens vers les
+pages des moteurs, modèles, audios, exécutions et résultats. La page des moteurs
+est réelle : elle lit l'inventaire local et permet une installation explicite.
+Les autres pages n'existent pas encore : elles sont servies comme pages
+provisoires explicites, sans simulation de capacité absente et sans lien mort.
+La page `/operation` n'affiche que l'instantané du créneau, sans lancer de
+travail.
 """
 
 from __future__ import annotations
@@ -33,14 +35,27 @@ from typing import NamedTuple
 from flask import Flask, abort, redirect, render_template, request, url_for
 from werkzeug.exceptions import HTTPException
 
+from engines.registre import MoteurInconnu, creer_registre_fourni
+from transcription_bench.moteurs import (
+    ETAT_PRET,
+    LIBELLES_ETATS_MOTEUR,
+    EtatMoteur,
+    InstallationIndisponible,
+    InstallationMoteurs,
+)
 from transcription_bench.operations import (
     LIBELLES_ETATS,
     LIBELLES_TYPES,
+    TYPE_INSTALLATION,
     CreneauOccupe,
     CreneauOperations,
     ServiceArrete,
 )
-from transcription_bench.paths import DOSSIERS_DATA, preparer_dossiers_data
+from transcription_bench.paths import (
+    DOSSIERS_DATA,
+    ValeurRefusee,
+    preparer_dossiers_data,
+)
 
 LIMITE_CORPS_APPLICATION = 64 * 1024
 NOM_CHAMP_JETON = "jeton_csrf"
@@ -66,12 +81,6 @@ class PageProvisoire(NamedTuple):
 
 PAGES_PROVISOIRES = (
     PageProvisoire(
-        "moteurs",
-        "Moteurs",
-        "l'installation, l'état et le contrôle d'import des moteurs "
-        "relèvent de la tâche 4.4",
-    ),
-    PageProvisoire(
         "modeles",
         "Modèles",
         "la vérification, le téléchargement et la suppression des modèles "
@@ -95,9 +104,9 @@ PAGES_PROVISOIRES = (
 )
 
 MESSAGE_MOTEURS_NON_INSTALLES = (
-    "Aucun moteur n'est installé à ce stade : l'installation et le contrôle "
-    "d'import ne sont pas encore implémentés. Le lancement du serveur n'installe "
-    "ni ne télécharge rien."
+    "Aucun moteur n'est installé à ce stade ; le moteur factice est disponible "
+    "sans installation, avec des textes et mesures simulés. Le lancement du "
+    "serveur n'installe ni ne télécharge rien."
 )
 
 MESSAGES_ERREUR = {
@@ -132,10 +141,13 @@ class ServicesApplication:
 
     `creneau` est l'unique créneau d'opération longue : la CLI le crée et
     l'injecte. Il n'est ni global au module ni construit par `create_app`.
+    `moteurs` est le service d'installation ; s'il est absent, la fabrique en
+    construit un avec les quatre déclarations fournies, sans aucune E/S.
     """
 
     creneau: CreneauOperations
     preparer_dossiers: Callable[[Path], dict[str, Path]] = preparer_dossiers_data
+    moteurs: InstallationMoteurs | None = None
 
 
 def create_app(config: ConfigApplication, services: ServicesApplication) -> Flask:
@@ -151,10 +163,17 @@ def create_app(config: ConfigApplication, services: ServicesApplication) -> Flas
     application.extensions[NOM_CHAMP_JETON] = jeton
     hotes = frozenset(f"{adresse}:{config.port}" for adresse in HOTES_AUTORISES)
     origines = frozenset(f"http://{adresse_port}" for adresse_port in hotes)
+    service_moteurs = services.moteurs or InstallationMoteurs(
+        config.dossier_data, creer_registre_fourni(), services.creneau
+    )
 
     @application.context_processor
     def injecter_jeton() -> dict[str, object]:
-        return {NOM_CHAMP_JETON: jeton, "pages_provisoires": PAGES_PROVISOIRES}
+        return {
+            NOM_CHAMP_JETON: jeton,
+            "pages_provisoires": PAGES_PROVISOIRES,
+            "libelles_etats_moteur": LIBELLES_ETATS_MOTEUR,
+        }
 
     @application.before_request
     def verifier_requete() -> None:
@@ -162,7 +181,7 @@ def create_app(config: ConfigApplication, services: ServicesApplication) -> Flas
         if request.method == "POST":
             _verifier_post(jeton, origines)
 
-    _enregistrer_routes(application, config, services)
+    _enregistrer_routes(application, config, services, service_moteurs)
     _enregistrer_erreurs(application)
     return application
 
@@ -208,13 +227,27 @@ def _message_action() -> str | None:
     return MESSAGES_ACTION.get(request.args.get("action", ""))
 
 
+def _message_moteurs(moteurs: tuple[EtatMoteur, ...]) -> str:
+    """Phrase d'accueil honnête selon l'inventaire local des moteurs réels."""
+    prets = [moteur for moteur in moteurs if moteur.etat == ETAT_PRET and not moteur.factice]
+    if prets:
+        noms = ", ".join(moteur.nom for moteur in prets)
+        return (
+            f"Moteurs prêts : {noms}. Le lancement du serveur n'installe ni ne "
+            "télécharge rien."
+        )
+    return MESSAGE_MOTEURS_NON_INSTALLES
+
+
 def _enregistrer_routes(
     application: Flask,
     config: ConfigApplication,
     services: ServicesApplication,
+    service_moteurs: InstallationMoteurs,
 ) -> None:
     @application.get("/")
     def accueil() -> str:
+        moteurs = service_moteurs.inventaire()
         return render_template(
             "accueil.html",
             dossiers=_etat_dossiers(config),
@@ -222,11 +255,56 @@ def _enregistrer_routes(
             instantane=services.creneau.instantane(),
             libelles_etats=LIBELLES_ETATS,
             libelles_types=LIBELLES_TYPES,
-            message_moteurs=MESSAGE_MOTEURS_NON_INSTALLES,
+            moteurs=moteurs,
+            message_moteurs=_message_moteurs(moteurs),
         )
 
     for page in PAGES_PROVISOIRES:
         _enregistrer_page_provisoire(application, page)
+
+    @application.get("/moteurs")
+    def moteurs() -> str:
+        return render_template(
+            "moteurs.html",
+            moteurs=service_moteurs.inventaire(),
+            instantane=services.creneau.instantane(),
+            libelles_types=LIBELLES_TYPES,
+        )
+
+    @application.post("/moteurs/<identifiant>/installer")
+    def installer_moteur(identifiant: str):
+        try:
+            service_moteurs.verifier_installable(identifiant)
+        except MoteurInconnu:
+            abort(404)
+        except (InstallationIndisponible, ValeurRefusee):
+            abort(403)
+        try:
+            services.creneau.demarrer(
+                TYPE_INSTALLATION,
+                lambda travailleur: service_moteurs.installer(identifiant, travailleur),
+                cible=identifiant,
+            )
+        except CreneauOccupe:
+            abort(409)
+        except ServiceArrete:
+            abort(503)
+        return redirect(url_for("operation"), code=303)
+
+    @application.get("/moteurs/<identifiant>/journal")
+    def journal_moteur(identifiant: str) -> str:
+        try:
+            declaration = service_moteurs.declaration(identifiant)
+            lignes = service_moteurs.lire_journal(identifiant)
+        except MoteurInconnu:
+            abort(404)
+        except ValeurRefusee:
+            abort(403)
+        return render_template(
+            "journal.html",
+            moteur=declaration,
+            lignes=lignes,
+        )
 
     @application.get("/operation")
     def operation() -> str:

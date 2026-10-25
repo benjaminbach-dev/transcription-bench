@@ -176,6 +176,13 @@ class DeclarationAdaptateur:
     est une référence pointée vers du code local, importée seulement au moment
     où une exécution est demandée (`RegistreMoteurs.charger_adaptateur`).
 
+    `modules_verification` énumère les noms de modules Python (bibliothèque
+    standard comprise) que le contrôle d'import exécute dans l'environnement du
+    moteur, avec l'interpréteur de cet environnement. Ces noms viennent du code
+    du dépôt, jamais d'une requête ou d'un job, et ne portent aucune version :
+    ils permettent de vérifier le bon environnement sans importer de paquet
+    moteur dans le serveur et sans supposer une version avant validation PC.
+
     `factice=True` est réservé au moteur factice du dépôt : le runner exécute
     alors ses familles malgré `qualifiee=False` et marque textes et mesures comme
     simulés. Ce drapeau n'est jamais lu depuis un job et ne se déduit pas d'un
@@ -189,6 +196,7 @@ class DeclarationAdaptateur:
     regle_compatibilite: str
     familles: tuple[Famille, ...]
     module_adaptateur: str | None = None
+    modules_verification: tuple[str, ...] = ()
     factice: bool = False
 
     def __post_init__(self) -> None:
@@ -211,6 +219,21 @@ class DeclarationAdaptateur:
                 "référence d'adaptateur attendue sous forme de module Python "
                 f"local, sans chemin ni URL : {self.module_adaptateur!r}"
             )
+        if not isinstance(self.modules_verification, tuple):
+            raise ValueError("modules_verification attendu sous forme de tuple")
+        for module in self.modules_verification:
+            if not isinstance(module, str) or not _MOTIF_MODULE.fullmatch(module):
+                raise ValueError(
+                    "module de vérification attendu sous forme de nom Python "
+                    f"pointé : {module!r}"
+                )
+        if len(set(self.modules_verification)) != len(self.modules_verification):
+            raise ValueError("modules de vérification en double")
+        if self.fichier_requirements is not None and not self.modules_verification:
+            raise ValueError(
+                "une déclaration installable doit préciser au moins un module de "
+                "vérification pour contrôler son environnement"
+            )
         if not self.familles:
             raise ValueError("une déclaration doit mentionner au moins une famille")
         identifiants_familles = [famille.identifiant for famille in self.familles]
@@ -230,6 +253,7 @@ DECLARATION_FASTER_WHISPER = DeclarationAdaptateur(
     regle_compatibilite="ctranslate2-whisper",
     familles=(Famille("whisper", "Whisper", qualifiee=False),),
     module_adaptateur="engines.adaptateurs.faster_whisper",
+    modules_verification=("faster_whisper",),
 )
 
 DECLARATION_TRANSCRIBE_CPP = DeclarationAdaptateur(
@@ -239,6 +263,7 @@ DECLARATION_TRANSCRIBE_CPP = DeclarationAdaptateur(
     regle_compatibilite="transcribe-cpp-gguf",
     familles=(Famille("whisper", "Whisper", qualifiee=False),),
     module_adaptateur="engines.adaptateurs.transcribe_cpp",
+    modules_verification=("transcribe_cpp",),
 )
 
 DECLARATION_TRANSFORMERS = DeclarationAdaptateur(
@@ -251,6 +276,7 @@ DECLARATION_TRANSFORMERS = DeclarationAdaptateur(
         Famille("parakeet-tdt", "Parakeet TDT", qualifiee=False),
     ),
     module_adaptateur="engines.adaptateurs.transformers",
+    modules_verification=("transformers",),
 )
 
 DECLARATION_FACTICE = DeclarationAdaptateur(

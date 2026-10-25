@@ -25,8 +25,10 @@ from pathlib import Path
 
 from waitress import serve
 
+from engines.registre import creer_registre_fourni
 from transcription_bench import paths
 from transcription_bench.instance import InstanceDejaActive, VerrouInstance
+from transcription_bench.moteurs import InstallationMoteurs
 from transcription_bench.operations import CreneauOperations
 from transcription_bench.recuperation import (
     EtatAnterieurNonTraitable,
@@ -100,6 +102,7 @@ def main(
 
     recuperation = verifier_executions_anterieures if recuperer is None else recuperer
     creneau: CreneauOperations | None = None
+    installation: InstallationMoteurs | None = None
     code = 0
     try:
         try:
@@ -110,9 +113,12 @@ def main(
         else:
             paths.preparer_dossiers_data(dossier_data)
             creneau = CreneauOperations()
+            installation = InstallationMoteurs(
+                dossier_data, creer_registre_fourni(), creneau
+            )
             application = create_app(
                 ConfigApplication(port=arguments.port, dossier_data=dossier_data),
-                ServicesApplication(creneau=creneau),
+                ServicesApplication(creneau=creneau, moteurs=installation),
             )
             print(
                 f"Interface disponible : http://{ADRESSE_ECOUTE}:{arguments.port}",
@@ -136,21 +142,28 @@ def main(
                 )
                 code = CODE_ECHEC
     finally:
-        if not _clore_apres_arret(creneau, verrou):
+        if not _clore_apres_arret(creneau, verrou, installation):
             code = CODE_ECHEC
     return code
 
 
 def _clore_apres_arret(
-    creneau: CreneauOperations | None, verrou: VerrouInstance
+    creneau: CreneauOperations | None,
+    verrou: VerrouInstance,
+    installation: InstallationMoteurs | None = None,
 ) -> bool:
     """Arrête le créneau et libère le verrou seulement si le travail est fini.
 
-    `CreneauOperations.arreter` est idempotent et borne son attente. Si le
-    thread d'opération est encore actif, le verrou n'est pas libéré : il le
+    `installation.arreter` termine le sous-processus uv éventuellement en cours
+    avant l'arrêt du créneau : une installation ne doit pas rester orpheline. Ce
+    nettoyage minimal ne remplace pas la supervision complète des signaux de la
+    tâche 6.6 ; `CreneauOperations.arreter` est idempotent et borne son attente.
+    Si le thread d'opération est encore actif, le verrou n'est pas libéré : il le
     sera par le système à la mort du processus, ce qui évite qu'une seconde
     instance ouvre le même dossier de données pendant un travail en cours.
     """
+    if installation is not None:
+        installation.arreter()
     if creneau is None:
         verrou.liberer()
         return True

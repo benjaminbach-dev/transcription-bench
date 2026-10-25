@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block titre %}Journal d'installation — {{ moteur.nom }} — transcription-bench{% endblock %}
+{% block contenu %}
+<h2>Journal d'installation — {{ moteur.nom }}</h2>
+<p><a href="{{ url_for('journal_moteur', identifiant=moteur.identifiant) }}">Actualiser</a></p>
+{% if moteur.factice %}
+<p>Le moteur factice ne s'installe pas : il n'a ni environnement ni journal d'installation.</p>
+{% elif lignes %}
+<ul>
+{% for ligne in lignes %}
+<li>{{ ligne }}</li>
+{% endfor %}
+</ul>
+{% else %}
+<p>Aucune installation enregistrée pour ce moteur.</p>
+{% endif %}
+<p><a href="{{ url_for('moteurs') }}">Retour à la page des moteurs</a></p>
+{% endblock %}

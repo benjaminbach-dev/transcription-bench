@@ -427,7 +427,7 @@ class AccueilEtPagesProvisoiresTest(SocleWebTest):
         self.assertFalse(self.dossier_data.exists())
 
     def test_pages_provisoires_honnetes_sans_effet_de_bord(self) -> None:
-        for route in ("/moteurs", "/modeles", "/audios", "/executions", "/resultats"):
+        for route in ("/modeles", "/audios", "/executions", "/resultats"):
             with self.subTest(route=route):
                 corps = self.texte(route)
                 self.assertIn("Fonctionnalité non disponible", corps)
@@ -435,6 +435,10 @@ class AccueilEtPagesProvisoiresTest(SocleWebTest):
                 self.assertIn("Aucune donnée n'est lue", corps)
                 self.assertIn('href="/"', corps)
                 self.verifier_html_seul(corps)
+        # La page des moteurs est désormais réelle (tâche 4.4), pas provisoire.
+        corps_moteurs = self.texte("/moteurs")
+        self.assertNotIn("Fonctionnalité non disponible", corps_moteurs)
+        self.assertIn("Moteurs", corps_moteurs)
         self.assertFalse(
             self.dossier_data.exists(),
             "une page provisoire a créé ou touché les dossiers de données",
