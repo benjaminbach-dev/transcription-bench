@@ -77,3 +77,12 @@ Provenance : dépôt `transcription-bench`, branche `main`, base `09b366f` ; dé
 - [decision] Deux limites distinctes : 64 Kio pour les formulaires dans Flask, 1 Mio pour le corps tamponné par Waitress. Les refus HTTP de Waitress avant appel de l'application ne passent pas par les templates ; ils ne déclenchent aucune action. Les pages normales et d'erreur de l'application restent en HTML seul.
 - [decision] Dès le premier signal d'arrêt, les signaux suivants sont ignorés ; mutation et publication de marqueurs prêts sont interdites sous le verrou du créneau. L'attente du thread d'opération est bornée, pas la durée globale de sortie pendant un téléchargement : les E/S et threads internes peuvent encore retarder la fin du processus. Aucun thread Python n'est tué.
 - [constraint] Si le worker n'est pas terminé, le verrou d'instance reste détenu jusqu'à la fin réelle du processus et aucun marqueur prêt n'est publié. Un arrêt forcé reste brutal et relève de la récupération existante. La sonde PC doit confirmer ces comportements ; aucune validation réelle n'est revendiquée.
+
+## Début du travail sur serveur — 2026-10-25
+
+Provenance : dépôt `transcription-bench`, branche `main`, base `163972c` ; contexte serveur de développement déclaré par l'utilisateur.
+
+- [decision] Avancer tâche par tâche via worker, avec revue advisor après chaque tâche, corrections éventuelles, puis commit/push des seuls fichiers concernés, sur demande explicite de l'utilisateur.
+- [validation] Tâche 2.1 terminée : outillage utilisateur uv et Python 3.12 géré préparé avec accord ; commandes `uv --version` et `uv python find 3.12` vérifiées. Revue advisor favorable, sans correction nécessaire. Python système et runtime Basic Memory préservés ; aucun moteur, poids ou inférence réelle.
+- [status] Progression OpenSpec : 1/39. Aucun code applicatif ajouté. Le jalon PC n'est pas validé.
+- [next] Avant 2.2 : réconcilier le préalable dans proposal/design/tasks pour permettre le développement serveur avec moteur factice, en conservant les validations Linux/Windows obligatoires avant qualification des moteurs et de la pile web sur PC. La dépendance actuelle de 2.2 à 1.7 reste inchangée.

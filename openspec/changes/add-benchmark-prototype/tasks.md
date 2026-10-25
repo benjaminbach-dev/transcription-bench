@@ -15,7 +15,7 @@ Ce jalon précède toute implémentation complète. Aucune affirmation de « tes
 
 ## 2. Socle du projet
 
-- [ ] 2.1 Installer uv pour l'utilisateur sur le serveur de développement (après accord explicite), sans toucher au Python système ni au runtime de Basic Memory ; vérifier `uv --version` et `uv python find 3.12`
+- [x] 2.1 Installer uv pour l'utilisateur sur le serveur de développement (après accord explicite), sans toucher au Python système ni au runtime de Basic Memory ; vérifier `uv --version` et `uv python find 3.12`
 - [ ] 2.2 Créer `pyproject.toml` (Python ≥ 3.12, Flask 3.1.3 et Waitress 3.0.2 validés en 1.7, av, numpy, huggingface_hub, psutil), `.python-version`, le paquet `transcription_bench/` et le script `transcription-bench` ; vérifier que `uv run transcription-bench --help` fonctionne et que `uv.lock` verrouille aussi les dépendances transitives Jinja2/Werkzeug
 - [ ] 2.3 Créer les dossiers de données sous `data/` au démarrage (audio, models, engines, results) et vérifier par test unitaire leur création ; contrôler manuellement que `data/` reste ignoré par Git
 
