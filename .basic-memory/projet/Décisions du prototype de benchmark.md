@@ -86,3 +86,12 @@ Provenance : dépôt `transcription-bench`, branche `main`, base `163972c` ; con
 - [validation] Tâche 2.1 terminée : outillage utilisateur uv et Python 3.12 géré préparé avec accord ; commandes `uv --version` et `uv python find 3.12` vérifiées. Revue advisor favorable, sans correction nécessaire. Python système et runtime Basic Memory préservés ; aucun moteur, poids ou inférence réelle.
 - [status] Progression OpenSpec : 1/39. Aucun code applicatif ajouté. Le jalon PC n'est pas validé.
 - [next] Avant 2.2 : réconcilier le préalable dans proposal/design/tasks pour permettre le développement serveur avec moteur factice, en conservant les validations Linux/Windows obligatoires avant qualification des moteurs et de la pile web sur PC. La dépendance actuelle de 2.2 à 1.7 reste inchangée.
+
+## Développement serveur autorisé avant qualification PC — 2026-10-25
+
+Provenance : dépôt `transcription-bench`, branche `main`, base `4077f0c` ; révision de proposal/design/tasks approuvée par l'utilisateur puis relue par le même advisor du lot 2.
+
+- [decision] Cette décision remplace le blocage historique de toute implémentation avant le jalon PC et les mentions antérieures d'absence d'autorisation d'installation : le développement et les tests sur serveur peuvent avancer sans moteur réel, avec moteur factice, réponses simulées et audios synthétiques locaux. L'accord couvre uv, Python 3.12 géré et les dépendances serveur prévues (Flask, Waitress, av, numpy, huggingface_hub, psutil et leurs dépendances), dans l'environnement du projet seulement.
+- [constraint] Aucun moteur réel, poids ou inférence réelle sur le serveur. Le jalon 0 reste obligatoire avant les adaptateurs réels et la qualification des moteurs, familles, fichiers et méthodes long-form sur Linux et Windows. La sonde web 1.7 sur les deux PC reste due ; les tests serveur ne la remplacent pas. Une tâche incluant une validation PC ne peut être cochée pour son seul code factice.
+- [decision] Même session advisor reprise après chaque tâche et correction d'un lot ; rafraîchissement de son contexte uniquement lors du passage à un nouveau lot. Worker réalise les tâches une par une ; commit et push après revue favorable et corrections.
+- [risk] Le développement de la couche web précède sa qualification PC : un écart observé plus tard peut imposer des corrections de code ; tout écart doit être consigné et réconcilié avant la mise en œuvre qui en dépend.
