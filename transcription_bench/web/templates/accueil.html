@@ -5,7 +5,25 @@
 {% if message %}
 <p role="status">{{ message }}</p>
 {% endif %}
-<p>Interface en cours de construction : les pages des moteurs, des modèles, des audios, des exécutions et des résultats seront ajoutées aux tâches suivantes. Aucune opération de moteur n'est disponible à ce stade.</p>
+<h3>Opération longue</h3>
+<dl>
+<dt>État</dt>
+<dd>{{ libelles_etats[instantane.etat] }}</dd>
+{% if instantane.type_operation %}
+<dt>Opération</dt>
+<dd>{{ libelles_types[instantane.type_operation] }}</dd>
+{% endif %}
+{% if instantane.cible %}
+<dt>Cible</dt>
+<dd>{{ instantane.cible }}</dd>
+{% endif %}
+</dl>
+{% if instantane.arrete %}
+<p>Arrêt du serveur demandé : aucune nouvelle opération ni mutation n'est acceptée.</p>
+{% endif %}
+<p><a href="{{ url_for('operation') }}">Consulter l'état détaillé de l'opération</a></p>
+<h3>Moteurs</h3>
+<p>{{ message_moteurs }}</p>
 <h3>Dossiers de données</h3>
 <ul>
 {% for dossier in dossiers %}
@@ -16,4 +34,11 @@
 <input type="hidden" name="jeton_csrf" value="{{ jeton_csrf }}">
 <p><button type="submit">Vérifier les dossiers de données</button></p>
 </form>
+<h3>Pages prévues</h3>
+<p>Les pages suivantes sont annoncées mais leurs fonctionnalités ne sont pas encore implémentées : elles n'affichent aucune donnée et ne permettent aucune action.</p>
+<ul>
+{% for page in pages_provisoires %}
+<li><a href="{{ url_for(page.route) }}">{{ page.titre }}</a> : fonctionnalité non disponible, {{ page.description }}</li>
+{% endfor %}
+</ul>
 {% endblock %}

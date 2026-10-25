@@ -13,8 +13,12 @@ est réellement implémenté : aucun succès n'est affiché pour une fonction ab
 
 Les mutations passent par le créneau unique injecté : la vérification des
 dossiers s'exécute sous son verrou et est refusée (409) pendant une opération
-longue, comme après le passage à l'arrêt (503). La page `/operation` n'affiche
-que l'instantané du créneau, sans lancer de travail.
+longue, comme après le passage à l'arrêt (503). L'accueil affiche l'état du
+créneau, les emplacements des dossiers et des liens vers les pages des moteurs,
+modèles, audios, exécutions et résultats. Ces pages n'existent pas encore :
+elles sont servies comme pages provisoires explicites, sans simulation de
+capacité absente et sans lien mort. La page `/operation` n'affiche que
+l'instantané du créneau, sans lancer de travail.
 """
 
 from __future__ import annotations
@@ -24,6 +28,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from hmac import compare_digest
 from pathlib import Path
+from typing import NamedTuple
 
 from flask import Flask, abort, redirect, render_template, request, url_for
 from werkzeug.exceptions import HTTPException
@@ -45,6 +50,55 @@ HOTES_AUTORISES = ("127.0.0.1", "localhost")
 MESSAGES_ACTION = {
     "dossiers-verifies": "Dossiers de données vérifiés.",
 }
+
+
+class PageProvisoire(NamedTuple):
+    """Page annoncée par l'accueil mais dont la fonctionnalité n'existe pas.
+
+    L'interface affiche honnêtement ces pages comme provisoires plutôt que de
+    pointer vers des adresses inexistantes ou de simuler une capacité absente.
+    """
+
+    route: str
+    titre: str
+    description: str
+
+
+PAGES_PROVISOIRES = (
+    PageProvisoire(
+        "moteurs",
+        "Moteurs",
+        "l'installation, l'état et le contrôle d'import des moteurs "
+        "relèvent de la tâche 4.4",
+    ),
+    PageProvisoire(
+        "modeles",
+        "Modèles",
+        "la vérification, le téléchargement et la suppression des modèles "
+        "relèvent des tâches 5.1 à 5.5",
+    ),
+    PageProvisoire(
+        "audios",
+        "Audios",
+        "la liste et le décodage des audios relèvent de la tâche 6.1",
+    ),
+    PageProvisoire(
+        "executions",
+        "Exécutions",
+        "le lancement et le suivi des exécutions relèvent des tâches 6.2 à 6.6",
+    ),
+    PageProvisoire(
+        "resultats",
+        "Résultats",
+        "la consultation et la comparaison des résultats relèvent des tâches 7.1 et 7.2",
+    ),
+)
+
+MESSAGE_MOTEURS_NON_INSTALLES = (
+    "Aucun moteur n'est installé à ce stade : l'installation et le contrôle "
+    "d'import ne sont pas encore implémentés. Le lancement du serveur n'installe "
+    "ni ne télécharge rien."
+)
 
 MESSAGES_ERREUR = {
     403: "Requête refusée : adresse, origine ou jeton invalide.",
@@ -99,8 +153,8 @@ def create_app(config: ConfigApplication, services: ServicesApplication) -> Flas
     origines = frozenset(f"http://{adresse_port}" for adresse_port in hotes)
 
     @application.context_processor
-    def injecter_jeton() -> dict[str, str]:
-        return {NOM_CHAMP_JETON: jeton}
+    def injecter_jeton() -> dict[str, object]:
+        return {NOM_CHAMP_JETON: jeton, "pages_provisoires": PAGES_PROVISOIRES}
 
     @application.before_request
     def verifier_requete() -> None:
@@ -165,7 +219,14 @@ def _enregistrer_routes(
             "accueil.html",
             dossiers=_etat_dossiers(config),
             message=_message_action(),
+            instantane=services.creneau.instantane(),
+            libelles_etats=LIBELLES_ETATS,
+            libelles_types=LIBELLES_TYPES,
+            message_moteurs=MESSAGE_MOTEURS_NON_INSTALLES,
         )
+
+    for page in PAGES_PROVISOIRES:
+        _enregistrer_page_provisoire(application, page)
 
     @application.get("/operation")
     def operation() -> str:
@@ -187,6 +248,19 @@ def _enregistrer_routes(
         except ServiceArrete:
             abort(503)
         return redirect(url_for("accueil", action="dossiers-verifies"), code=303)
+
+
+def _enregistrer_page_provisoire(application: Flask, page: PageProvisoire) -> None:
+    """Déclare une page HTML provisoire, sans lecture ni écriture de données."""
+
+    def page_provisoire() -> str:
+        return render_template(
+            "provisoire.html", titre=page.titre, description=page.description
+        )
+
+    application.add_url_rule(
+        f"/{page.route}", endpoint=page.route, view_func=page_provisoire, methods=["GET"]
+    )
 
 
 def _enregistrer_erreurs(application: Flask) -> None:

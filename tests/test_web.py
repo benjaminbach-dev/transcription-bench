@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import html
+import re
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 
@@ -386,6 +389,89 @@ class ProtectionsRequetesTest(SocleWebTest):
         )
         self.assertEqual(valide.status_code, 303)
         self.assertEqual(self.appels, [self.dossier_data])
+
+
+class AccueilEtPagesProvisoiresTest(SocleWebTest):
+    """Accueil complet (créneau, dossiers, liens) et pages provisoires honnêtes."""
+
+    def texte(self, chemin: str) -> str:
+        reponse = self.client.get(chemin, base_url=self.base_url())
+        self.assertEqual(reponse.status_code, 200, chemin)
+        return html.unescape(reponse.get_data(as_text=True))
+
+    def test_accueil_affiche_creneau_dossiers_et_liens_utiles(self) -> None:
+        corps = self.texte("/")
+
+        self.assertIn("<dt>État</dt>", corps)
+        self.assertIn("<dd>libre</dd>", corps)
+        self.assertIn("Aucun moteur n'est installé", corps)
+        self.assertIn("ne télécharge rien", corps)
+        for nom in DOSSIERS_DATA:
+            self.assertIn(str(self.dossier_data / nom), corps)
+        self.assertIn("(absent)", corps)
+
+        liens = set(re.findall(r'<a href="([^"]+)"', corps))
+        attendus = {
+            "/operation",
+            "/moteurs",
+            "/modeles",
+            "/audios",
+            "/executions",
+            "/resultats",
+        }
+        self.assertLessEqual(attendus, liens)
+        for lien in sorted(liens):
+            page = self.client.get(lien, base_url=self.base_url())
+            self.assertEqual(page.status_code, 200, lien)
+            self.verifier_html_seul(page.get_data(as_text=True))
+        self.assertFalse(self.dossier_data.exists())
+
+    def test_pages_provisoires_honnetes_sans_effet_de_bord(self) -> None:
+        for route in ("/moteurs", "/modeles", "/audios", "/executions", "/resultats"):
+            with self.subTest(route=route):
+                corps = self.texte(route)
+                self.assertIn("Fonctionnalité non disponible", corps)
+                self.assertIn("page est provisoire", corps)
+                self.assertIn("Aucune donnée n'est lue", corps)
+                self.assertIn('href="/"', corps)
+                self.verifier_html_seul(corps)
+        self.assertFalse(
+            self.dossier_data.exists(),
+            "une page provisoire a créé ou touché les dossiers de données",
+        )
+
+    def test_accueil_reflete_une_operation_en_cours_et_lien_operation(self) -> None:
+        liberation = threading.Event()
+        self.addCleanup(liberation.set)
+        self.creneau.demarrer(
+            "execution", lambda travailleur: liberation.wait(60), cible="test accueil"
+        )
+
+        def terminer() -> None:
+            liberation.set()
+            self.creneau.arreter(5.0)
+            thread = self.creneau.thread_travailleur
+            if thread is not None:
+                thread.join(10)
+
+        self.addCleanup(terminer)
+        corps = self.texte("/")
+
+        self.assertIn("<dd>en cours</dd>", corps)
+        self.assertIn("<dd>exécution</dd>", corps)
+        self.assertIn("<dd>test accueil</dd>", corps)
+
+        page = self.texte("/operation")
+        self.assertIn("Journal", page)
+        self.assertIn('href="/"', page)
+        self.assertIn("Actualiser", page)
+
+    def test_accueil_apres_arret_indique_le_refus(self) -> None:
+        self.creneau.arreter()
+
+        corps = self.texte("/")
+
+        self.assertIn("Arrêt du serveur demandé", corps)
 
 
 if __name__ == "__main__":
