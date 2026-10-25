@@ -157,3 +157,12 @@ Provenance : dépôt `transcription-bench`, branche `main`, base `7690e8c`.
 - [constraint] Le contrôle de récupération est provisoire : il refuse un `run.json` non finalisé, illisible ou incohérent, sans réécrire les résultats. La tâche 6.5 doit le remplacer par la vraie clôture en abandonné et la gestion vérifiée du moteur survivant. La clé `etat` supposée doit être réconciliée avec le format décidé en 6.4. La coche 3.5 valide l'orchestration, pas la réalisation de 6.5.
 - [risk] À éprouver sous Windows en 1.7 : Waitress active SO_REUSEADDR, ce qui pourrait laisser partager un port déjà occupé ; l'usage exclusif via une socket préparée et l'API publique `sockets` est une piste si le problème est confirmé. La libération du verrou OS après mort du processus peut aussi être légèrement différée sous Windows. Aucun correctif Windows ni qualification réelle affirmé ici.
 - [status] Progression 7/39. Lot 3 réalisé côté serveur ; tâches 3.1, 3.3, 3.4 et 3.5 cochées. 3.2 reste ouverte uniquement pour la sonde PC 1.7. Aucun moteur, poids ni inférence réelle ; 6.5/6.6 restent ouvertes.
+
+## Lot 4 — déclarations et registre (4.1), 2026-10-25
+
+Provenance : dépôt `transcription-bench`, branche `main`, base `1ec5c0d`.
+
+- [validation] Tâche 4.1 terminée, revue et corrections puis feu vert advisor. Paquet racine `engines/`, déclarations stdlib et registre par instance ; imports des adaptateurs différés. Trois moteurs réels et factice déclarés, aucune famille réelle qualifiée, aucun verrou ou adaptateur réel ajouté. Cent dix-sept tests annoncés par worker ; suite complète rejouée favorablement avec deux graines par advisor.
+- [decision] Les réglages appartiennent aux familles, pas au moteur global. Aucun réglage réel n'est fixé avant les tâches 8.x : ni langue modifiable (français imposé par l'adaptateur lorsque possible), ni traduction, ni défaut de décodage supposé. Durée native strictement positive et finie, sans plafond arbitraire.
+- [next] En 4.2, conserver la commande du design `python engines/runner.py job.json` par un bootstrap limité à la racine calculée depuis `__file__`, jamais un chemin du job. Vérifier en 4.3 ce lancement exact sans dépendre de l'installation éditable du serveur. La distribution wheel n'est pas une cible : lancement depuis le clone par uv.
+- [status] Progression 8/39 ; 3.2 et validations PC restent ouvertes. Aucun moteur réel, poids ou inférence réelle.
