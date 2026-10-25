@@ -95,3 +95,11 @@ Provenance : dépôt `transcription-bench`, branche `main`, base `4077f0c` ; ré
 - [constraint] Aucun moteur réel, poids ou inférence réelle sur le serveur. Le jalon 0 reste obligatoire avant les adaptateurs réels et la qualification des moteurs, familles, fichiers et méthodes long-form sur Linux et Windows. La sonde web 1.7 sur les deux PC reste due ; les tests serveur ne la remplacent pas. Une tâche incluant une validation PC ne peut être cochée pour son seul code factice.
 - [decision] Même session advisor reprise après chaque tâche et correction d'un lot ; rafraîchissement de son contexte uniquement lors du passage à un nouveau lot. Worker réalise les tâches une par une ; commit et push après revue favorable et corrections.
 - [risk] Le développement de la couche web précède sa qualification PC : un écart observé plus tard peut imposer des corrections de code ; tout écart doit être consigné et réconcilié avant la mise en œuvre qui en dépend.
+
+## Socle Python créé — tâche 2.2, 2026-10-25
+
+Provenance : dépôt `transcription-bench`, branche `main`, base `3b340a2`.
+
+- [validation] Tâche 2.2 terminée et revue favorable sans correction. `pyproject.toml`, paquet racine `transcription_bench`, CLI minimale, `.python-version` et `uv.lock` créés. `uv run --locked transcription-bench --help`, vérification du verrou, trois tests unittest, validation OpenSpec stricte et contrôle Git réussis. Sans argument, la CLI refuse explicitement le démarrage : serveur non encore implémenté.
+- [validation] Dépendances serveur installées uniquement dans `.venv` : Flask 3.1.3, Waitress 3.0.2, Jinja2 3.1.6, Werkzeug 3.1.9, av 19.0.2, numpy 2.5.4, huggingface_hub 2.3.0, psutil 7.2.2. Verrou universel PyPI ; aucun paquet moteur installé. Cela ne valide ni les PC ni la sonde web 1.7.
+- [status] Progression 2/39. Prochaine tâche : 2.3, création des dossiers de données au démarrage. Aucun serveur web ni moteur réel à ce stade.
