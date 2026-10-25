@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block titre %}Accueil — transcription-bench{% endblock %}
+{% block contenu %}
+<h2>Accueil</h2>
+{% if message %}
+<p role="status">{{ message }}</p>
+{% endif %}
+<p>Interface en cours de construction : les pages des moteurs, des modèles, des audios, des exécutions et des résultats seront ajoutées aux tâches suivantes. Aucune opération de moteur n'est disponible à ce stade.</p>
+<h3>Dossiers de données</h3>
+<ul>
+{% for dossier in dossiers %}
+<li>{{ dossier.nom }} : {{ dossier.chemin }} ({% if dossier.existe %}présent{% else %}absent{% endif %})</li>
+{% endfor %}
+</ul>
+<form method="post" action="{{ url_for('verifier_dossiers') }}">
+<p><button type="submit">Vérifier les dossiers de données</button></p>
+</form>
+{% endblock %}

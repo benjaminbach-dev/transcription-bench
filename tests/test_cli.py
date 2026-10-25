@@ -1,4 +1,4 @@
-"""Tests de la ligne de commande : aide, dossiers de données, refus explicite."""
+"""Tests de la ligne de commande : aide, dossiers de données, lancement Waitress."""
 
 from __future__ import annotations
 
@@ -12,9 +12,16 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from flask import Flask
+
 from transcription_bench import cli, paths
 
 PAQUETS_MOTEURS = ("ctranslate2", "faster_whisper", "torch", "transcribe_cpp", "transformers")
+CONFIGURATION_ATTENDUE = {
+    "host": "127.0.0.1",
+    "threads": 4,
+    "max_request_body_size": 1024 * 1024,
+}
 
 
 class CliTest(unittest.TestCase):
@@ -24,29 +31,79 @@ class CliTest(unittest.TestCase):
             with mock.patch.object(paths, "DOSSIER_DATA", base):
                 with contextlib.chdir(dossier):
                     sortie = io.StringIO()
-                    with contextlib.redirect_stdout(sortie):
-                        with self.assertRaises(SystemExit) as sortie_erreur:
-                            cli.main(["--help"])
+                    with mock.patch.object(cli, "serve") as servir:
+                        with contextlib.redirect_stdout(sortie):
+                            with self.assertRaises(SystemExit) as sortie_erreur:
+                                cli.main(["--help"])
                     self.assertEqual(sortie_erreur.exception.code, 0)
+                    servir.assert_not_called()
                     self.assertIn("transcription-bench", sortie.getvalue())
+                    self.assertIn("--port", sortie.getvalue())
                     self.assertEqual(os.listdir(dossier), [])
             self.assertFalse(base.exists())
 
-    def test_sans_argument_prepare_les_dossiers_puis_refuse_le_serveur(self) -> None:
+    def test_lance_waitress_sur_l_adresse_locale_avec_le_port_demande(self) -> None:
         with tempfile.TemporaryDirectory() as dossier, tempfile.TemporaryDirectory() as donnees:
             base = Path(donnees) / "data-projet"
             with mock.patch.object(paths, "DOSSIER_DATA", base):
                 with contextlib.chdir(dossier):
                     sortie = io.StringIO()
-                    with contextlib.redirect_stderr(sortie):
-                        code = cli.main([])
-                    self.assertEqual(code, 1)
-                    self.assertIn("serveur non encore implémenté", sortie.getvalue())
+                    with mock.patch.object(cli, "serve") as servir:
+                        with contextlib.redirect_stdout(sortie):
+                            code = cli.main(["--port", "9123"])
+
+                    self.assertEqual(code, 0)
                     self.assertEqual(os.listdir(dossier), [])
+                    self.assertIn("http://127.0.0.1:9123", sortie.getvalue())
+
+                    servir.assert_called_once()
+                    application = servir.call_args.args[0]
+                    self.assertIsInstance(application, Flask)
+                    self.assertEqual(
+                        servir.call_args.kwargs,
+                        {**CONFIGURATION_ATTENDUE, "port": 9123},
+                    )
+                    self.assertFalse(application.debug)
+                    self.assertNotIn("static", application.view_functions)
+                    self.assertEqual(application.config["PORT"], 9123)
+                    self.assertEqual(application.config["DOSSIER_DATA"], str(base))
+
             self.assertEqual(
-                sorted(os.listdir(base)),
-                ["audio", "engines", "models", "results"],
+                sorted(os.listdir(base)), ["audio", "engines", "models", "results"]
             )
+
+    def test_port_par_defaut_sans_ouvrir_le_port(self) -> None:
+        self.assertEqual(cli.construire_analyseur().parse_args([]).port, 8765)
+        with tempfile.TemporaryDirectory() as donnees:
+            base = Path(donnees) / "data-projet"
+            with mock.patch.object(paths, "DOSSIER_DATA", base):
+                sortie = io.StringIO()
+                with mock.patch.object(cli, "serve") as servir:
+                    with contextlib.redirect_stdout(sortie):
+                        code = cli.main([])
+
+            self.assertEqual(code, 0)
+            self.assertIn("http://127.0.0.1:8765", sortie.getvalue())
+            self.assertEqual(servir.call_args.kwargs["port"], 8765)
+
+    def test_refuse_un_port_invalide_au_parsing_sans_effet(self) -> None:
+        for valeur in ("0", "65536", "-1", "abc", ""):
+            with self.subTest(valeur=valeur):
+                with tempfile.TemporaryDirectory() as dossier, tempfile.TemporaryDirectory() as donnees:
+                    base = Path(donnees) / "data-projet"
+                    with mock.patch.object(paths, "DOSSIER_DATA", base):
+                        with contextlib.chdir(dossier):
+                            erreur = io.StringIO()
+                            with mock.patch.object(cli, "serve") as servir:
+                                with contextlib.redirect_stderr(erreur), contextlib.redirect_stdout(io.StringIO()):
+                                    with self.assertRaises(SystemExit) as sortie:
+                                        cli.main(["--port", valeur])
+
+                            self.assertEqual(sortie.exception.code, 2)
+                            servir.assert_not_called()
+                            self.assertIn("port invalide", erreur.getvalue())
+                            self.assertEqual(os.listdir(dossier), [])
+                    self.assertFalse(base.exists())
 
     def test_import_du_cli_ne_charge_aucun_paquet_moteur(self) -> None:
         code = (

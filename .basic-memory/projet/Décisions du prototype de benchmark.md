@@ -111,3 +111,12 @@ Provenance : dépôt `transcription-bench`, branche `main`, base `df9f776`.
 - [decision] `data/` est ancré à la racine du projet, pas au répertoire courant : `uv run` peut être lancé depuis un sous-dossier, alors que la règle Git `/data/` ne couvre que la racine. Cela évite la dispersion des modèles/résultats et leur suivi Git accidentel. Initialisation idempotente des dossiers audio/models/engines/results, sans écraser leur contenu.
 - [validation] Tâche 2.3 terminée ; advisor du lot repris pour revue, correction de l'ancrage appliquée par worker puis relue favorablement dans la même session. Sept tests unittest réussis, aide CLI sans effet, verrou et OpenSpec strict validés, contrôle des espaces Git et exclusion des quatre dossiers vérifiés. Tests limités aux dossiers temporaires.
 - [status] Progression 3/39 : lot 2 complet. Prochain lot : serveur web et créneau d'opération (3.x), avec nouveau contexte advisor au changement de lot. La CLI prépare les dossiers mais refuse encore explicitement de démarrer un serveur non implémenté. Aucune validation PC, installation moteur, poids ou inférence réelle.
+
+## Lot 3 — couche web initiale (3.1), 2026-10-25
+
+Provenance : dépôt `transcription-bench`, branche `main`, base `8f8b366`.
+
+- [validation] Tâche 3.1 terminée : fabrique Flask sans effets, templates HTML seuls et échappés, erreurs 404/405/500 sans trace et en-têtes conservés ; CLI Waitress API publique sur 127.0.0.1, port configurable (8765 par défaut), quatre threads et limite de corps 1 Mio. Dix-huit tests passent, dont rejeu avec huit graines de hachage après correction advisor du test Allow sensible à l'ordre. Revue finale favorable, validation OpenSpec stricte et verrou vérifiés.
+- [decision] `POST /dossiers/verifier` réutilise provisoirement le service idempotent de préparation des dossiers pour un parcours POST → 303 → GET réel. Il ne prétend pas implémenter les opérations futures. Il devra être protégé par le jeton en 3.2.
+- [validation] Sonde HTTP locale sur serveur, port 8799 : accueil 200, action 303, erreur 404 ; processus arrêté ensuite. Contrôle de fonctionnement uniquement, ne remplace pas la sonde 1.7 sur les PC.
+- [status] Progression 4/39. Host/Origin/jeton et limite applicative (3.2), chemins (3.3), créneau (3.4), verrou/accueil complet (3.5) et supervision complète (6.6) restent à réaliser. Aucun moteur ni poids.

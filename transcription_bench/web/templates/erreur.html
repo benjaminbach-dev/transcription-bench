@@ -1,0 +1,7 @@
+{% extends "base.html" %}
+{% block titre %}Erreur {{ code }} — transcription-bench{% endblock %}
+{% block contenu %}
+<h2>Erreur {{ code }}</h2>
+<p>{{ message }}</p>
+<p><a href="{{ url_for('accueil') }}">Retour à l'accueil</a></p>
+{% endblock %}
