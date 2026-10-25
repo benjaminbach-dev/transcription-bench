@@ -129,3 +129,12 @@ Provenance : dépôt `transcription-bench`, branche `main`, base `baa424b`.
 - [decision] Ports CLI limités à 1024–65535 : le port 80 est exclu, car navigateur/Werkzeug peuvent retirer son suffixe, incompatible avec le contrôle Host exact incluant le port. Port par défaut inchangé (8765).
 - [observation] Waitress 3.0.2 rejette dès Content-Length = 1 048 576 (comparaison >=), et au-delà. La sonde envoie les en-têtes seuls pour éviter un reset de connexion sur Windows ; le petit corps de contrôle atteint l'application.
 - [status] Case 3.2 laissée ouverte, progression 4/39 : sonde PC 1.7 sur Linux puis Windows toujours due. Les tests du serveur de développement ne la remplacent pas. Aucun moteur, poids ou inférence réelle.
+
+## Lot 3 — chemins contrôlés (3.3), 2026-10-25
+
+Provenance : dépôt `transcription-bench`, branche `main`, base `6ec2145`.
+
+- [validation] Tâche 3.3 terminée, corrections worker puis revue finale favorable dans la même session advisor : confinement lexical et après résolution des chemins audio/résultats, refus absolus POSIX/Windows, remontées, liens sortants et boucles ; erreurs de résolution converties en refus explicites. Identifiants HF acceptés sous forme `nom` ou `org/nom`, sans import moteur. Cinquante et un tests passent avec deux graines ; tests de liens réellement exécutés ici. Progression 5/39, 3.2 reste ouverte.
+- [constraint] Les services futurs des lots 5 à 7 doivent utiliser ces fonctions ; aucune route actuelle ne reçoit de nom de fichier. Pas de garantie contre une mutation concurrente du disque (TOCTOU). Liens/jonctions Windows non qualifiés : vérifier que les tests ne sont pas tous ignorés sur PC.
+- [risk] À résoudre avant le stockage des modèles au lot 5 : `<org>__<nom>` du design est ambigu (`a__b/c` et `a/b__c` entrent en collision). Ne pas restreindre les identifiants valides pour contourner ce problème ; vérifier la stratégie de clé et réconcilier le design avant intégration. L'hypothèse d'un identifiant canonique retourné par `model_info` pour les noms seuls n'est pas validée.
+- [next] Lot 6 : n'accepter comme audio qu'un fichier ordinaire présent dans la liste autorisée, notamment pour éviter les noms de périphériques Windows. Aucun moteur ni poids installé.
