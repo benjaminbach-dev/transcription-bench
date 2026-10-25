@@ -3,9 +3,9 @@ title: Reprise du lot 5 — compatibilité en attente d’arbitrage
 type: note
 permalink: transcription-bench/projet/reprise-du-lot-5-compatibilite-en-attente-darbitrage
 date: '2026-10-25'
-provenance: transcription-bench, main, base publiée 90a7c34 ; clôture locale de 5.1
+provenance: transcription-bench, main, base publiée 34f147f ; clôture locale de 5.2
   après revue finale
-status: arbitrage clos ; 5.1 terminée et relue, publication préparée
+status: 5.1 publiée ; 5.2 terminée et relue, publication préparée
 tags:
 - reprise
 - lot-5
@@ -17,14 +17,12 @@ tags:
 Le titre historique du fichier conserve « en attente d’arbitrage », mais **l’arbitrage est clos**. Cette synthèse remplace les mentions précédentes d'attente.
 
 ## État et méthode
+Provenance : dépôt `transcription-bench`, branche `main`, base publiée **34f147f**, 2026-10-25. **5.1 publiée ; 5.2 terminée et cochée : 13/39**. Revue et corrections puis feu vert advisor. Publication de 5.2 préparée ; vérifier Git pour son commit effectif. **5.3 non commencée**.
 
-Provenance : dépôt `transcription-bench`, branche `main`, base publiée **90a7c34**, 2026-10-25. **5.1 terminée et cochée : 12/39**. Revue finale favorable après réconciliation des specs et choix utilisateur. Publication préparée avec les seuls fichiers de la tâche et les notes de continuité ; vérifier Git pour son commit effectif. **5.2 non commencée**.
-
-- [decision] Même méthode : une tâche par worker, revue advisor, corrections worker, reprise advisor, puis commit/push des seuls fichiers concernés par le principal. Un advisor par lot. Les sessions expirées peuvent être reconstituées avec contexte, en signalant le repli sans redemander d'accord.
-- [decision] Profil simplifié retenu : Transformers exige `tokenizer.json` et `tokenizer_config.json`, même si vocabulaire et fusions seuls seraient lisibles par la bibliothèque. faster-whisper exige `preprocessor_config.json` pour tout modèle CTranslate2 Whisper, sans valeurs par défaut, même si cela exclut certains petits modèles comme `Systran/faster-whisper-small`. Motif : simplicité, moins de variantes à couvrir ; ne pas présenter toutes ces restrictions comme des garanties de sécurité. À réexaminer lors des essais PC.
-- [validation] **221 tests passent**, dont 44 de compatibilité, avec deux graines et hors ligne. Validation OpenSpec stricte, verrou uv et contrôle des espaces Git réussis. Les fichiers spéciaux requis sont testés isolément ; pas de doublon du test tokenizer déjà couvert.
-- [constraint] Serveur de développement uniquement. Aucun moteur, poids, dépendance nouvelle ou inférence réelle. Familles fournies **toujours `qualifiee=False`**. Aucune durée native ni réglage réel ajouté. Tâches 1.x, 3.2 et 8.x restent ouvertes.
-
+- [decision] Une tâche par worker, revue advisor, corrections worker, reprise advisor, puis commit/push des seuls fichiers concernés par le principal. Un advisor par lot. Les sessions expirées ou inaccessibles peuvent être reconstituées avec contexte, en signalant le repli sans redemander d'accord.
+- [decision] Profil simplifié de 5.1 conservé : tokenizer JSON et sa configuration pour Transformers ; fichier de prétraitement requis pour tout CTranslate2 Whisper. Simplicité et limitation des variantes, pas de garantie générale de sécurité ; réexamen au jalon PC.
+- [validation] **247 tests passent**, dont 70 ciblés GGUF et compatibilité, deux graines hors ligne. OpenSpec strict, verrou uv et contrôle des espaces Git réussis. Tests GGUF sur octets synthétiques, aucun vrai modèle.
+- [constraint] Serveur de développement uniquement. Aucun moteur, poids, nouvelle dépendance ou inférence réelle. Familles réelles toujours non qualifiées, tâches 1.x, 3.2 et 8.x ouvertes.
 ## Production de 5.1 et limites
 
 Deux nouveaux fichiers : `transcription_bench/compatibilite_modeles.py` et `tests/test_compatibilite_modeles.py`. Spec `model-management`, design D10 et tâche 5.1 alignés sur le profil accepté. Le proposal et les autres specs restent cohérents sans modification.
@@ -45,8 +43,17 @@ Sources : Context7 faster-whisper et Transformers v5.19.0 ; pour v5.20.2 non ind
 - Aucun de ces constats documentaires ne prouve le chargement réel hors ligne sur un PC.
 
 ## Continuité des agents et suite
+- Advisor lot 5 **à reprendre** : `d46d5377-0ebf-450`, revue et validation de 5.2. Remplace `c3afe5e6-b0f8-44e`, devenu inaccessible ; reconstitution annoncée à l'utilisateur selon l'autorisation existante.
+- Worker 5.2 : `5500b73d-2fa4-42d`. Workers 5.1 et scout documentaire restent historiques, pas besoin de refaire leurs investigations.
+- Prochaine tâche **5.3**. Prévoir la conversion des erreurs du lecteur (réseau/OSError) en refus ; lecture réseau bornée sans télécharger implicitement des poids, avec une stratégie de tampon à vérifier (éviter à la fois les requêtes par champ de 4 octets et la prélecture excessive). Limiter les JSON sans rejeter les vrais tokenizer_config de Whisper déjà observés.
+- Avant **5.4**, résoudre la collision `<org>__<nom>` et réconcilier le design. Les GGUF découpés en plusieurs fichiers ne doivent pas être traités comme des quantifications indépendantes : choisir un refus explicite ou une stratégie documentée avant de publier un inventaire prêt. Aucune prise en charge de GGUF découpé n'est acquise.
+- Architecture réelle `general.architecture` de transcribe.cpp, familles et quantifications à confirmer sur PC. Récupération 6.5 et supervision 6.6 toujours dues ; voir [[Reprise du développement après le lot 4]].
 
-- Advisor lot 5 **à reprendre** : `c3afe5e6-b0f8-44e`, revue finale favorable. Il remplace `57c274d1-1f9e-44d`, expiré après ses revues B1–B4 et feu vert technique.
-- Worker documentaire et test isolé : `5bfddc13-6023-479`. Worker initial 5.1 `95174c2c-fb65-484` expiré, code déjà relu ; aucune raison de refaire l'implémentation.
-- Scout documentaire terminé `946d75d6-205b-4a5` ; investigation disponible sans la refaire.
-- Prochaine tâche **5.2**. Avant **5.4**, résoudre la collision de stockage `<org>__<nom>` et réconcilier le design ; aucun stockage des modèles encore écrit. Les autres limites de récupération 6.5 et supervision 6.6 restent décrites dans [[Reprise du développement après le lot 4]].
+## Production de 5.2 — lecture GGUF partielle
+
+Provenance : `main`, base `34f147f`, 2026-10-25. Nouveau `transcription_bench/gguf.py`, fixtures synthétiques et tests ; intégration dans la règle de compatibilité existante.
+
+- [validation] Lecteur GGUF v2/v3, petit et grand boutisme, sur `read(n)` fourni par l'appelant. Métadonnées scalaires, chaînes et tableaux imbriqués sautés si nécessaire. Arrêt dès `general.architecture`, sans validation des tenseurs, des poids ni du reste du fichier. Borne totale 64 Mio, lecture par blocs de 64 Kio, tableaux limités à 8 niveaux ; architecture au-delà de la borne refusée, sans prétendre cette borne universelle.
+- [decision] Seul le fichier GGUF choisi est lu et sélectionné ; choix explicite si plusieurs candidats. Validation des noms et du choix avant appel du lecteur. Architecture jamais déduite du nom de fichier ; le nom de quantification ne prouve pas son encodage réel. Production encore refusée si la famille est non qualifiée ; succès sur déclarations synthétiques dans les tests.
+- [validation] Correction de revue importante : la magie reste toujours les octets `GGUF`, même en grand boutisme. L'ordre des octets se détecte sur la version, comme dans le lecteur officiel `llama.cpp/gguf-py/gguf/gguf_reader.py`. L'ancien faux `FUGG` partagé par la fixture et le parseur est désormais refusé ; test indépendant avec octets officiels écrits à la main. Version 1 explicitement refusée.
+- [source] Documentation officielle `ggml/docs/gguf.md`, lecteur officiel `llama.cpp/gguf-py/gguf/gguf_reader.py` et Context7 `/infinitensor/gguf` consultés. Bibliothèque tierce non installée. Rien de ceci ne qualifie un moteur ou un PC.

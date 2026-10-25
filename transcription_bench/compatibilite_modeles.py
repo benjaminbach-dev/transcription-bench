@@ -4,8 +4,10 @@ Ce module décide si un dépôt Hugging Face correspond au moteur choisi, à par
 de la seule liste de ses fichiers et du contenu déjà lu des petits JSON de
 configuration. Il ne lit aucun fichier, n'appelle aucun service, ne télécharge
 rien et n'importe aucun paquet moteur : la consultation distante (`model_info`,
-lecture des petits JSON) appartient à la tâche 5.3, le choix du fichier GGUF à la
-tâche 5.2 et le téléchargement à la tâche 5.4.
+lecture des petits JSON et de l'en-tête GGUF) appartient à la tâche 5.3, et le
+téléchargement à la tâche 5.4. L'en-tête GGUF est lu par
+`transcription_bench.gguf`, sur un flux fourni par l'appelant : ce module ne
+reçoit que le résultat de cette lecture.
 
 Règles implémentées ici, appelées par `DeclarationAdaptateur.regle_compatibilite`
 (une seule source de vérité, aucun second registre) :
@@ -45,6 +47,21 @@ Règles implémentées ici, appelées par `DeclarationAdaptateur.regle_compatibi
     `model.safetensors`, soit `model.safetensors.index.json` avec ses shards
     vérifiés ; `.bin`, `.pt`, `.pth`, `.nemo`, `.gguf`, `.onnx` et `.h5` ne sont
     jamais sélectionnés, et un dépôt sans variante safetensors complète est refusé.
+- `transcribe-cpp-gguf` (transcribe.cpp) : le dépôt doit contenir au moins un
+  fichier `*.gguf`. S'il en contient plusieurs, le fichier à télécharger doit
+  être choisi explicitement (`fichier_gguf`) ; seule cette variante est retenue.
+  La famille vient de la métadonnée `general.architecture` lue dans l'en-tête du
+  fichier choisi par `lecteur_entete_gguf`, jamais du nom de fichier : un nom
+  comme `modele.q8_0.gguf` est consigné tel quel et ne prouve ni l'architecture
+  ni la quantification réelle. Les noms sont validés (chemin relatif confiné)
+  avant tout appel au lecteur, et aucune ouverture de fichier n'a lieu ici :
+  aucun fichier local arbitraire n'est ouvert et aucun lien symbolique n'est
+  suivi, faute d'accès au système de fichiers. Le confinement des chemins locaux
+  reste à faire lors de l'écriture des fichiers téléchargés (tâche 5.4). Le
+  lecteur est `transcription_bench.gguf.lire_entete_gguf`, borné, sans réseau et
+  sans système de fichiers ; la lecture distante appartient à la tâche 5.3. Une
+  architecture absente, illisible ou non déclarée par le moteur est refusée, et
+  une architecture déclarée mais non qualifiée reste refusée comme en 5.1.
 
 Restrictions fonctionnelles documentaires, non qualifiées ; les listes sont à
 confirmer au jalon PC :
@@ -73,7 +90,10 @@ Les listes de fichiers ci-dessous sont documentaires (documentation
 faster-whisper v1.2.1, arborescences publiques `openai/whisper-large-v3-turbo` et
 `nvidia/parakeet-tdt-0.6b-v3`, source `transformers` v5.20.2) : les fichiers
 réellement requis, les quantifications acceptées et le comportement long-form
-restent à valider par les tâches 1.4 à 1.6 puis 8.x sur PC. Rien ici ne coche un
+restent à valider par les tâches 1.4 à 1.6 puis 8.x sur PC. Pour transcribe.cpp,
+le lecteur d'en-tête reconnaît un format et une architecture, pas une liste de
+quantifications acceptées : la variante retenue est celle que l'utilisateur a
+choisie, sans affirmer qu'elle est adaptée à la machine. Rien ici ne coche un
 jalon PC ni ne rend une famille exécutable.
 
 Le contenu des petits JSON est fourni par l'appelant sous forme de texte ou
@@ -93,14 +113,16 @@ contrôles ne constituent pas une sandbox.
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
 from engines.declarations import DeclarationAdaptateur, Famille, declarations_fournies
+from transcription_bench.gguf import CLE_ARCHITECTURE, EnteteGGUF, EnteteGGUFInvalide
 
 REGLE_CTRANSLATE2_WHISPER = "ctranslate2-whisper"
 REGLE_TRANSFORMERS_SAFETENSORS = "transformers-safetensors"
+REGLE_TRANSCRIBE_CPP_GGUF = "transcribe-cpp-gguf"
 
 RAISON_FICHIERS_MANQUANTS = "fichiers-manquants"
 RAISON_FAMILLE_HORS_PERIMETRE = "famille-hors-perimetre"
@@ -112,6 +134,11 @@ RAISON_WHISPER_NON_CONVERTI = "whisper-non-converti"
 RAISON_POIDS_SAFETENSORS_ABSENTS = "poids-safetensors-absents"
 RAISON_INDEX_INVALIDE = "index-safetensors-invalide"
 RAISON_NOM_FICHIER_REFUSE = "nom-de-fichier-refuse"
+RAISON_FICHIER_GGUF_ABSENT = "fichier-gguf-absent"
+RAISON_FICHIER_GGUF_NON_CHOISI = "fichier-gguf-non-choisi"
+RAISON_EN_TETE_GGUF_NON_LU = "en-tete-gguf-non-lu"
+RAISON_EN_TETE_GGUF_ILLISIBLE = "en-tete-gguf-illisible"
+RAISON_ARCHITECTURE_GGUF_ABSENTE = "architecture-gguf-absente"
 
 RAISONS_REFUS: tuple[str, ...] = (
     RAISON_FICHIERS_MANQUANTS,
@@ -124,6 +151,11 @@ RAISONS_REFUS: tuple[str, ...] = (
     RAISON_POIDS_SAFETENSORS_ABSENTS,
     RAISON_INDEX_INVALIDE,
     RAISON_NOM_FICHIER_REFUSE,
+    RAISON_FICHIER_GGUF_ABSENT,
+    RAISON_FICHIER_GGUF_NON_CHOISI,
+    RAISON_EN_TETE_GGUF_NON_LU,
+    RAISON_EN_TETE_GGUF_ILLISIBLE,
+    RAISON_ARCHITECTURE_GGUF_ABSENTE,
 )
 
 # faster-whisper / CTranslate2 (famille Whisper au premier jalon).
@@ -190,9 +222,12 @@ FICHIERS_TRANSFORMERS_COMMUNS = frozenset(
 # Borne de profondeur de l'inspection d'`auto_map` (aucun plafond de nœuds).
 PROFONDEUR_MAX_INSPECTION = 8
 
+# Variante de quantification transcribe.cpp : extension seule, sans interprétation.
+EXTENSION_GGUF = ".gguf"
+
 
 class RegleCompatibiliteInconnue(ValueError):
-    """Règle non implémentée ici : transcribe.cpp (5.2), moteur factice, autre."""
+    """Règle non implémentée ici : moteur factice, autre."""
 
 
 class ResultatCompatibiliteInvalide(ValueError):
@@ -208,6 +243,10 @@ class ResultatCompatibilite:
     fichier retenu et, quand ils sont connus, `fichiers_manquants`, la `famille`
     détectée et le `moteur_suggere`. Un moteur suggéré est informatif : il reste
     soumis à sa propre règle de compatibilité et à sa qualification.
+
+    Pour transcribe.cpp, `fichiers` ne contient que la variante GGUF retenue : un
+    dépôt à plusieurs quantifications n'est accepté qu'après un choix explicite,
+    et les autres variantes ne sont ni listées ni téléchargées.
     """
 
     accepte: bool
@@ -265,8 +304,10 @@ def verifier_compatibilite(
     *,
     configurations: Mapping[str, str | bytes] | None = None,
     declarations_connues: Sequence[DeclarationAdaptateur] | None = None,
+    fichier_gguf: str | None = None,
+    lecteur_entete_gguf: Callable[[str], EnteteGGUF] | None = None,
 ) -> ResultatCompatibilite:
-    """Vérifie un dépôt pour un moteur, sans E/S et sans réseau.
+    """Vérifie un dépôt pour un moteur, sans réseau ni fichier de modèle.
 
     `fichiers` est la liste des noms de fichiers du dépôt ; `configurations`
     associe le nom d'un petit JSON de configuration présent dans le dépôt à son
@@ -275,13 +316,28 @@ def verifier_compatibilite(
     inspectable n'est pas accepté. `declarations_connues` sert seulement à
     suggérer un autre moteur et vaut par défaut les déclarations fournies.
 
+    Pour la règle transcribe.cpp, `fichier_gguf` désigne la variante de
+    quantification choisie quand le dépôt en contient plusieurs, et
+    `lecteur_entete_gguf` fournit l'architecture à partir de l'en-tête du seul
+    fichier retenu (typiquement `transcription_bench.gguf.lire_entete_gguf`
+    appliqué à un flux de la tâche 5.3). Le lecteur n'est appelé qu'après
+    validation du nom, et il n'est jamais appelé quand la liste de fichiers est
+    refusée. Ces deux paramètres sont refusés pour les autres règles.
+
     Lève `RegleCompatibiliteInconnue` si la déclaration utilise une règle non
-    implémentée ici (transcribe.cpp, moteur factice), et `TypeError` si la
-    déclaration ou les tables d'entrée n'ont pas la forme attendue ; un nom de
-    fichier non textuel est un refus (`nom-de-fichier-refuse`), pas une erreur.
+    implémentée ici (moteur factice, autre), et `TypeError` si la déclaration ou
+    les tables d'entrée n'ont pas la forme attendue ; un nom de fichier non
+    textuel est un refus (`nom-de-fichier-refuse`), pas une erreur.
     """
     if not isinstance(declaration, DeclarationAdaptateur):
         raise TypeError("déclaration d'adaptateur attendue")
+    if (
+        fichier_gguf is not None or lecteur_entete_gguf is not None
+    ) and declaration.regle_compatibilite != REGLE_TRANSCRIBE_CPP_GGUF:
+        raise TypeError(
+            "fichier_gguf et lecteur_entete_gguf ne concernent que la règle "
+            f"{REGLE_TRANSCRIBE_CPP_GGUF!r}, pas {declaration.regle_compatibilite!r}"
+        )
     connues = (
         declarations_fournies()
         if declarations_connues is None
@@ -304,10 +360,18 @@ def verifier_compatibilite(
             famille_id, retenus = _regle_transformers(
                 declaration, noms, contenus, connues
             )
+        elif declaration.regle_compatibilite == REGLE_TRANSCRIBE_CPP_GGUF:
+            famille_id, retenus = _regle_transcribe_cpp(
+                declaration,
+                noms,
+                connues,
+                fichier_gguf=fichier_gguf,
+                lecteur_entete_gguf=lecteur_entete_gguf,
+            )
         else:
             raise RegleCompatibiliteInconnue(
                 "règle de compatibilité non implémentée ici : "
-                f"{declaration.regle_compatibilite!r} (transcribe.cpp : tâche 5.2)"
+                f"{declaration.regle_compatibilite!r} (moteur factice, autre)"
             )
         famille = _famille_declaree(declaration, famille_id)
         if not famille.qualifiee:
@@ -371,6 +435,25 @@ def _nom_relatif_valide(nom: str) -> bool:
     if nom.startswith("/") or nom.endswith("/"):
         return False
     return all(partie not in ("", ".", "..") for partie in nom.split("/"))
+
+
+def fichiers_gguf(noms: Sequence[str]) -> tuple[str, ...]:
+    """Fichiers `.gguf` d'une liste de noms, triés et dédoublonnés.
+
+    Sert à proposer le choix de la variante de quantification (tâche 5.4) et à
+    la règle transcribe.cpp. L'extension seule désigne un candidat : le nom ne
+    prouve ni l'architecture (`general.architecture` vient de l'en-tête) ni la
+    quantification réelle du fichier.
+    """
+    return tuple(
+        sorted(
+            {
+                nom
+                for nom in noms
+                if isinstance(nom, str) and nom.lower().endswith(EXTENSION_GGUF)
+            }
+        )
+    )
 
 
 def _lire_configurations(
@@ -677,6 +760,95 @@ def _selectionner_poids(
         ".bin, .pt, .pth, .nemo, .gguf, .onnx et .h5 ne sont ni téléchargés "
         "ni chargés",
     )
+
+
+def _regle_transcribe_cpp(
+    declaration: DeclarationAdaptateur,
+    noms: Sequence[str],
+    connues: Sequence[DeclarationAdaptateur],
+    *,
+    fichier_gguf: str | None,
+    lecteur_entete_gguf: Callable[[str], EnteteGGUF] | None,
+) -> tuple[str, tuple[str, ...]]:
+    """GGUF transcribe.cpp : variante choisie, architecture lue dans l'en-tête."""
+    candidats = fichiers_gguf(noms)
+    if not candidats:
+        raise _Refus(
+            RAISON_FICHIER_GGUF_ABSENT,
+            "dépôt sans fichier .gguf : transcribe.cpp exige un modèle GGUF "
+            "dont l'architecture est lue dans l'en-tête",
+        )
+    choisi = _choisir_fichier_gguf(candidats, fichier_gguf)
+    if lecteur_entete_gguf is None:
+        raise _Refus(
+            RAISON_EN_TETE_GGUF_NON_LU,
+            f"en-tête GGUF de {choisi!r} non fourni : l'architecture est lue dans "
+            "l'en-tête du fichier choisi et n'est jamais déduite du nom de "
+            "fichier ; un lecteur borné est requis",
+        )
+    try:
+        entete = lecteur_entete_gguf(choisi)
+    except EnteteGGUFInvalide as erreur:
+        raise _Refus(
+            RAISON_EN_TETE_GGUF_ILLISIBLE,
+            f"en-tête GGUF de {choisi!r} illisible : {erreur}",
+        ) from None
+    if not isinstance(entete, EnteteGGUF):
+        raise TypeError("EnteteGGUF attendu du lecteur d'en-tête GGUF")
+    architecture = entete.architecture
+    if architecture is None:
+        raise _Refus(
+            RAISON_ARCHITECTURE_GGUF_ABSENTE,
+            f"en-tête de {choisi!r} sans {CLE_ARCHITECTURE} : la famille ne peut "
+            "pas être vérifiée et le nom de fichier ne la prouve pas",
+        )
+    if not any(famille.identifiant == architecture for famille in declaration.familles):
+        raise _Refus(
+            RAISON_FAMILLE_HORS_PERIMETRE,
+            f"architecture {architecture!r} extraite de l'en-tête de {choisi!r} "
+            f"non déclarée par le moteur {declaration.identifiant!r} : seules les "
+            "architectures vérifiées sont acceptées (Whisper au premier jalon ; "
+            "les autres architectures transcribe.cpp, notamment Qwen3-ASR et "
+            "Parakeet, restent non vérifiées et ne sont pas activées)",
+            famille=architecture,
+            moteur_suggere=_suggerer_moteur(architecture, declaration, connues),
+        )
+    return architecture, (choisi,)
+
+
+def _choisir_fichier_gguf(
+    candidats: Sequence[str], fichier_gguf: str | None
+) -> str:
+    """Retient la variante GGUF choisie, ou l'unique variante du dépôt.
+
+    Le nom choisi est validé comme chemin relatif confiné avant tout appel au
+    lecteur d'en-tête ; un nom inconnu du dépôt ou non GGUF est refusé, jamais
+    ouvert.
+    """
+    if fichier_gguf is None:
+        if len(candidats) > 1:
+            raise _Refus(
+                RAISON_FICHIER_GGUF_NON_CHOISI,
+                "dépôt à plusieurs fichiers GGUF : la variante de quantification "
+                "à télécharger doit être choisie explicitement ; variantes "
+                "proposées : " + ", ".join(candidats),
+            )
+        return candidats[0]
+    if not isinstance(fichier_gguf, str):
+        raise TypeError("fichier_gguf attendu sous forme de texte")
+    if not _nom_relatif_valide(fichier_gguf):
+        raise _Refus(
+            RAISON_NOM_FICHIER_REFUSE,
+            f"nom de fichier refusé : {fichier_gguf!r} (chemin absolu, remontée, "
+            "séparateur Windows, composant vide ou caractère interdit)",
+        )
+    if fichier_gguf not in candidats:
+        raise _Refus(
+            RAISON_FICHIER_GGUF_NON_CHOISI,
+            f"fichier choisi {fichier_gguf!r} absent des fichiers GGUF du dépôt ; "
+            "variantes proposées : " + ", ".join(candidats),
+        )
+    return fichier_gguf
 
 
 def _suggerer_moteur(

@@ -218,3 +218,11 @@ Provenance : `transcription-bench`, `main`, base `90a7c34` ; clôture relue et p
 - [decision] Profil simplifié accepté : Transformers exige `tokenizer.json` + `tokenizer_config.json` ; faster-whisper exige `preprocessor_config.json` pour tout modèle CTranslate2 Whisper, sans mode alternatif ni valeurs de prétraitement par défaut. Certains dépôts utilisables par les bibliothèques sont donc volontairement exclus. Motif : simplicité et réduction des variantes ; réexamen au jalon PC, pas de promesse générale de sécurité.
 - [validation] Spec des modèles, design D10 et tâche 5.1 alignés ; revue finale advisor favorable. **221 tests passent**, 44 ciblés, deux graines hors ligne ; verrou et OpenSpec strict valides. 5.1 cochée : **12/39**. Toutes les familles réelles restent non qualifiées, aucune installation moteur, aucun poids ni inférence réelle.
 - [continuity] [[Reprise du lot 5 — compatibilité en attente d’arbitrage]] a été réécrite pour refléter la clôture, malgré son titre historique. Advisor du lot à reprendre : `c3afe5e6-b0f8-44e` (session précédente expirée, contexte reconstitué). Prochaine tâche 5.2, non commencée.
+
+## Lot 5 — tâche 5.2 terminée, 2026-10-25
+
+Provenance : `transcription-bench`, `main`, base publiée `34f147f` ; clôture relue et publication préparée.
+
+- [validation] Lecture GGUF partielle et choix d'une seule variante intégrés aux règles de compatibilité. Formats v2/v3, lecture bornée ; magie `GGUF` inchangée quel que soit l'ordre des octets, contrôle indépendant des fixtures après correction advisor. **247 tests passent**, deux graines hors ligne ; OpenSpec strict et verrou uv valides. Case 5.2 cochée : **13/39**.
+- [constraint] Aucun vrai GGUF, moteur, poids, nouvelle dépendance ou inférence réelle. Architecture et quantifications réelles toujours non qualifiées. Un fichier sélectionné par son en-tête n'est pas validé intégralement.
+- [continuity] Voir [[Reprise du lot 5 — compatibilité en attente d’arbitrage]], mise à jour. Advisor à reprendre `d46d5377-0ebf-450`, worker 5.2 `5500b73d-2fa4-42d`. Prochaine tâche 5.3 : erreurs réseau et lecture bornée sans prélecture implicite de poids. Avant 5.4 : clé de stockage sans collision et traitement explicite des GGUF découpés. Les validations PC restent dues.

@@ -26,11 +26,16 @@ from engines.declarations import (
     declarations_fournies,
 )
 from transcription_bench.compatibilite_modeles import (
+    RAISON_ARCHITECTURE_GGUF_ABSENTE,
     RAISON_CODE_DISTANT,
     RAISON_CONFIGURATION_ILLISIBLE,
     RAISON_CONFIGURATION_NON_INSPECTEE,
+    RAISON_EN_TETE_GGUF_ILLISIBLE,
+    RAISON_EN_TETE_GGUF_NON_LU,
     RAISON_FAMILLE_HORS_PERIMETRE,
     RAISON_FAMILLE_NON_QUALIFIEE,
+    RAISON_FICHIER_GGUF_ABSENT,
+    RAISON_FICHIER_GGUF_NON_CHOISI,
     RAISON_FICHIERS_MANQUANTS,
     RAISON_INDEX_INVALIDE,
     RAISON_NOM_FICHIER_REFUSE,
@@ -39,13 +44,17 @@ from transcription_bench.compatibilite_modeles import (
     PROFONDEUR_MAX_INSPECTION,
     RAISONS_REFUS,
     REGLE_CTRANSLATE2_WHISPER,
+    REGLE_TRANSCRIBE_CPP_GGUF,
     REGLE_TRANSFORMERS_SAFETENSORS,
     RegleCompatibiliteInconnue,
     ResultatCompatibilite,
     ResultatCompatibiliteInvalide,
+    fichiers_gguf,
     verifier_compatibilite,
 )
+from transcription_bench.gguf import lire_entete_gguf
 from transcription_bench.paths import RACINE_PROJET
+from tests.entetes_gguf_de_test import entete_gguf, source_de
 
 PAQUETS_INTERDITS = (
     "av",
@@ -157,6 +166,37 @@ CONTENUS_PARAKET = {
         {"tokenizer_class": "ParakeetTokenizer", "tokenizer_file": "tokenizer.json"}
     ),
 }
+
+
+# Dépôt GGUF transcribe.cpp simulé : deux quantifications, un README et un
+# config.json sans rapport, ignorés. Aucune architecture n'est déduite du nom.
+FICHIERS_GGUF = (
+    ".gitattributes",
+    "README.md",
+    "config.json",
+    "modele-f16.gguf",
+    "modele-q8_0.gguf",
+)
+
+
+def octets_gguf(architecture: str = "whisper", *, version: int = 3) -> bytes:
+    """En-tête GGUF minimal portant `general.architecture`, généré localement."""
+    return entete_gguf(
+        ("general.name", "string", "modèle de test"),
+        ("general.architecture", "string", architecture),
+        version=version,
+    )
+
+
+def lecteur_gguf_de(octets: bytes, journal: list[str] | None = None):
+    """Lecteur d'en-tête injecté : lit les octets fournis et note les appels."""
+
+    def lire(nom: str):
+        if journal is not None:
+            journal.append(nom)
+        return lire_entete_gguf(source_de(octets))
+
+    return lire
 
 
 def declaration_synthetique(
@@ -797,6 +837,187 @@ class TransformersCompatibiliteTest(AssertionsCompatibilite):
         self.assertRefus(resultat, RAISON_POIDS_SAFETENSORS_ABSENTS)
 
 
+class TranscribeCppCompatibiliteTest(AssertionsCompatibilite):
+    def setUp(self) -> None:
+        self.declaration = declaration_synthetique(
+            identifiant="transcribe-cpp",
+            regle=REGLE_TRANSCRIBE_CPP_GGUF,
+            familles=("whisper",),
+        )
+
+    def test_gguf_whisper_accepte_et_seule_variante_choisie_listee(self) -> None:
+        journal: list[str] = []
+        resultat = verifier_compatibilite(
+            self.declaration,
+            (*FICHIERS_GGUF, "notes.txt"),
+            fichier_gguf="modele-q8_0.gguf",
+            lecteur_entete_gguf=lecteur_gguf_de(octets_gguf(), journal),
+        )
+        self.assertAccepte(resultat, "whisper")
+        # Le nom déclaré porte la variante, sans qu'aucune quantification ne soit
+        # affirmée : seule cette variante est retenue.
+        self.assertEqual(resultat.fichiers, ("modele-q8_0.gguf",))
+        self.assertEqual(journal, ["modele-q8_0.gguf"])
+
+    def test_unique_gguf_accepte_sans_choix_explicite(self) -> None:
+        fichiers = retire(FICHIERS_GGUF, "modele-f16.gguf")
+        resultat = verifier_compatibilite(
+            self.declaration,
+            fichiers,
+            lecteur_entete_gguf=lecteur_gguf_de(octets_gguf(version=2)),
+        )
+        self.assertAccepte(resultat, "whisper")
+        self.assertEqual(resultat.fichiers, ("modele-q8_0.gguf",))
+
+    def test_plusieurs_gguf_sans_choix_refuses(self) -> None:
+        self.assertEqual(
+            fichiers_gguf((*FICHIERS_GGUF, "dossier/autre.gguf", "notes.txt")),
+            ("dossier/autre.gguf", "modele-f16.gguf", "modele-q8_0.gguf"),
+        )
+        journal: list[str] = []
+        resultat = verifier_compatibilite(
+            self.declaration,
+            FICHIERS_GGUF,
+            lecteur_entete_gguf=lecteur_gguf_de(octets_gguf(), journal),
+        )
+        refus = self.assertRefus(resultat, RAISON_FICHIER_GGUF_NON_CHOISI)
+        self.assertIn("modele-f16.gguf", refus.message)
+        self.assertIn("modele-q8_0.gguf", refus.message)
+        self.assertEqual(journal, [])
+
+    def test_choix_hors_liste_ou_nom_dangereux_refuse_sans_lecture(self) -> None:
+        journal: list[str] = []
+        lecteur = lecteur_gguf_de(octets_gguf(), journal)
+        cas = {
+            "notes.txt": RAISON_FICHIER_GGUF_NON_CHOISI,
+            "modele-q4.gguf": RAISON_FICHIER_GGUF_NON_CHOISI,
+            "../modele-q8_0.gguf": RAISON_NOM_FICHIER_REFUSE,
+            "/tmp/modele-q8_0.gguf": RAISON_NOM_FICHIER_REFUSE,
+            "dossier\\modele-q8_0.gguf": RAISON_NOM_FICHIER_REFUSE,
+        }
+        for choix, raison in cas.items():
+            with self.subTest(choix=choix):
+                resultat = verifier_compatibilite(
+                    self.declaration,
+                    FICHIERS_GGUF,
+                    fichier_gguf=choix,
+                    lecteur_entete_gguf=lecteur,
+                )
+                self.assertRefus(resultat, raison)
+        self.assertEqual(journal, [])
+        with self.assertRaises(TypeError):
+            verifier_compatibilite(
+                self.declaration,
+                FICHIERS_GGUF,
+                fichier_gguf=42,  # type: ignore[arg-type]
+                lecteur_entete_gguf=lecteur,
+            )
+
+    def test_depot_sans_gguf_refuse(self) -> None:
+        fichiers = retire(FICHIERS_GGUF, "modele-f16.gguf", "modele-q8_0.gguf") + (
+            "model.safetensors",
+        )
+        resultat = verifier_compatibilite(
+            self.declaration,
+            fichiers,
+            lecteur_entete_gguf=lecteur_gguf_de(octets_gguf()),
+        )
+        self.assertRefus(resultat, RAISON_FICHIER_GGUF_ABSENT)
+
+    def test_architecture_vient_de_l_entete_pas_du_nom(self) -> None:
+        resultat = verifier_compatibilite(
+            self.declaration,
+            ("whisper-large-v3.q8_0.gguf",),
+            lecteur_entete_gguf=lecteur_gguf_de(octets_gguf("qwen3-asr")),
+        )
+        refus = self.assertRefus(resultat, RAISON_FAMILLE_HORS_PERIMETRE)
+        self.assertEqual(refus.famille, "qwen3-asr")
+
+        resultat = verifier_compatibilite(
+            self.declaration,
+            ("qwen3-asr.q8_0.gguf",),
+            lecteur_entete_gguf=lecteur_gguf_de(octets_gguf("whisper")),
+        )
+        self.assertAccepte(resultat, "whisper")
+        self.assertEqual(resultat.fichiers, ("qwen3-asr.q8_0.gguf",))
+
+    def test_architectures_non_verifiees_refusees(self) -> None:
+        for architecture in ("qwen3-asr", "parakeet-tdt", "llama"):
+            with self.subTest(architecture=architecture):
+                resultat = verifier_compatibilite(
+                    self.declaration,
+                    ("modele.gguf",),
+                    lecteur_entete_gguf=lecteur_gguf_de(octets_gguf(architecture)),
+                )
+                refus = self.assertRefus(resultat, RAISON_FAMILLE_HORS_PERIMETRE)
+                self.assertEqual(refus.famille, architecture)
+                self.assertIn("non vérifiées", refus.message)
+
+    def test_production_transcribe_whisper_reste_refusee(self) -> None:
+        resultat = verifier_compatibilite(
+            DECLARATION_TRANSCRIBE_CPP,
+            FICHIERS_GGUF,
+            fichier_gguf="modele-q8_0.gguf",
+            lecteur_entete_gguf=lecteur_gguf_de(octets_gguf()),
+        )
+        refus = self.assertRefus(resultat, RAISON_FAMILLE_NON_QUALIFIEE)
+        self.assertEqual(refus.famille, "whisper")
+        self.assertEqual(refus.fichiers_manquants, ())
+
+    def test_entete_absent_non_lu_ou_illisible_refuse(self) -> None:
+        sans_architecture = entete_gguf(("general.name", "string", "test"))
+        resultat = verifier_compatibilite(
+            self.declaration,
+            ("modele.gguf",),
+            lecteur_entete_gguf=lecteur_gguf_de(sans_architecture),
+        )
+        self.assertRefus(resultat, RAISON_ARCHITECTURE_GGUF_ABSENTE)
+
+        resultat = verifier_compatibilite(self.declaration, ("modele.gguf",))
+        self.assertRefus(resultat, RAISON_EN_TETE_GGUF_NON_LU)
+
+        resultat = verifier_compatibilite(
+            self.declaration,
+            ("modele.gguf",),
+            lecteur_entete_gguf=lecteur_gguf_de(b"GGML" + b"\x00" * 32),
+        )
+        self.assertRefus(resultat, RAISON_EN_TETE_GGUF_ILLISIBLE)
+
+        with self.assertRaises(TypeError):
+            verifier_compatibilite(
+                self.declaration,
+                ("modele.gguf",),
+                lecteur_entete_gguf=lambda nom: "whisper",
+            )
+
+    def test_noms_refuses_avant_tout_appel_au_lecteur(self) -> None:
+        journal: list[str] = []
+        resultat = verifier_compatibilite(
+            self.declaration,
+            (*FICHIERS_GGUF, "../evil.gguf"),
+            fichier_gguf="modele-q8_0.gguf",
+            lecteur_entete_gguf=lecteur_gguf_de(octets_gguf(), journal),
+        )
+        self.assertRefus(resultat, RAISON_NOM_FICHIER_REFUSE)
+        self.assertEqual(journal, [])
+
+    def test_parametres_gguf_refuses_pour_une_autre_regle(self) -> None:
+        with self.assertRaises(TypeError):
+            verifier_compatibilite(
+                DECLARATION_FASTER_WHISPER,
+                FICHIERS_CTRANSLATE2,
+                fichier_gguf="modele.gguf",
+                lecteur_entete_gguf=lecteur_gguf_de(octets_gguf()),
+            )
+        with self.assertRaises(TypeError):
+            verifier_compatibilite(
+                DECLARATION_FASTER_WHISPER,
+                FICHIERS_CTRANSLATE2,
+                configurations=CONTENUS_CTRANSLATE2,
+                lecteur_entete_gguf=lecteur_gguf_de(octets_gguf()),
+            )
+
+
 class EntreesRefuseesTest(AssertionsCompatibilite):
     def setUp(self) -> None:
         self.declaration = declaration_synthetique()
@@ -832,10 +1053,8 @@ class EntreesRefuseesTest(AssertionsCompatibilite):
             )
 
     def test_regle_non_implementee(self) -> None:
-        for declaration in (DECLARATION_FACTICE, DECLARATION_TRANSCRIBE_CPP):
-            with self.subTest(moteur=declaration.identifiant):
-                with self.assertRaises(RegleCompatibiliteInconnue):
-                    verifier_compatibilite(declaration, ("model.bin",))
+        with self.assertRaises(RegleCompatibiliteInconnue):
+            verifier_compatibilite(DECLARATION_FACTICE, ("modele.gguf",))
 
 
 class QualificationProductionTest(AssertionsCompatibilite):
