@@ -5,7 +5,7 @@ permalink: transcription-bench/projet/reprise-du-lot-5-compatibilite-en-attente-
 date: '2026-10-25'
 provenance: transcription-bench, main, base publiée 26653c2 ; clôture locale 5.4,
   2026-10-26 UTC
-status: 5.1 à 5.3 publiées ; 5.4 terminée et relue, publication préparée
+status: 'historique : lot 5 complet ; nouveau point de reprise projet/reprise-apres-le-lot-5'
 tags:
 - reprise
 - lot-5
@@ -17,11 +17,7 @@ tags:
 Le titre historique du fichier conserve « en attente d’arbitrage », mais **l’arbitrage est clos**. Cette synthèse remplace les mentions précédentes d'attente.
 
 ## État et méthode
-Provenance : `main`, base publiée **26653c2**, 2026-10-26 UTC. **5.4 terminée et cochée : 15/39**, revue finale favorable. Publication préparée ; vérifier Git pour son commit effectif. **5.5 reste à terminer maintenant**, enchaînement explicitement demandé par l'utilisateur.
-
-- [decision] Worker → contrôle principal → advisor → corrections worker → même advisor → publication par tâche. Reconstitution autorisée des contextes expirés, en le signalant ; ne pas refaire le code déjà validé après une interruption.
-- [validation] **319 tests passent**, deux graines hors ligne. Parcours navigator de la vraie page avec services simulés réussi : vérification, téléchargement, déjà présent, suppression, retour accueil/opération. Résultat sentinelle conservé ; serveur temporaire arrêté et traces Playwright nettoyées.
-- [constraint] Aucun moteur, poids, nouvelle dépendance ou inférence réelle. Familles réelles non qualifiées ; jalon PC, 3.2 et 8.x ouverts. Profils simplifiés 5.1 inchangés.
+**Lot 5 terminé : 16/39 tâches, 329 tests passants.** Provenance : `main`, base publiée `e425370`, clôture 5.5 relue le 2026-10-26 UTC, publication préparée. Cette note conserve l'historique des choix et limites ; son titre et les anciens états d'attente ne sont plus l'état courant. **Lire désormais [[Reprise après le lot 5]]** pour la méthode, l'état, les contrats à préserver et la suite. Lot 6 non commencé.
 ## Production de 5.1 et limites
 
 Deux nouveaux fichiers : `transcription_bench/compatibilite_modeles.py` et `tests/test_compatibilite_modeles.py`. Spec `model-management`, design D10 et tâche 5.1 alignés sur le profil accepté. Le proposal et les autres specs restent cohérents sans modification.
@@ -42,9 +38,7 @@ Sources : Context7 faster-whisper et Transformers v5.19.0 ; pour v5.20.2 non ind
 - Aucun de ces constats documentaires ne prouve le chargement réel hors ligne sur un PC.
 
 ## Continuité des agents et suite
-- Advisor lot 5 **à reprendre** : `b3219082-86fa-461`, validation finale 5.4. Reconstitue `975a80f1` devenu inaccessible après interruption, conformément à l'accord existant. Worker de correction 5.4 `2212caa4-3ee1-44d`, premier worker `30a089eb-11b7-44b` inaccessible.
-- Prochaine et dernière tâche du lot : **5.5**, déjà autorisée. Refus de suppression pendant une exécution avec indication adaptée et preuve de conservation des fichiers ; mode hors ligne imposé au lancement moteur, options local_files_only et trust_remote_code. **Ne pas modifier l'environnement global du serveur** (ses téléchargements doivent rester possibles). Pas de réalisation anticipée du lot 6.
-- Validation réelle CDN/Xet, réparation native HF et Windows restent aux PC. Les limites d'arrêt global et le listage réseau sans délai exposé restent à documenter en 6.6.
+Lot 5 clos après feu vert de **aaf3b07a-0158-496** (session b3219082 expirée, reconstitution annoncée). Worker 5.5 **ed03c123-1bab-4c4**. Nouvelle synthèse [[Reprise après le lot 5]] ; nouveau contexte advisor lors du futur lot 6. Les instructions anciennes d'enchaîner 5.4/5.5 sont accomplies ; ne pas relancer ces tâches.
 ## Production de 5.2 — lecture GGUF partielle
 
 Provenance : `main`, base `34f147f`, 2026-10-25. Nouveau `transcription_bench/gguf.py`, fixtures synthétiques et tests ; intégration dans la règle de compatibilité existante.

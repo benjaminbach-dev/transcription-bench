@@ -80,7 +80,18 @@ DELAI_ARRET_DEFAUT = 5.0
 
 
 class CreneauOccupe(RuntimeError):
-    """Refus d'une demande : une opération longue est déjà en cours (HTTP 409)."""
+    """Refus d'une demande : une opération longue est déjà en cours (HTTP 409).
+
+    `type_operation` est le type de l'opération qui occupait le créneau au
+    moment du refus, capturé sous le verrou. Il vaut `None` si l'exception a été
+    construite sans ce contexte. Il ne faut jamais le relire depuis un
+    instantané ultérieur, qui pourrait déjà décrire une autre opération ou un
+    créneau libre.
+    """
+
+    def __init__(self, message: str, *, type_operation: str | None = None) -> None:
+        super().__init__(message)
+        self.type_operation = type_operation
 
 
 class ServiceArrete(RuntimeError):
@@ -293,7 +304,10 @@ class CreneauOperations:
         if self._arrete:
             raise ServiceArrete("arrêt du serveur en cours : demande refusée")
         if self._etat == ETAT_EN_COURS:
-            raise CreneauOccupe("une opération longue est déjà en cours : demande refusée")
+            raise CreneauOccupe(
+                "une opération longue est déjà en cours : demande refusée",
+                type_operation=self._type_operation,
+            )
 
     def _journaliser(self, message: str) -> None:
         with self._verrou:

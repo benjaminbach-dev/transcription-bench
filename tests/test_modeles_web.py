@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import re
 import threading
+from pathlib import Path
 
 from engines.registre import RegistreMoteurs
 from tests.test_gestion_modeles import FauxClientTelechargement, FauxMoteurs
@@ -23,9 +24,13 @@ from tests.test_web import SocleWebTest
 from transcription_bench.compatibilite_modeles import (
     RAISON_FICHIER_GGUF_NON_CHOISI,
 )
-from transcription_bench.gestion_modeles import GestionModeles, ModeleLocal
+from transcription_bench.gestion_modeles import (
+    NOM_MARQUEUR,
+    GestionModeles,
+    ModeleLocal,
+)
 from transcription_bench.moteurs import ETAT_PRET, EtatMoteur
-from transcription_bench.operations import TYPE_EXECUTION
+from transcription_bench.operations import TYPE_EXECUTION, TYPE_TELECHARGEMENT
 from transcription_bench.verification_modeles import (
     FichierVerifie,
     ResultatVerification,
@@ -135,6 +140,23 @@ class ModelesWebTest(SocleWebTest):
         self.attendre()
         return self.page()
 
+    def preparer_modele_pret(self) -> str:
+        """Télécharge un modèle simulé et renvoie la clé de suppression affichée."""
+        corps = self.verifier_depuis_la_page()
+        reponse = self.post_autorise(
+            "/modeles/telecharger", donnees={"empreinte": self.empreinte(corps)}
+        )
+        self.assertEqual(reponse.status_code, 303)
+        self.attendre()
+        return self.cle_affichee(self.page())
+
+    def instantane_fichiers(self, dossier: Path) -> dict[str, bytes]:
+        return {
+            str(chemin.relative_to(dossier)): chemin.read_bytes()
+            for chemin in sorted(dossier.rglob("*"))
+            if chemin.is_file()
+        }
+
     def test_page_reelle_sans_effet_de_bord(self) -> None:
         corps = self.page()
 
@@ -211,6 +233,84 @@ class ModelesWebTest(SocleWebTest):
         self.assertEqual(self.verification_client.appels_infos, [])
         liberation.set()
         self.attendre()
+
+    def test_suppression_pendant_execution_409_execution_en_cours(self) -> None:
+        cle = self.preparer_modele_pret()
+        dossier = self.dossier_data / "models" / MOTEUR / cle
+        avant = self.instantane_fichiers(dossier)
+        resultats = self.dossier_data / "results" / "20261026-000000-test"
+        resultats.mkdir(parents=True)
+        run_json = resultats / "run.json"
+        run_json.write_text('{"etat": "completed"}', encoding="utf-8")
+
+        liberation = threading.Event()
+        self.addCleanup(liberation.set)
+        self.creneau.demarrer(
+            TYPE_EXECUTION,
+            lambda travailleur: liberation.wait(DELAI),
+            cible="org/modele",
+        )
+
+        reponse = self.post_autorise(
+            "/modeles/supprimer", donnees={"moteur": MOTEUR, "cle": cle}
+        )
+        corps = self.verifier_page_erreur(reponse, 409)
+        self.assertIn("exécution en cours", corps)
+        self.assertNotIn("opération longue", corps)
+        self.assertEqual(self.instantane_fichiers(dossier), avant)
+        self.assertTrue((dossier / NOM_MARQUEUR).is_file())
+        self.assertEqual(
+            run_json.read_text(encoding="utf-8"), '{"etat": "completed"}'
+        )
+        self.assertEqual(self.creneau.instantane().etat, "en_cours")
+
+        liberation.set()
+        self.attendre()
+        reponse = self.post_autorise(
+            "/modeles/supprimer", donnees={"moteur": MOTEUR, "cle": cle}
+        )
+        self.assertEqual(reponse.status_code, 303)
+        self.assertIn("action=modele-supprime", reponse.headers["Location"])
+        self.assertFalse(dossier.exists())
+        self.assertEqual(
+            run_json.read_text(encoding="utf-8"), '{"etat": "completed"}'
+        )
+
+    def test_suppression_pendant_autre_operation_reste_generique(self) -> None:
+        cle = self.preparer_modele_pret()
+        dossier = self.dossier_data / "models" / MOTEUR / cle
+        avant = self.instantane_fichiers(dossier)
+        liberation = threading.Event()
+        self.addCleanup(liberation.set)
+        self.creneau.demarrer(
+            TYPE_TELECHARGEMENT,
+            lambda travailleur: liberation.wait(DELAI),
+            cible="org/autre",
+        )
+
+        reponse = self.post_autorise(
+            "/modeles/supprimer", donnees={"moteur": MOTEUR, "cle": cle}
+        )
+        corps = self.verifier_page_erreur(reponse, 409)
+        self.assertIn("opération longue", corps)
+        self.assertNotIn("exécution en cours", corps)
+        self.assertEqual(self.instantane_fichiers(dossier), avant)
+
+        liberation.set()
+        self.attendre()
+
+    def test_suppression_apres_arret_refusee_en_503_fichiers_intacts(self) -> None:
+        cle = self.preparer_modele_pret()
+        dossier = self.dossier_data / "models" / MOTEUR / cle
+        avant = self.instantane_fichiers(dossier)
+        self.creneau.arreter(0.5)
+
+        reponse = self.post_autorise(
+            "/modeles/supprimer", donnees={"moteur": MOTEUR, "cle": cle}
+        )
+        corps = self.verifier_page_erreur(reponse, 503)
+        self.assertIn("arrêt", corps)
+        self.assertEqual(self.instantane_fichiers(dossier), avant)
 
     def test_apres_arret_refuse_en_503_sans_io(self) -> None:
         self.creneau.arreter(0.5)

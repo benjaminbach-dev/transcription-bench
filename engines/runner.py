@@ -32,6 +32,15 @@ décodé par le serveur (tâche 6.1) : le runner ne décode rien. Sans mécanism
 natif déclaré et vérifié, il découpe l'audio en fenêtres fixes de 30 s sans
 recouvrement, concatène les textes et décale les horodatages.
 
+Options de chargement forcées (tâche 5.5) : avant d'appeler `charger`, le runner
+copie le dictionnaire `modele` et y impose `local_files_only=True` et
+`trust_remote_code=False`. Un job qui fournit les valeurs contraires ne peut
+donc pas les désactiver, et le dictionnaire du job n'est jamais modifié. Les
+adaptateurs réels des tâches 8.x consommeront ces options aux API concernées ;
+aucun adaptateur réel n'est écrit ni qualifié CPU ici. L'exécution est entourée
+de `HF_HUB_OFFLINE=1` dans le processus du runner, avec restauration de la
+valeur précédente à la sortie : l'environnement du serveur n'est jamais muté.
+
 Contrat d'adaptateur, volontairement minimal (aucun framework) :
 
     charger(modele, threads_demandes, reglages) -> objet opaque
@@ -91,6 +100,7 @@ if __name__ == "__main__" and not __package__:
         sys.path.insert(0, str(_RACINE_PROJET))
 
 from engines.declarations import DeclarationAdaptateur, Famille
+from engines.hors_ligne import mode_hors_ligne, options_modele
 from engines.protocole import (
     TYPE_AUDIO,
     TYPE_AUDIO_ERREUR,
@@ -203,8 +213,18 @@ def executer(
     Lève `ErreurMoteur` avant tout événement si le moteur, la famille ou
     l'adaptateur ne convient pas, ou si le chargement du modèle échoue. Un échec
     d'audio est émis en `audio_erreur` et le lot continue.
+
+    L'import de l'adaptateur et toute l'exécution ont lieu sous
+    `HF_HUB_OFFLINE=1` ; la valeur précédente est restaurée à la sortie, même
+    pour un appelant de test partageant le processus.
     """
     registre = creer_registre_fourni() if registre is None else registre
+    with mode_hors_ligne():
+        _executer_job(job, registre)
+
+
+def _executer_job(job: Job, registre: RegistreMoteurs) -> None:
+    """Corps de l'exécution, sous le mode hors ligne forcé par `executer`."""
     adaptateur, declaration = _charger_adaptateur(job, registre)
     factice = declaration.factice
     provenance = {"factice": factice, "mesures_simulees": factice}
@@ -213,7 +233,7 @@ def executer(
     debut_chargement = time.perf_counter()
     try:
         moteur = adaptateur.charger(
-            dict(job.modele), job.threads_demandes, reglages
+            options_modele(job.modele), job.threads_demandes, reglages
         )
     except Exception as exception:  # l'erreur exacte du moteur reste visible
         raise ErreurMoteur(

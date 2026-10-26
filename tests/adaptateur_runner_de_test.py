@@ -13,6 +13,7 @@ fait que le signal est en lecture seule.
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
 ETAT: dict[str, Any] = {
@@ -55,6 +56,7 @@ def charger(
         "modele": dict(modele),
         "threads_demandes": threads_demandes,
         "reglages": dict(reglages),
+        "hf_hub_offline": os.environ.get("HF_HUB_OFFLINE"),
     }
     return derniere_consigne
 
@@ -70,6 +72,7 @@ def transcrire(
             "modifiable": bool(signal.flags.writeable),
             "taux_echantillonnage": taux_echantillonnage,
             "reglages": dict(reglages),
+            "hf_hub_offline": os.environ.get("HF_HUB_OFFLINE"),
         }
     )
     if ETAT["parasite"] and len(appels) == 1:

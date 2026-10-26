@@ -23,6 +23,7 @@ from unittest import mock
 import numpy as np
 
 from engines.declarations import DeclarationAdaptateur, Famille
+from engines.hors_ligne import environnement_moteur
 from engines.protocole import (
     PREFIXE_EVENEMENT,
     TYPE_AUDIO,
@@ -61,6 +62,45 @@ charges = sorted(module for module in interdits if module in sys.modules)
 print("|".join(charges) if charges else "ok")
 """
 
+# Sonde synthétique : un vrai processus enfant exécute `runner.main` avec un
+# registre de test, sans moteur réel. Elle n'imprime que de petites valeurs
+# factices (HF_HUB_OFFLINE, options de modèle), jamais l'environnement complet.
+CODE_SONDE_HORS_LIGNE = """
+import json
+import os
+import sys
+
+import engines.runner as runner
+from engines.declarations import DeclarationAdaptateur, Famille
+from engines.registre import RegistreMoteurs
+from tests import adaptateur_runner_de_test as adaptateur
+
+hf_initial = os.environ.get("HF_HUB_OFFLINE")
+# Simule un environnement hérité hostile : le runner doit forcer le mode hors
+# ligne avant d'importer puis de charger l'adaptateur de test.
+os.environ["HF_HUB_OFFLINE"] = "0"
+
+registre = RegistreMoteurs()
+registre.enregistrer(DeclarationAdaptateur(
+    identifiant="moteur-de-test",
+    nom="Moteur de test",
+    fichier_requirements=None,
+    regle_compatibilite="aucune",
+    familles=(Famille("factice", "Famille de test", qualifiee=True),),
+    module_adaptateur="tests.adaptateur_runner_de_test",
+))
+adaptateur.reinitialiser()
+runner.creer_registre_fourni = lambda: registre
+code = runner.main([sys.argv[1]])
+print("##SONDE## " + json.dumps({
+    "code": code,
+    "hf_initial": hf_initial,
+    "consigne": adaptateur.derniere_consigne,
+    "hf_apres": os.environ.get("HF_HUB_OFFLINE"),
+}))
+raise SystemExit(code)
+"""
+
 
 def registre_de_test() -> RegistreMoteurs:
     registre = RegistreMoteurs()
@@ -96,12 +136,15 @@ def ecrire_job(
     famille: str = FAMILLE_DE_TEST,
     threads_demandes: int = 4,
     reglages: dict[str, object] | None = None,
+    modele: dict[str, object] | None = None,
 ) -> Path:
     contenu = {
         "version": 1,
         "moteur": moteur,
         "famille": famille,
-        "modele": {
+        "modele": modele
+        if modele is not None
+        else {
             "identifiant": "test/modele",
             "revision": "abc",
             "chemin": "modele",
@@ -552,6 +595,100 @@ class ExecutionTest(unittest.TestCase):
         for evenement in evenements:
             self.assertIs(evenement["factice"], False)
             self.assertIs(evenement["mesures_simulees"], False)
+
+
+class OptionsModeleEtHorsLigneTest(unittest.TestCase):
+    """Options de chargement forcées et mode hors ligne du runner (tâche 5.5)."""
+
+    def setUp(self) -> None:
+        self._temporaire = tempfile.TemporaryDirectory()
+        self.addCleanup(self._temporaire.cleanup)
+        self.dossier = Path(self._temporaire.name)
+        adaptateur.reinitialiser()
+        self.registre = registre_de_test()
+
+    def test_options_forcees_et_dict_du_job_non_modifie(self) -> None:
+        chemin = ecrire_job(
+            self.dossier,
+            [("un.wav", ecrire_signal(self.dossier, "un.f32", 1.0, 1.0))],
+            modele={
+                "identifiant": "test/modele",
+                "revision": "abc",
+                "chemin": "modele",
+                "local_files_only": False,
+                "trust_remote_code": True,
+            },
+        )
+        job = charger_job(chemin)
+        self.assertIs(job.modele["local_files_only"], False)
+        self.assertIs(job.modele["trust_remote_code"], True)
+
+        sortie = io.StringIO()
+        with mock.patch.dict(os.environ, {"HF_HUB_OFFLINE": "0"}):
+            with redirect_stdout(sortie):
+                executer(job, self.registre)
+            self.assertEqual(os.environ["HF_HUB_OFFLINE"], "0")
+
+        consigne = adaptateur.derniere_consigne
+        self.assertIs(consigne["modele"]["local_files_only"], True)
+        self.assertIs(consigne["modele"]["trust_remote_code"], False)
+        self.assertEqual(consigne["modele"]["identifiant"], "test/modele")
+        self.assertEqual(consigne["hf_hub_offline"], "1")
+        self.assertIs(job.modele["local_files_only"], False)
+        self.assertIs(job.modele["trust_remote_code"], True)
+        evenements = [
+            evenement
+            for evenement in (
+                analyser_ligne(ligne) for ligne in sortie.getvalue().splitlines()
+            )
+            if evenement is not None
+        ]
+        self.assertEqual(evenements[0]["type"], TYPE_CHARGEMENT)
+        self.assertEqual(evenements[-1]["type"], TYPE_FIN)
+
+    def test_child_runner_force_hf_offline_puis_restaure(self) -> None:
+        chemin = ecrire_job(
+            self.dossier,
+            [("un.wav", ecrire_signal(self.dossier, "un.f32", 1.0, 1.0))],
+            modele={
+                "identifiant": "test/modele",
+                "revision": "abc",
+                "chemin": "modele",
+                "local_files_only": False,
+                "trust_remote_code": True,
+            },
+        )
+        base = {"HF_HUB_OFFLINE": "0", "PATH": os.environ.get("PATH", "")}
+        for cle in ("SystemRoot", "SYSTEMROOT", "TEMP", "TMP"):
+            if cle in os.environ:
+                base[cle] = os.environ[cle]
+
+        with mock.patch.dict(os.environ, {"HF_HUB_OFFLINE": "0"}):
+            resultat = subprocess.run(
+                [sys.executable, "-c", CODE_SONDE_HORS_LIGNE, str(chemin)],
+                cwd=RACINE_PROJET,
+                env=environnement_moteur(base),
+                capture_output=True,
+                text=True,
+                timeout=120,
+                check=False,
+            )
+            self.assertEqual(os.environ["HF_HUB_OFFLINE"], "0")
+
+        self.assertEqual(resultat.returncode, 0, resultat.stderr)
+        lignes = [
+            ligne
+            for ligne in resultat.stdout.splitlines()
+            if ligne.startswith("##SONDE## ")
+        ]
+        self.assertEqual(len(lignes), 1, resultat.stderr)
+        sonde = json.loads(lignes[0][len("##SONDE## ") :])
+        self.assertEqual(sonde["code"], 0)
+        self.assertEqual(sonde["hf_initial"], "1")
+        self.assertEqual(sonde["consigne"]["hf_hub_offline"], "1")
+        self.assertIs(sonde["consigne"]["modele"]["local_files_only"], True)
+        self.assertIs(sonde["consigne"]["modele"]["trust_remote_code"], False)
+        self.assertEqual(sonde["hf_apres"], "0")
 
 
 class MoteurRefuseTest(unittest.TestCase):

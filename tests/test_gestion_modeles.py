@@ -36,6 +36,7 @@ from transcription_bench.gestion_modeles import (
 from transcription_bench.moteurs import ETAT_ECHEC, ETAT_NON_INSTALLE, ETAT_PRET, EtatMoteur
 from transcription_bench.operations import (
     ETAT_ECHOUEE,
+    ETAT_EN_COURS,
     ETAT_TERMINEE,
     TYPE_EXECUTION,
     CreneauOccupe,
@@ -58,6 +59,15 @@ CONTENUS = {
     "tokenizer.json": b"{}",
 }
 AUTRE_COMMIT = "fedcba9876543210fedcba9876543210fedcba98"
+
+
+def instantane_arbre(racine: Path) -> dict[str, bytes]:
+    """Contenu de tous les fichiers sous `racine`, pour prouver leur conservation."""
+    return {
+        str(chemin.relative_to(racine)): chemin.read_bytes()
+        for chemin in sorted(racine.rglob("*"))
+        if chemin.is_file()
+    }
 
 
 class _VerrouObserve:
@@ -739,23 +749,58 @@ class SuppressionTest(BaseGestionTest):
             [modele.commit for modele in service.inventaire()], [COMMIT]
         )
 
-    def test_suppression_refusee_pendant_operation_ou_apres_arret(self) -> None:
-        service, premier, _second = self._deux_modeles()
-        cle = cle_stockage(premier.id_resolu, premier.commit, premier.fichier_gguf)
+    def test_suppression_refusee_pendant_execution_fichiers_intacts_puis_autorisee(
+        self,
+    ) -> None:
+        service, premier, second = self._deux_modeles()
+        cle_premier = cle_stockage(
+            premier.id_resolu, premier.commit, premier.fichier_gguf
+        )
+        cle_second = cle_stockage(second.id_resolu, second.commit, second.fichier_gguf)
+        dossier_premier = self.dossier(premier)
+        dossier_second = self.dossier(second)
+        self.assertTrue((dossier_premier / NOM_MARQUEUR).is_file())
+        self.assertTrue((dossier_second / NOM_MARQUEUR).is_file())
+        avant = instantane_arbre(dossier_premier)
+
+        resultats = self.donnees / "results" / "20261026-000000-test"
+        resultats.mkdir(parents=True)
+        run_json = resultats / "run.json"
+        run_json.write_text('{"etat": "completed"}', encoding="utf-8")
+
         liberation = threading.Event()
         self.addCleanup(liberation.set)
         self.creneau.demarrer(
-            TYPE_EXECUTION, lambda travailleur: liberation.wait(DELAI), cible="audio"
+            TYPE_EXECUTION,
+            lambda travailleur: liberation.wait(DELAI),
+            cible="org/modele",
         )
-        with self.assertRaises(CreneauOccupe):
-            service.supprimer(MOTEUR, cle)
+
+        with self.assertRaises(CreneauOccupe) as contexte:
+            service.supprimer(MOTEUR, cle_premier)
+        self.assertEqual(contexte.exception.type_operation, TYPE_EXECUTION)
+        self.assertEqual(instantane_arbre(dossier_premier), avant)
+        self.assertTrue((dossier_premier / NOM_MARQUEUR).is_file())
+        self.assertEqual(
+            run_json.read_text(encoding="utf-8"), '{"etat": "completed"}'
+        )
+        instantane = self.creneau.instantane()
+        self.assertEqual(instantane.etat, ETAT_EN_COURS)
+        self.assertEqual(instantane.type_operation, TYPE_EXECUTION)
+
         liberation.set()
         self.attendre()
+        service.supprimer(MOTEUR, cle_premier)
+        self.assertFalse(dossier_premier.exists())
+        self.assertTrue((dossier_second / NOM_MARQUEUR).is_file())
+        self.assertEqual(
+            run_json.read_text(encoding="utf-8"), '{"etat": "completed"}'
+        )
 
         self.creneau.arreter(0.5)
         with self.assertRaises(ServiceArrete):
-            service.supprimer(MOTEUR, cle)
-        self.assertTrue((self.dossier(premier) / NOM_MARQUEUR).is_file())
+            service.supprimer(MOTEUR, cle_second)
+        self.assertTrue((dossier_second / NOM_MARQUEUR).is_file())
 
     def test_cle_symlink_interne_refusee_sans_toucher_autre_modele(self) -> None:
         service = self.service()

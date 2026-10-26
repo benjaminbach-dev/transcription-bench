@@ -40,7 +40,7 @@ Ce jalon reste préalable aux adaptateurs réels, à la qualification effective 
 - [x] 5.2 Implémenter le lecteur partiel d'en-tête GGUF (`general.architecture`) et la règle transcribe.cpp avec choix du fichier de quantification ; vérifier par test sur un en-tête GGUF minimal généré localement
 - [x] 5.3 Implémenter la vérification distante (`model_info` avec tailles et commit), les messages d'incompatibilité et d'accès refusé sans affichage de jeton ; vérifier avec des réponses simulées, sans appel réseau dans les tests
 - [x] 5.4 Implémenter le téléchargement explicite à révision figée dans le créneau d'opération, l'inventaire `model.json` écrit atomiquement après succès, la page des modèles et la suppression locale ; vérifier par test avec un téléchargement simulé et le maintien des résultats après suppression ; vérifier qu'un téléchargement interrompu sans inventaire n'apparaît jamais prêt
-- [ ] 5.5 Implémenter le refus de suppression d'un modèle utilisé par une exécution active, et l'imposition du mode hors ligne (`HF_HUB_OFFLINE=1`, `local_files_only`, `trust_remote_code=False`) au lancement du moteur ; vérifier par tests que la suppression est refusée et que l'environnement transmis contient les réglages hors ligne
+- [x] 5.5 Implémenter le refus de suppression d'un modèle utilisé par une exécution active, et l'imposition du mode hors ligne (`HF_HUB_OFFLINE=1`, `local_files_only`, `trust_remote_code=False`) au lancement du moteur ; vérifier par tests que la suppression est refusée et que l'environnement transmis contient les réglages hors ligne
 
 ## 6. Audios et exécutions
 

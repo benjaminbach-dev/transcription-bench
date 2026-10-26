@@ -51,6 +51,7 @@ from transcription_bench.moteurs import (
 from transcription_bench.operations import (
     LIBELLES_ETATS,
     LIBELLES_TYPES,
+    TYPE_EXECUTION,
     TYPE_INSTALLATION,
     CreneauOccupe,
     CreneauOperations,
@@ -130,6 +131,11 @@ MESSAGES_ERREUR = {
 }
 
 MESSAGE_ERREUR_GENERIQUE = "La requête n'a pas pu être traitée."
+
+MESSAGE_SUPPRESSION_PENDANT_EXECUTION = (
+    "Une exécution en cours empêche la suppression : les fichiers du modèle "
+    "restent en place et les résultats déjà produits restent consultables."
+)
 
 
 @dataclass(frozen=True)
@@ -247,6 +253,11 @@ def _message_action() -> str | None:
     return MESSAGES_ACTION.get(request.args.get("action", ""))
 
 
+def _page_erreur(code: int, message: str) -> tuple[str, int]:
+    """Réponse d'erreur HTML à message fixe, sans texte d'exception ni cible."""
+    return render_template("erreur.html", code=code, message=message), code
+
+
 def _message_moteurs(moteurs: tuple[EtatMoteur, ...]) -> str:
     """Phrase d'accueil honnête selon l'inventaire local des moteurs réels."""
     prets = [moteur for moteur in moteurs if moteur.etat == ETAT_PRET and not moteur.factice]
@@ -352,7 +363,11 @@ def _enregistrer_routes(
             abort(404)
         except ValeurRefusee:
             abort(400)
-        except CreneauOccupe:
+        except CreneauOccupe as refus:
+            if refus.type_operation == TYPE_EXECUTION:
+                # Message fixe : le type a été capturé au refus sous le verrou,
+                # sans relire un état ultérieur ni recopier l'exception.
+                return _page_erreur(409, MESSAGE_SUPPRESSION_PENDANT_EXECUTION)
             abort(409)
         except ServiceArrete:
             abort(503)

@@ -242,3 +242,12 @@ Provenance : `main`, base `26653c2`, revue finale favorable et publication prép
 - [validation] Téléchargement explicite à commit figé, inventaire atomique, page modèles et suppression réalisés. Collision de stockage corrigée via clé calculée sur identité canonique/commit/variante ; contrôle des fichiers, chemins, alias, cache et verrous JSON après contrôle principal et revue advisor. Variante GGUF vérifiée sans perte de révision. Navigator : parcours complet simulé réussi, résultats conservés, serveur et traces nettoyés.
 - [constraint] Aucun moteur ni poids réel, aucune inférence ou qualification PC. Limites cache HF/réparation, dossiers partiels, suppression OS et métadonnées Xet consignées dans [[Reprise du lot 5 — compatibilité en attente d’arbitrage]].
 - [continuity] Advisor courant `b3219082-86fa-461`. Terminer **5.5** sans nouvelle demande d'accord général, ordre worker → principal → advisor ; garder le hors ligne dans le moteur uniquement, pas le serveur.
+
+## Lot 5 complet — tâche 5.5 et clôture, 2026-10-26 UTC
+
+Provenance : `transcription-bench`, `main`, base publiée `e425370` ; dernière tâche relue favorablement, publication de clôture préparée. **16/39 tâches, lot 5 complet (5/5), 329 tests passants** avec deux graines hors ligne.
+
+- [validation] Suppression pendant une exécution refusée en 409 avec indication adaptée, type capturé sous verrou au moment du refus ; fichiers et résultats intacts, suppression possible après fin. Les autres opérations et l'arrêt restent correctement refusés.
+- [validation] Environnement moteur dédié HF_HUB_OFFLINE=1 sans modifier le serveur ; runner force local_files_only=True/trust_remote_code=False dans une copie des options, active le hors ligne avant import et restaure le contexte. Interpréteur du venv conservé sans résolution du lien. Aucun moteur, poids ou nouvelle dépendance, aucune inférence ni qualification PC.
+- [constraint] En 6.3/6.6, utiliser environnement_moteur/commande_runner et garder le créneau occupé jusqu'à la fin réelle du moteur. En 8.x, transmettre les options aux seules API concernées et charger depuis les fichiers locaux. Jalon PC, 3.2 et 8.x toujours ouverts.
+- [continuity] **Nouveau point de reprise : [[Reprise après le lot 5]]**. Ancienne note lot 5 conservée comme historique. Advisor final `aaf3b07a-0158-496`, worker 5.5 `ed03c123-1bab-4c4`. Lot 6 non commencé ; la demande de terminer le lot 5 n'autorise pas à le démarrer automatiquement.
