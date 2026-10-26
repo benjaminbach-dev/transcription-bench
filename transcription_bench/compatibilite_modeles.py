@@ -437,6 +437,16 @@ def _nom_relatif_valide(nom: str) -> bool:
     return all(partie not in ("", ".", "..") for partie in nom.split("/"))
 
 
+def nom_fichier_relatif_valide(nom: str) -> bool:
+    """Forme publique du contrôle de nom de fichier distant (tâche 5.3).
+
+    La vérification distante valide ainsi un choix GGUF ou un nom lu dans les
+    métadonnées avec exactement la même règle que les listes de compatibilité,
+    avant toute ouverture ou lecture.
+    """
+    return _nom_relatif_valide(nom)
+
+
 def fichiers_gguf(noms: Sequence[str]) -> tuple[str, ...]:
     """Fichiers `.gguf` d'une liste de noms, triés et dédoublonnés.
 

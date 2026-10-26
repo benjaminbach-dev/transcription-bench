@@ -1,7 +1,8 @@
 """Créneau unique d'opération longue, indépendant de Flask.
 
 Un objet `CreneauOperations` détient au plus une opération globale
-(installation, téléchargement ou exécution) exécutée dans un thread démon. Il
+(installation, téléchargement, exécution ou vérification distante) exécutée
+dans un thread démon. Il
 est créé par la CLI puis injecté dans les services de l'application : il n'est
 ni global au module, ni construit par la fabrique Flask, qui ne démarre aucun
 thread.
@@ -59,13 +60,20 @@ LIBELLES_ETATS = {
 TYPE_INSTALLATION = "installation"
 TYPE_TELECHARGEMENT = "telechargement"
 TYPE_EXECUTION = "execution"
+TYPE_VERIFICATION = "verification"
 
-TYPES_OPERATION = (TYPE_INSTALLATION, TYPE_TELECHARGEMENT, TYPE_EXECUTION)
+TYPES_OPERATION = (
+    TYPE_INSTALLATION,
+    TYPE_TELECHARGEMENT,
+    TYPE_EXECUTION,
+    TYPE_VERIFICATION,
+)
 
 LIBELLES_TYPES = {
     TYPE_INSTALLATION: "installation",
     TYPE_TELECHARGEMENT: "téléchargement",
     TYPE_EXECUTION: "exécution",
+    TYPE_VERIFICATION: "vérification",
 }
 
 DELAI_ARRET_DEFAUT = 5.0
