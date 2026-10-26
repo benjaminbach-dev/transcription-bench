@@ -53,7 +53,10 @@ Règles implémentées ici, appelées par `DeclarationAdaptateur.regle_compatibi
   La famille vient de la métadonnée `general.architecture` lue dans l'en-tête du
   fichier choisi par `lecteur_entete_gguf`, jamais du nom de fichier : un nom
   comme `modele.q8_0.gguf` est consigné tel quel et ne prouve ni l'architecture
-  ni la quantification réelle. Les noms sont validés (chemin relatif confiné)
+  ni la quantification réelle. Une variante repérée comme fragment par son nom
+  (`-00001-of-00002.gguf`) est refusée : la prise en charge des GGUF découpés
+  n'est pas assurée et un fragment ne doit jamais devenir prêt. Les noms sont
+  validés (chemin relatif confiné)
   avant tout appel au lecteur, et aucune ouverture de fichier n'a lieu ici :
   aucun fichier local arbitraire n'est ouvert et aucun lien symbolique n'est
   suivi, faute d'accès au système de fichiers. Le confinement des chemins locaux
@@ -113,6 +116,7 @@ contrôles ne constituent pas une sandbox.
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -135,6 +139,7 @@ RAISON_POIDS_SAFETENSORS_ABSENTS = "poids-safetensors-absents"
 RAISON_INDEX_INVALIDE = "index-safetensors-invalide"
 RAISON_NOM_FICHIER_REFUSE = "nom-de-fichier-refuse"
 RAISON_FICHIER_GGUF_ABSENT = "fichier-gguf-absent"
+RAISON_FICHIER_GGUF_DECOUPE = "fichier-gguf-decoupe"
 RAISON_FICHIER_GGUF_NON_CHOISI = "fichier-gguf-non-choisi"
 RAISON_EN_TETE_GGUF_NON_LU = "en-tete-gguf-non-lu"
 RAISON_EN_TETE_GGUF_ILLISIBLE = "en-tete-gguf-illisible"
@@ -152,6 +157,7 @@ RAISONS_REFUS: tuple[str, ...] = (
     RAISON_INDEX_INVALIDE,
     RAISON_NOM_FICHIER_REFUSE,
     RAISON_FICHIER_GGUF_ABSENT,
+    RAISON_FICHIER_GGUF_DECOUPE,
     RAISON_FICHIER_GGUF_NON_CHOISI,
     RAISON_EN_TETE_GGUF_NON_LU,
     RAISON_EN_TETE_GGUF_ILLISIBLE,
@@ -224,6 +230,13 @@ PROFONDEUR_MAX_INSPECTION = 8
 
 # Variante de quantification transcribe.cpp : extension seule, sans interprétation.
 EXTENSION_GGUF = ".gguf"
+# Fragment d'un GGUF découpé, tel que nommé par les outils usuels
+# (`modele-00001-of-00002.gguf`). La détection est faite sur le nom seul : elle
+# refuse un téléchargement de fragment, sans prouver l'intégrité du fichier ni
+# détecter un renommage malveillant.
+_MOTIF_FRAGMENT_GGUF = re.compile(
+    r"-\d{5}-of-\d{5}\.gguf$", re.IGNORECASE | re.ASCII
+)
 
 
 class RegleCompatibiliteInconnue(ValueError):
@@ -464,6 +477,17 @@ def fichiers_gguf(noms: Sequence[str]) -> tuple[str, ...]:
             }
         )
     )
+
+
+def est_fragment_gguf(nom: str) -> bool:
+    """Vrai si le nom désigne un fragment de GGUF découpé (`-00001-of-00002`).
+
+    Contrôle de nom uniquement, réutilisé par la vérification et le
+    téléchargement : il refuse la variante choisie avant toute E/S, sans
+    prétendre vérifier les métadonnées internes, les tenseurs ou l'intégrité du
+    fichier.
+    """
+    return isinstance(nom, str) and bool(_MOTIF_FRAGMENT_GGUF.search(nom))
 
 
 def _lire_configurations(
@@ -789,6 +813,13 @@ def _regle_transcribe_cpp(
             "dont l'architecture est lue dans l'en-tête",
         )
     choisi = _choisir_fichier_gguf(candidats, fichier_gguf)
+    if est_fragment_gguf(choisi):
+        raise _Refus(
+            RAISON_FICHIER_GGUF_DECOUPE,
+            f"{choisi!r} est un fragment de GGUF découpé : une seule variante "
+            "autonome est prise en charge, aucun téléchargement de fragment "
+            "n'est lancé et le modèle ne peut pas devenir prêt",
+        )
     if lecteur_entete_gguf is None:
         raise _Refus(
             RAISON_EN_TETE_GGUF_NON_LU,

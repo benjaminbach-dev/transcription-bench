@@ -3,9 +3,9 @@ title: Reprise du lot 5 — compatibilité en attente d’arbitrage
 type: note
 permalink: transcription-bench/projet/reprise-du-lot-5-compatibilite-en-attente-darbitrage
 date: '2026-10-25'
-provenance: transcription-bench, main, base publiée 12795fe ; clôture locale de 5.3,
-  2026-10-25 UTC
-status: 5.1 et 5.2 publiées ; 5.3 terminée et relue, publication préparée
+provenance: transcription-bench, main, base publiée 26653c2 ; clôture locale 5.4,
+  2026-10-26 UTC
+status: 5.1 à 5.3 publiées ; 5.4 terminée et relue, publication préparée
 tags:
 - reprise
 - lot-5
@@ -17,12 +17,11 @@ tags:
 Le titre historique du fichier conserve « en attente d’arbitrage », mais **l’arbitrage est clos**. Cette synthèse remplace les mentions précédentes d'attente.
 
 ## État et méthode
-Provenance : `transcription-bench`, `main`, base publiée **12795fe**, 2026-10-25 UTC. **5.3 terminée et cochée : 14/39** après worker, contrôle principal, corrections puis validation advisor. Publication préparée ; vérifier Git pour son commit effectif. **5.4 et 5.5 à enchaîner, demande utilisateur explicite**, sans redemander l'accord général.
+Provenance : `main`, base publiée **26653c2**, 2026-10-26 UTC. **5.4 terminée et cochée : 15/39**, revue finale favorable. Publication préparée ; vérifier Git pour son commit effectif. **5.5 reste à terminer maintenant**, enchaînement explicitement demandé par l'utilisateur.
 
-- [decision] Une tâche à la fois : worker → contrôle principal → advisor → corrections worker → même advisor → commit/push des seuls fichiers concernés. Même contexte advisor par lot ; reconstitution autorisée s'il expire, en le signalant.
-- [decision] Profils simplifiés de 5.1 inchangés : tokenizer JSON/config pour Transformers ; prétraitement exigé pour tous les CTranslate2 Whisper. Réexamen PC sans promesse générale de sécurité.
-- [validation] **275 tests passent**, deux graines hors ligne et proxy injoignable chez advisor. OpenSpec strict, verrou uv et contrôle Git réussis. Les tests du client réel utilisent MockTransport, aucun HTTP réel de modèle ni poids. Le principal a seulement consulté les métadonnées publiques de l'alias `gpt2` pour vérifier sa résolution.
-- [constraint] Serveur de développement, pas PC. Aucun moteur, poids, nouvelle dépendance ou inférence réelle ; familles réelles toujours non qualifiées ; 1.x, 3.2 et 8.x restent ouvertes.
+- [decision] Worker → contrôle principal → advisor → corrections worker → même advisor → publication par tâche. Reconstitution autorisée des contextes expirés, en le signalant ; ne pas refaire le code déjà validé après une interruption.
+- [validation] **319 tests passent**, deux graines hors ligne. Parcours navigator de la vraie page avec services simulés réussi : vérification, téléchargement, déjà présent, suppression, retour accueil/opération. Résultat sentinelle conservé ; serveur temporaire arrêté et traces Playwright nettoyées.
+- [constraint] Aucun moteur, poids, nouvelle dépendance ou inférence réelle. Familles réelles non qualifiées ; jalon PC, 3.2 et 8.x ouverts. Profils simplifiés 5.1 inchangés.
 ## Production de 5.1 et limites
 
 Deux nouveaux fichiers : `transcription_bench/compatibilite_modeles.py` et `tests/test_compatibilite_modeles.py`. Spec `model-management`, design D10 et tâche 5.1 alignés sur le profil accepté. Le proposal et les autres specs restent cohérents sans modification.
@@ -43,9 +42,9 @@ Sources : Context7 faster-whisper et Transformers v5.19.0 ; pour v5.20.2 non ind
 - Aucun de ces constats documentaires ne prouve le chargement réel hors ligne sur un PC.
 
 ## Continuité des agents et suite
-- Advisor lot 5 à reprendre : `975a80f1-3737-403`, revue finale de 5.3. Worker 5.3 `f57113d1-d90a-438`. Les précédents advisors devenus inaccessibles ont été reconstitués selon l'accord utilisateur.
-- Prochaine tâche **5.4**, puis **5.5**, déjà autorisées. Corriger le stockage ambigu dans D10 avant de l'implémenter, sans interdire d'identifiants HF valides ; garder les résultats après suppression du modèle. Ne pas accepter un GGUF découpé comme fichier autonome.
-- La lecture réelle Range côté CDN/Xet et les capacités réelles restent à confirmer sur PC. Le listage interne sans délai exposé et l'absence de délai global garanti restent à traiter/documenter en 6.6. Récupération 6.5 et supervision 6.6 toujours dues ; voir [[Reprise du développement après le lot 4]].
+- Advisor lot 5 **à reprendre** : `b3219082-86fa-461`, validation finale 5.4. Reconstitue `975a80f1` devenu inaccessible après interruption, conformément à l'accord existant. Worker de correction 5.4 `2212caa4-3ee1-44d`, premier worker `30a089eb-11b7-44b` inaccessible.
+- Prochaine et dernière tâche du lot : **5.5**, déjà autorisée. Refus de suppression pendant une exécution avec indication adaptée et preuve de conservation des fichiers ; mode hors ligne imposé au lancement moteur, options local_files_only et trust_remote_code. **Ne pas modifier l'environnement global du serveur** (ses téléchargements doivent rester possibles). Pas de réalisation anticipée du lot 6.
+- Validation réelle CDN/Xet, réparation native HF et Windows restent aux PC. Les limites d'arrêt global et le listage réseau sans délai exposé restent à documenter en 6.6.
 ## Production de 5.2 — lecture GGUF partielle
 
 Provenance : `main`, base `34f147f`, 2026-10-25. Nouveau `transcription_bench/gguf.py`, fixtures synthétiques et tests ; intégration dans la règle de compatibilité existante.
@@ -66,3 +65,22 @@ Provenance : base `12795fe`, tâche relue et clôturée localement.
 - [constraint] L'appel initial a un délai de 30 s ; le listage interne de HfFileSystem ne fournit pas partout de délai exposé. Aucun délai global d'arrêt garanti, à consigner en 6.6. Lire les erreurs réseau/lecture sans jamais recopier URL ou secret.
 - [next] 5.4 doit exiger le dernier résultat accepté avec identité canonique/commit/variante exacts, vérifier l'installation du moteur avant admission et créer le marqueur seulement après succès complet. Clé dérivée de l'identité canonique+commit+variante plutôt que `<org>__<nom>` ; résolution à documenter dans D10 avant écriture du stockage. Les GGUF découpés ne doivent pas devenir prêts comme variante isolée.
 - [continuity] Advisor lot 5 courant : `975a80f1-3737-403` (remplace `d46d5377-0ebf-450` expiré, reconstitution annoncée) ; worker 5.3 `f57113d1-d90a-438`.
+
+## Enchaînement en cours — après publication 5.3
+
+Provenance : `main`, commit publié **26653c2**, 2026-10-25 UTC, dépôt propre au démarrage de la suite. User a demandé explicitement d'enchaîner 5.3/5.4/5.5, ordre worker → principal → advisor ; ne pas s'arrêter volontairement après 5.4 si aucun blocage.
+
+- [status] Worker **30a089eb-11b7-44b** implémente **5.4** ; pas encore contrôlé ni revu. Advisor lot 5 à reprendre **975a80f1-3737-403**. 5.5 non commencée. Dernier état publié 14/39, 275 tests.
+- [decision] Correction interne de la collision de stockage annoncée avant démarrage : dossier `data/models/<moteur>/<SHA256>/` calculé sur JSON déterministe `[id_resolu, commit, variante_gguf_ou_null]` ; `model.json` séparé d'un sous-dossier `fichiers/` pour les téléchargements. Noms lisibles gardés dans l'inventaire. Preuve principale locale : `a__b/c` et `a/b__c` distincts, noms courts et `CON` acceptés comme identifiants sans créer un dossier réservé ; variantes distinctes. D10 doit être aligné avant la persistance. Aucun modèle préexistant à migrer.
+- [decision] Les GGUF repérés comme fragments par leur nom sont refusés avant téléchargement/état prêt ; pas de prise en charge multi-fichiers spéculative ni de validation des tenseurs. Toujours une seule variante complète.
+- [constraint] `snapshot_download` attend des glob patterns : échapper les noms littéraux avec `glob.escape` pour ne pas télécharger des fichiers supplémentaires. Preuve locale `model[abc].safetensors` ne sélectionne pas `modela.safetensors` après échappement.
+- [next] Après rapport worker : principal lit code/tests et vérifie parcours ciblé, puis advisor ; corrections éventuelles ; cocher uniquement après validation ; mémoire, identité/remote, commit/push explicites par tâche. Ensuite 5.5 : suppression du modèle actif interdite (créneau global) et mode hors ligne imposé au lancement. Aucun moteur, poids ou inférence réelle, tests simulés seulement.
+
+## Production de 5.4 — téléchargement et inventaire, 2026-10-26 UTC
+
+Provenance : base `26653c2`, clôture relue et publication préparée.
+
+- [decision] D10 aligné : clé SHA-256 JSON `[id_resolu, commit, variante]`, `data/models/<moteur>/<clé>/model.json` séparé de `fichiers/`. Pas de collision de l'ancien assemblage `org__nom`, pas d'identifiant valide interdit pour contourner le stockage. Empreinte du dernier résultat accepté uniquement côté serveur, moteur prêt vérifié, commit et liste autorisée non fournis par le formulaire.
+- [validation] snapshot_download à commit figé, fichiers échappés avec glob.escape, max_workers=1, client créé dans le thread admis. Contrôle présence et tailles avant marqueur atomique sous le verrou d'arrêt. Après redémarrage, fichier absent/tronqué, marqueur incohérent ou alias ne donne jamais prêt. Répertoire moteur/clé non aliasé, marqueur confiné avant lecture, cache confiné au modèle ; suppression/marqueur protégés par le verrou JSON commun, ordre créneau puis stockage.
+- [validation] Page modèles réelle, POST protégés et PRG 303, données échappées, GET sans réseau. Le formulaire de choix d'une variante GGUF conserve maintenant le commit exact. Suppression conserve les résultats et les autres modèles. Fragments GGUF reconnus par nom refusés avant téléchargement, sans prétendre valider intrinsèquement les poids.
+- [constraint] Dossiers partiels/non prêts invisibles dans l'UI : reprise explicite ou nettoyage manuel. Une troncature détectée par l'application n'est pas forcément réparée par le cache HF si elle est faite à moins d'une seconde du téléchargement, ou si sa date est restaurée : le modèle reste non prêt ; cache/nettoyage manuel peut être nécessaire. Métadonnées de shards Xet (pas de poids) possibles hors data dans ~/.cache/huggingface/xet. Une erreur OS de suppression donne encore 500 générique. Réseau réel, réparations et chemins longs Windows à confirmer sur PC.

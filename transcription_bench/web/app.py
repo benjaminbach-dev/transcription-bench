@@ -15,10 +15,11 @@ Les mutations passent par le créneau unique injecté : la vérification des
 dossiers s'exécute sous son verrou et est refusée (409) pendant une opération
 longue, comme après le passage à l'arrêt (503). L'accueil affiche l'état du
 créneau, les emplacements des dossiers, l'état des moteurs et des liens vers les
-pages des moteurs, modèles, audios, exécutions et résultats. La page des moteurs
-est réelle : elle lit l'inventaire local et permet une installation explicite.
-Les autres pages n'existent pas encore : elles sont servies comme pages
-provisoires explicites, sans simulation de capacité absente et sans lien mort.
+pages des moteurs, modèles, audios, exécutions et résultats. Les pages des
+moteurs et des modèles sont réelles : elles lisent l'inventaire local et
+délèguent les actions explicites aux services. Les autres pages n'existent pas
+encore : elles sont servies comme pages provisoires explicites, sans simulation
+de capacité absente et sans lien mort.
 La page `/operation` n'affiche que l'instantané du créneau, sans lancer de
 travail.
 """
@@ -36,6 +37,10 @@ from flask import Flask, abort, redirect, render_template, request, url_for
 from werkzeug.exceptions import HTTPException
 
 from engines.registre import MoteurInconnu, creer_registre_fourni
+from transcription_bench.gestion_modeles import (
+    GestionModeles,
+    empreinte_verification,
+)
 from transcription_bench.moteurs import (
     ETAT_PRET,
     LIBELLES_ETATS_MOTEUR,
@@ -64,6 +69,15 @@ HOTES_AUTORISES = ("127.0.0.1", "localhost")
 
 MESSAGES_ACTION = {
     "dossiers-verifies": "Dossiers de données vérifiés.",
+    "verification-lancee": (
+        "Vérification distante lancée : le résultat apparaîtra après actualisation."
+    ),
+    "telechargement-lance": (
+        "Téléchargement lancé à la révision vérifiée : le modèle ne sera prêt "
+        "qu'après succès complet."
+    ),
+    "modele-deja-present": "Ce modèle est déjà présent : aucun téléchargement n'a été lancé.",
+    "modele-supprime": "Modèle local supprimé ; les résultats déjà produits restent consultables.",
 }
 
 
@@ -80,12 +94,6 @@ class PageProvisoire(NamedTuple):
 
 
 PAGES_PROVISOIRES = (
-    PageProvisoire(
-        "modeles",
-        "Modèles",
-        "la vérification, le téléchargement et la suppression des modèles "
-        "relèvent des tâches 5.1 à 5.5",
-    ),
     PageProvisoire(
         "audios",
         "Audios",
@@ -110,6 +118,7 @@ MESSAGE_MOTEURS_NON_INSTALLES = (
 )
 
 MESSAGES_ERREUR = {
+    400: "Demande refusée : valeur ou action invalide.",
     403: "Requête refusée : adresse, origine ou jeton invalide.",
     404: "Page introuvable.",
     405: "Méthode non autorisée pour cette adresse.",
@@ -143,11 +152,14 @@ class ServicesApplication:
     l'injecte. Il n'est ni global au module ni construit par `create_app`.
     `moteurs` est le service d'installation ; s'il est absent, la fabrique en
     construit un avec les quatre déclarations fournies, sans aucune E/S.
+    `modeles` est le service des modèles ; s'il est absent, la fabrique en
+    construit un également, sans E/S ni client réseau.
     """
 
     creneau: CreneauOperations
     preparer_dossiers: Callable[[Path], dict[str, Path]] = preparer_dossiers_data
     moteurs: InstallationMoteurs | None = None
+    modeles: GestionModeles | None = None
 
 
 def create_app(config: ConfigApplication, services: ServicesApplication) -> Flask:
@@ -166,6 +178,12 @@ def create_app(config: ConfigApplication, services: ServicesApplication) -> Flas
     service_moteurs = services.moteurs or InstallationMoteurs(
         config.dossier_data, creer_registre_fourni(), services.creneau
     )
+    service_modeles = services.modeles or GestionModeles(
+        config.dossier_data,
+        creer_registre_fourni(),
+        services.creneau,
+        service_moteurs,
+    )
 
     @application.context_processor
     def injecter_jeton() -> dict[str, object]:
@@ -181,7 +199,9 @@ def create_app(config: ConfigApplication, services: ServicesApplication) -> Flas
         if request.method == "POST":
             _verifier_post(jeton, origines)
 
-    _enregistrer_routes(application, config, services, service_moteurs)
+    _enregistrer_routes(
+        application, config, services, service_moteurs, service_modeles
+    )
     _enregistrer_erreurs(application)
     return application
 
@@ -244,6 +264,7 @@ def _enregistrer_routes(
     config: ConfigApplication,
     services: ServicesApplication,
     service_moteurs: InstallationMoteurs,
+    service_modeles: GestionModeles,
 ) -> None:
     @application.get("/")
     def accueil() -> str:
@@ -261,6 +282,81 @@ def _enregistrer_routes(
 
     for page in PAGES_PROVISOIRES:
         _enregistrer_page_provisoire(application, page)
+
+    @application.get("/modeles")
+    def modeles() -> str:
+        resultat = service_modeles.dernier_resultat()
+        try:
+            inventaire = service_modeles.inventaire()
+        except ValeurRefusee:
+            inventaire = ()
+        return render_template(
+            "modeles.html",
+            modeles=inventaire,
+            moteurs=service_modeles.moteurs_disponibles(),
+            resultat=resultat,
+            empreinte=(
+                empreinte_verification(resultat)
+                if resultat is not None and resultat.accepte
+                else None
+            ),
+            instantane=services.creneau.instantane(),
+            libelles_types=LIBELLES_TYPES,
+            message=_message_action(),
+        )
+
+    @application.post("/modeles/verifier")
+    def verifier_modele():
+        identifiant = request.form.get("identifiant", "")
+        moteur = request.form.get("moteur", "")
+        revision = request.form.get("revision", "").strip() or None
+        fichier_gguf = request.form.get("fichier_gguf", "").strip() or None
+        try:
+            service_modeles.lancer_verification(
+                identifiant,
+                moteur,
+                revision=revision,
+                fichier_gguf=fichier_gguf,
+            )
+        except MoteurInconnu:
+            abort(404)
+        except ValeurRefusee:
+            abort(400)
+        except CreneauOccupe:
+            abort(409)
+        except ServiceArrete:
+            abort(503)
+        return redirect(url_for("modeles", action="verification-lancee"), code=303)
+
+    @application.post("/modeles/telecharger")
+    def telecharger_modele():
+        empreinte = request.form.get("empreinte", "")
+        try:
+            lance = service_modeles.lancer_telechargement(empreinte)
+        except ValeurRefusee:
+            abort(400)
+        except CreneauOccupe:
+            abort(409)
+        except ServiceArrete:
+            abort(503)
+        action = "telechargement-lance" if lance else "modele-deja-present"
+        return redirect(url_for("modeles", action=action), code=303)
+
+    @application.post("/modeles/supprimer")
+    def supprimer_modele():
+        moteur = request.form.get("moteur", "")
+        cle = request.form.get("cle", "")
+        try:
+            service_modeles.supprimer(moteur, cle)
+        except MoteurInconnu:
+            abort(404)
+        except ValeurRefusee:
+            abort(400)
+        except CreneauOccupe:
+            abort(409)
+        except ServiceArrete:
+            abort(503)
+        return redirect(url_for("modeles", action="modele-supprime"), code=303)
 
     @application.get("/moteurs")
     def moteurs() -> str:

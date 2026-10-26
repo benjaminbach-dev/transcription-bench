@@ -234,3 +234,11 @@ Provenance : `main`, base `12795fe` ; revue finale favorable et publication pré
 - [validation] Vérification distante à commit figé, tailles et messages sans secrets ; admission avant réseau dans le créneau global ; résultat non publié après arrêt. Contrôle principal puis correction des lectures en avance, des identifiants courts et des fichiers parasites, revue advisor puis délai model_info 30 s et identifiant canonique conservé. Tests réseau entièrement simulés, aucune installation moteur ni poids.
 - [constraint] HfFileSystem utilise Range exact sans cache ; respect effectif par CDN/Xet à confirmer sur PC, listage interne sans délai exposé reste une limite 6.6. Aucun succès PC revendiqué.
 - [continuity] [[Reprise du lot 5 — compatibilité en attente d’arbitrage]] actualisée. Reprendre advisor `975a80f1-3737-403`. Enchaînement 5.4 puis 5.5 explicitement demandé, méthode worker → principal → advisor, publication par tâche.
+
+## Lot 5 — tâche 5.4 terminée, 2026-10-26 UTC
+
+Provenance : `main`, base `26653c2`, revue finale favorable et publication préparée. **15/39**, **319 tests passants**.
+
+- [validation] Téléchargement explicite à commit figé, inventaire atomique, page modèles et suppression réalisés. Collision de stockage corrigée via clé calculée sur identité canonique/commit/variante ; contrôle des fichiers, chemins, alias, cache et verrous JSON après contrôle principal et revue advisor. Variante GGUF vérifiée sans perte de révision. Navigator : parcours complet simulé réussi, résultats conservés, serveur et traces nettoyés.
+- [constraint] Aucun moteur ni poids réel, aucune inférence ou qualification PC. Limites cache HF/réparation, dossiers partiels, suppression OS et métadonnées Xet consignées dans [[Reprise du lot 5 — compatibilité en attente d’arbitrage]].
+- [continuity] Advisor courant `b3219082-86fa-461`. Terminer **5.5** sans nouvelle demande d'accord général, ordre worker → principal → advisor ; garder le hors ligne dans le moteur uniquement, pas le serveur.

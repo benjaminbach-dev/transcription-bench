@@ -35,6 +35,7 @@ from transcription_bench.compatibilite_modeles import (
     RAISON_FAMILLE_HORS_PERIMETRE,
     RAISON_FAMILLE_NON_QUALIFIEE,
     RAISON_FICHIER_GGUF_ABSENT,
+    RAISON_FICHIER_GGUF_DECOUPE,
     RAISON_FICHIER_GGUF_NON_CHOISI,
     RAISON_FICHIERS_MANQUANTS,
     RAISON_INDEX_INVALIDE,
@@ -50,6 +51,7 @@ from transcription_bench.compatibilite_modeles import (
     ResultatCompatibilite,
     ResultatCompatibiliteInvalide,
     fichiers_gguf,
+    est_fragment_gguf,
     verifier_compatibilite,
 )
 from transcription_bench.gguf import lire_entete_gguf
@@ -858,6 +860,32 @@ class TranscribeCppCompatibiliteTest(AssertionsCompatibilite):
         # affirmée : seule cette variante est retenue.
         self.assertEqual(resultat.fichiers, ("modele-q8_0.gguf",))
         self.assertEqual(journal, ["modele-q8_0.gguf"])
+
+    def test_fragment_gguf_refuse_avant_lecture_de_l_entete(self) -> None:
+        fragment = "modele-00001-of-00002.gguf"
+        self.assertTrue(est_fragment_gguf(fragment))
+        self.assertFalse(est_fragment_gguf("modele-q8_0.gguf"))
+        self.assertFalse(est_fragment_gguf("modele-00001-of-00002.gguf.bak"))
+        journal: list[str] = []
+        resultat = verifier_compatibilite(
+            self.declaration,
+            (*FICHIERS_GGUF, fragment),
+            fichier_gguf=fragment,
+            lecteur_entete_gguf=lecteur_gguf_de(octets_gguf(), journal),
+        )
+        refus = self.assertRefus(resultat, RAISON_FICHIER_GGUF_DECOUPE)
+        self.assertIn(fragment, refus.message)
+        self.assertEqual(journal, [])
+
+    def test_fragment_gguf_unique_refuse_sans_choix_ni_lecture(self) -> None:
+        journal: list[str] = []
+        resultat = verifier_compatibilite(
+            self.declaration,
+            ("modele-00001-of-00002.gguf",),
+            lecteur_entete_gguf=lecteur_gguf_de(octets_gguf(), journal),
+        )
+        self.assertRefus(resultat, RAISON_FICHIER_GGUF_DECOUPE)
+        self.assertEqual(journal, [])
 
     def test_unique_gguf_accepte_sans_choix_explicite(self) -> None:
         fichiers = retire(FICHIERS_GGUF, "modele-f16.gguf")

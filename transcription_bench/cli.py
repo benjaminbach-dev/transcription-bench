@@ -27,6 +27,7 @@ from waitress import serve
 
 from engines.registre import creer_registre_fourni
 from transcription_bench import paths
+from transcription_bench.gestion_modeles import GestionModeles
 from transcription_bench.instance import InstanceDejaActive, VerrouInstance
 from transcription_bench.moteurs import InstallationMoteurs
 from transcription_bench.operations import CreneauOperations
@@ -113,12 +114,16 @@ def main(
         else:
             paths.preparer_dossiers_data(dossier_data)
             creneau = CreneauOperations()
-            installation = InstallationMoteurs(
-                dossier_data, creer_registre_fourni(), creneau
-            )
+            registre = creer_registre_fourni()
+            installation = InstallationMoteurs(dossier_data, registre, creneau)
+            modeles = GestionModeles(dossier_data, registre, creneau, installation)
             application = create_app(
                 ConfigApplication(port=arguments.port, dossier_data=dossier_data),
-                ServicesApplication(creneau=creneau, moteurs=installation),
+                ServicesApplication(
+                    creneau=creneau,
+                    moteurs=installation,
+                    modeles=modeles,
+                ),
             )
             print(
                 f"Interface disponible : http://{ADRESSE_ECOUTE}:{arguments.port}",
