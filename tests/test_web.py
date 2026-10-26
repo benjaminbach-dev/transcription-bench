@@ -427,7 +427,7 @@ class AccueilEtPagesProvisoiresTest(SocleWebTest):
         self.assertFalse(self.dossier_data.exists())
 
     def test_pages_provisoires_honnetes_sans_effet_de_bord(self) -> None:
-        for route in ("/audios", "/executions", "/resultats"):
+        for route in ("/resultats",):
             with self.subTest(route=route):
                 corps = self.texte(route)
                 self.assertIn("Fonctionnalité non disponible", corps)
@@ -435,13 +435,22 @@ class AccueilEtPagesProvisoiresTest(SocleWebTest):
                 self.assertIn("Aucune donnée n'est lue", corps)
                 self.assertIn('href="/"', corps)
                 self.verifier_html_seul(corps)
-        # Les pages des moteurs (4.4) et des modèles (5.4) sont réelles.
+        # Les pages des moteurs (4.4), des modèles (5.4), des audios (6.1) et
+        # des exécutions (6.2) sont réelles.
         corps_moteurs = self.texte("/moteurs")
         self.assertNotIn("Fonctionnalité non disponible", corps_moteurs)
         self.assertIn("Moteurs", corps_moteurs)
         corps_modeles = self.texte("/modeles")
         self.assertNotIn("Fonctionnalité non disponible", corps_modeles)
         self.assertIn("Modèles", corps_modeles)
+        corps_audios = self.texte("/audios")
+        self.assertNotIn("Fonctionnalité non disponible", corps_audios)
+        self.assertIn("Aucun fichier audio", corps_audios)
+        self.verifier_html_seul(corps_audios)
+        corps_executions = self.texte("/executions")
+        self.assertNotIn("Fonctionnalité non disponible", corps_executions)
+        self.assertIn("Lancement non disponible", corps_executions)
+        self.verifier_html_seul(corps_executions)
         self.assertFalse(
             self.dossier_data.exists(),
             "une page provisoire a créé ou touché les dossiers de données",

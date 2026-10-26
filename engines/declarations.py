@@ -246,6 +246,34 @@ class DeclarationAdaptateur:
         return tuple(famille for famille in self.familles if famille.qualifiee)
 
 
+def motif_famille_non_executable(
+    declaration: DeclarationAdaptateur, famille: Famille
+) -> str | None:
+    """Motif pour lequel le runner refuserait cette famille, ou `None`.
+
+    Règle unique, partagée par `engines.runner` et par le service des demandes
+    d'exécution : une famille n'est exécutable que si la déclaration est
+    factice (`factice=True`, sans qualification PC) ou si la famille est
+    qualifiée, **et** si aucun mécanisme natif d'audio long n'est déclaré. Ce
+    dernier point est un refus du runner, pas une capacité : un mécanisme natif
+    déclaré rend la famille non exécutable jusqu'à la tâche 8.x qui la
+    prendrait en charge. Le motif renvoyé est un texte prêt à afficher ; il ne
+    contient ni chemin ni donnée d'exécution.
+    """
+    if not famille.qualifiee and not declaration.factice:
+        return (
+            f"famille {famille.identifiant!r} du moteur "
+            f"{declaration.identifiant!r} non qualifiée sur PC "
+            "(jalon 0 et tâches 8.x)"
+        )
+    if famille.duree_native is not None:
+        return (
+            "mécanisme natif d'audio long non pris en charge par ce runner "
+            f"({famille.duree_native.methode}) : tâche 8.x attendue"
+        )
+    return None
+
+
 DECLARATION_FASTER_WHISPER = DeclarationAdaptateur(
     identifiant="faster-whisper",
     nom="faster-whisper (CTranslate2)",

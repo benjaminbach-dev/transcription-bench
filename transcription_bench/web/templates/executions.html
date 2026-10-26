@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+{% block titre %}Exécutions — transcription-bench{% endblock %}
+{% block contenu %}
+<h2>Exécutions</h2>
+<p><a href="{{ url_for('executions') }}">Actualiser</a></p>
+<p><strong>Lancement non disponible.</strong> {{ message_lancement }}</p>
+{% if demande %}
+<h3>Demande validée</h3>
+<p>La demande ci-dessous est valide : les valeurs effectives sont complètes et les réglages inconnus ont été refusés. <strong>Aucune exécution n'a été lancée</strong> et rien n'est enregistré.</p>
+<dl>
+<dt>Modèle</dt>
+{% if demande.synthetique %}
+<dd>{{ demande.identifiant }} (modèle synthétique : aucun fichier, aucun poids, aucun commit ; les textes et mesures seront simulés)</dd>
+{% else %}
+<dd>{{ demande.identifiant }} (identifiant canonique {{ demande.id_resolu }}, commit {{ demande.commit }})</dd>
+{% endif %}
+<dt>Moteur</dt>
+<dd>{{ demande.moteur }}</dd>
+<dt>Famille</dt>
+<dd>{{ demande.famille }}{% if demande.fichier_gguf %} ; variante GGUF {{ demande.fichier_gguf }}{% endif %}</dd>
+<dt>Threads demandés</dt>
+<dd>{{ demande.threads }} (nombre demandé ; aucune valeur appliquée n'est affirmée avant l'exécution)</dd>
+<dt>Audios, dans l'ordre de traitement</dt>
+<dd>
+<ol>
+{% for nom in demande.audios %}
+<li>{{ nom }}</li>
+{% endfor %}
+</ol>
+</dd>
+<dt>Réglages effectifs, défauts compris</dt>
+<dd>
+{% if demande.reglages %}
+<ul>
+{% for reglage in demande.reglages %}
+<li>{{ reglage.nom }} : {% if reglage.valeur is sameas true %}oui{% elif reglage.valeur is sameas false %}non{% elif reglage.valeur == "" %}(vide){% else %}{{ reglage.valeur }}{% endif %}</li>
+{% endfor %}
+</ul>
+{% else %}
+aucun réglage déclaré par cette famille : aucun réglage n'est proposé.
+{% endif %}
+</dd>
+<dt>Audios longs</dt>
+<dd>{% if demande.fenetre_fixe_secondes is none %}mécanisme natif déclaré par la famille{% else %}découpage en fenêtres fixes de {{ "%.0f"|format(demande.fenetre_fixe_secondes) }} s sans recouvrement{% endif %}</dd>
+<dt>Lancement</dt>
+<dd>aucune exécution n'a été lancée.</dd>
+</dl>
+{% endif %}
+<h3>Nouvelle demande</h3>
+{% if not modeles %}
+<p>Aucun modèle proposable : la page des modèles permet de vérifier un dépôt et de le télécharger explicitement. Seul un moteur déclaré peut proposer un modèle.</p>
+{% else %}
+<p>Le formulaire est répété pour chaque modèle exécutable, car les réglages proposés sont ceux de sa famille. Seuls les réglages déclarés par l'adaptateur apparaissent, avec leur valeur par défaut. Un modèle dont la famille n'est pas exécutable est affiché pour information et n'est pas sélectionnable.</p>
+{% for modele in modeles %}
+<h4>{{ modele.nom_moteur }} — {{ modele.identifiant }}</h4>
+{% if modele.synthetique %}
+<p>Modèle synthétique du moteur factice : aucun fichier de modèle, aucun poids. Le moteur factice ne charge rien et produira des textes et mesures simulés, jamais représentatifs d'un PC. Moteur {{ modele.moteur }} ; famille {{ modele.libelle_famille }}.</p>
+{% else %}
+<p>Moteur {{ modele.moteur }} ; famille {{ modele.libelle_famille }}{% if not modele.qualifiee %} (non validée sur PC){% endif %}{% if modele.fichier_gguf %} ; variante GGUF {{ modele.fichier_gguf }}{% endif %}. Commit {{ modele.commit }}.</p>
+{% endif %}
+{% if not modele.executable %}
+<p><strong>Non exécutable :</strong> {{ modele.motif_non_executable }}. Ce modèle est affiché pour information : il ne peut pas être sélectionné et une demande qui le cite est refusée.</p>
+{% elif not audios %}
+<p>Aucun audio lisible dans le dossier d'entrée : la page des audios liste les fichiers présents et les erreurs de lecture, et aucun formulaire n'est proposé pour ce modèle.</p>
+{% else %}
+<p>Famille sans mécanisme natif d'audio long pris en charge par le runner : les audios seront découpés en fenêtres fixes de {{ "%.0f"|format(modele.fenetre_fixe_secondes) }} s sans recouvrement, et la durée de fenêtre sera consignée pour chaque audio.</p>
+<form method="post" action="{{ url_for('verifier_demande_execution') }}">
+<input type="hidden" name="jeton_csrf" value="{{ jeton_csrf }}">
+<input type="hidden" name="modele" value="{{ modele.reference }}">
+<fieldset>
+<legend>Audios</legend>
+{% for audio in audios %}
+<p><label><input type="checkbox" name="audios" value="{{ audio.nom }}"> {{ audio.nom }}{% if audio.duree_indicative is not none %} (durée indicative {{ "%.2f"|format(audio.duree_indicative) }} s){% endif %}</label></p>
+{% endfor %}
+<p>La durée indicative vient de l'en-tête du fichier ; la durée de référence du RTF sera la durée réellement décodée.</p>
+</fieldset>
+<p><label>Threads demandés <input type="number" name="threads" value="{{ threads_defaut }}" min="1" step="1"></label></p>
+<p>Valeur par défaut : nombre de cœurs physiques, à défaut cœurs logiques. Le nombre demandé sera consigné ; le nombre appliqué ne sera affirmé que si l'API du moteur permet de le relire.</p>
+<fieldset>
+<legend>Réglages de la famille {{ modele.libelle_famille }}</legend>
+{% if not modele.reglages %}
+<p>Aucun réglage n'est déclaré par cette famille : aucun réglage n'est proposé pour cette exécution.</p>
+{% endif %}
+{% for reglage in modele.reglages %}
+{% if reglage.type_valeur == 'booleen' %}
+<p>{{ reglage.libelle }} ({{ reglage.nom }}) :
+<label><input type="radio" name="{{ prefixe_reglage }}{{ reglage.nom }}" value="oui"{% if reglage.defaut %} checked{% endif %}> oui</label>
+<label><input type="radio" name="{{ prefixe_reglage }}{{ reglage.nom }}" value="non"{% if not reglage.defaut %} checked{% endif %}> non</label>
+</p>
+{% elif reglage.type_valeur == 'choix' %}
+<p><label>{{ reglage.libelle }} ({{ reglage.nom }}) <select name="{{ prefixe_reglage }}{{ reglage.nom }}">
+{% for valeur in reglage.valeurs %}
+<option value="{{ valeur }}"{% if valeur == reglage.defaut %} selected{% endif %}>{{ valeur }}</option>
+{% endfor %}
+</select></label></p>
+{% elif reglage.type_valeur == 'entier' %}
+<p><label>{{ reglage.libelle }} ({{ reglage.nom }}) <input type="number" name="{{ prefixe_reglage }}{{ reglage.nom }}" value="{{ reglage.defaut }}" step="1"></label></p>
+{% else %}
+<p><label>{{ reglage.libelle }} ({{ reglage.nom }}) <input type="text" name="{{ prefixe_reglage }}{{ reglage.nom }}" value="{{ reglage.defaut }}"></label></p>
+{% endif %}
+<p>{{ reglage.description }} (défaut : {% if reglage.type_valeur == 'booleen' %}{% if reglage.defaut %}oui{% else %}non{% endif %}{% elif reglage.defaut == "" %}(vide){% else %}{{ reglage.defaut }}{% endif %})</p>
+{% endfor %}
+</fieldset>
+<p><button type="submit">Vérifier la demande (aucun lancement)</button></p>
+</form>
+{% endif %}
+{% endfor %}
+{% endif %}
+<p><a href="{{ url_for('accueil') }}">Retour à l'accueil</a></p>
+{% endblock %}

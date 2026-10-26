@@ -99,7 +99,11 @@ if __name__ == "__main__" and not __package__:
     if str(_RACINE_PROJET) not in sys.path:
         sys.path.insert(0, str(_RACINE_PROJET))
 
-from engines.declarations import DeclarationAdaptateur, Famille
+from engines.declarations import (
+    DeclarationAdaptateur,
+    Famille,
+    motif_famille_non_executable,
+)
 from engines.hors_ligne import mode_hors_ligne, options_modele
 from engines.protocole import (
     TYPE_AUDIO,
@@ -372,7 +376,7 @@ def _charger_adaptateur(
         raise ErreurMoteur(
             f"famille {job.famille!r} non déclarée pour le moteur {job.moteur!r}"
         )
-    _verifier_famille(job, famille, declaration.factice)
+    _verifier_famille(job, famille, declaration)
     try:
         adaptateur = registre.charger_adaptateur(job.moteur)
     except AdaptateurIndisponible as exception:
@@ -385,26 +389,24 @@ def _charger_adaptateur(
     return adaptateur, declaration
 
 
-def _verifier_famille(job: Job, famille: Famille, factice: bool) -> None:
+def _verifier_famille(
+    job: Job, famille: Famille, declaration: DeclarationAdaptateur
+) -> None:
     """Refuse une famille non qualifiée et un mécanisme natif non pris en charge.
 
-    Aucune famille fournie n'est qualifiée sur PC : les trois moteurs réels sont
-    donc refusés tant que le jalon PC et les tâches 8.x ne l'ont pas prouvé.
-    Seul le moteur factice, marqué `factice=True` dans sa déclaration, est
-    exécuté sans qualification PC : il ne charge aucun modèle et n'effectue
-    aucune inférence, ce qui n'est pas une qualification PC. Ce contrôle ne
-    remplace jamais une validation sur un PC de test.
+    La règle elle-même vit dans `motif_famille_non_executable`, seule source
+    partagée avec le service des demandes d'exécution : l'interface n'annonce
+    donc jamais comme exécutable une famille que ce runner refuse. Aucune
+    famille fournie n'est qualifiée sur PC : les trois moteurs réels sont donc
+    refusés tant que le jalon PC et les tâches 8.x ne l'ont pas prouvé. Seul le
+    moteur factice, marqué `factice=True` dans sa déclaration, est exécuté sans
+    qualification PC : il ne charge aucun modèle et n'effectue aucune inférence,
+    ce qui n'est pas une qualification PC. Ce contrôle ne remplace jamais une
+    validation sur un PC de test.
     """
-    if not famille.qualifiee and not factice:
-        raise ErreurMoteur(
-            f"famille {job.famille!r} du moteur {job.moteur!r} non qualifiée "
-            "sur PC (jalon 0 et tâches 8.x) : exécution refusée"
-        )
-    if famille.duree_native is not None:
-        raise ErreurMoteur(
-            f"mécanisme natif d'audio long non pris en charge par ce runner "
-            f"({famille.duree_native.methode}) : tâche 8.x attendue"
-        )
+    motif = motif_famille_non_executable(declaration, famille)
+    if motif is not None:
+        raise ErreurMoteur(f"{motif} : exécution refusée")
 
 
 def _traiter_audio(

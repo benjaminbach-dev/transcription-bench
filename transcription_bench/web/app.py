@@ -16,10 +16,16 @@ dossiers s'exécute sous son verrou et est refusée (409) pendant une opération
 longue, comme après le passage à l'arrêt (503). L'accueil affiche l'état du
 créneau, les emplacements des dossiers, l'état des moteurs et des liens vers les
 pages des moteurs, modèles, audios, exécutions et résultats. Les pages des
-moteurs et des modèles sont réelles : elles lisent l'inventaire local et
-délèguent les actions explicites aux services. Les autres pages n'existent pas
-encore : elles sont servies comme pages provisoires explicites, sans simulation
-de capacité absente et sans lien mort.
+moteurs, des modèles, des audios et des exécutions sont réelles : elles lisent
+l'inventaire, le dossier d'entrée local ou une demande de formulaire et
+délèguent les actions explicites aux services. La page des audios ne décode
+aucun signal : elle affiche la durée indicative du conteneur et les erreurs de
+lecture par fichier, y compris les noms refusés, et signale un dossier d'entrée
+inaccessible. La page des exécutions ne lance rien : elle prépare une
+demande (modèle prêt, audios, threads, réglages déclarés) et la valide par le
+service de la tâche 6.2, en indiquant que le lancement n'est pas disponible.
+La page des résultats n'existe pas encore : elle est servie comme page
+provisoire explicite, sans simulation de capacité absente et sans lien mort.
 La page `/operation` n'affiche que l'instantané du créneau, sans lancer de
 travail.
 """
@@ -37,6 +43,14 @@ from flask import Flask, abort, redirect, render_template, request, url_for
 from werkzeug.exceptions import HTTPException
 
 from engines.registre import MoteurInconnu, creer_registre_fourni
+from transcription_bench.audios import FORMATS_AUDIO, AudioListe, lister_audios
+from transcription_bench.executions import (
+    PREFIXE_CHAMP_REGLAGE,
+    ConfigurationExecutions,
+    DemandeExecution,
+    refuser_champs_repetes,
+    reglages_depuis_formulaire,
+)
 from transcription_bench.gestion_modeles import (
     GestionModeles,
     empreinte_verification,
@@ -59,6 +73,7 @@ from transcription_bench.operations import (
 )
 from transcription_bench.paths import (
     DOSSIERS_DATA,
+    NOM_DOSSIER_AUDIO,
     ValeurRefusee,
     preparer_dossiers_data,
 )
@@ -96,20 +111,20 @@ class PageProvisoire(NamedTuple):
 
 PAGES_PROVISOIRES = (
     PageProvisoire(
-        "audios",
-        "Audios",
-        "la liste et le décodage des audios relèvent de la tâche 6.1",
-    ),
-    PageProvisoire(
-        "executions",
-        "Exécutions",
-        "le lancement et le suivi des exécutions relèvent des tâches 6.2 à 6.6",
-    ),
-    PageProvisoire(
         "resultats",
         "Résultats",
         "la consultation et la comparaison des résultats relèvent des tâches 7.1 et 7.2",
     ),
+)
+
+MESSAGE_LANCEMENT_NON_DISPONIBLE = (
+    "Cette page prépare et valide une demande d'exécution, mais aucune exécution "
+    "n'est démarrée : le lancement, le suivi et l'arrêt relèvent de la tâche 6.3."
+)
+
+MESSAGE_DOSSIER_AUDIO_INACCESSIBLE = (
+    "Le dossier d'entrée n'a pas pu être lu : aucun audio n'est listé. "
+    "Vérifiez qu'il s'agit d'un dossier accessible en lecture."
 )
 
 MESSAGE_MOTEURS_NON_INSTALLES = (
@@ -160,12 +175,21 @@ class ServicesApplication:
     construit un avec les quatre déclarations fournies, sans aucune E/S.
     `modeles` est le service des modèles ; s'il est absent, la fabrique en
     construit un également, sans E/S ni client réseau.
+    `lister_audios` produit la liste des audios d'entrée ; la valeur par défaut
+    lit `data/audio` sans le créer, ce que les tests remplacent par un dossier
+    temporaire ou une fonction factice.
+    `executions` est le service des demandes d'exécution (tâche 6.2) ; s'il est
+    absent, la fabrique en construit un avec les quatre déclarations fournies,
+    l'inventaire du service des modèles et la liste d'audios ci-dessus, sans
+    aucune E/S.
     """
 
     creneau: CreneauOperations
     preparer_dossiers: Callable[[Path], dict[str, Path]] = preparer_dossiers_data
     moteurs: InstallationMoteurs | None = None
     modeles: GestionModeles | None = None
+    lister_audios: Callable[[Path], tuple[AudioListe, ...]] = lister_audios
+    executions: ConfigurationExecutions | None = None
 
 
 def create_app(config: ConfigApplication, services: ServicesApplication) -> Flask:
@@ -181,14 +205,21 @@ def create_app(config: ConfigApplication, services: ServicesApplication) -> Flas
     application.extensions[NOM_CHAMP_JETON] = jeton
     hotes = frozenset(f"{adresse}:{config.port}" for adresse in HOTES_AUTORISES)
     origines = frozenset(f"http://{adresse_port}" for adresse_port in hotes)
+    registre = creer_registre_fourni()
     service_moteurs = services.moteurs or InstallationMoteurs(
-        config.dossier_data, creer_registre_fourni(), services.creneau
+        config.dossier_data, registre, services.creneau
     )
     service_modeles = services.modeles or GestionModeles(
         config.dossier_data,
-        creer_registre_fourni(),
+        registre,
         services.creneau,
         service_moteurs,
+    )
+    service_executions = services.executions or ConfigurationExecutions(
+        config.dossier_data,
+        registre,
+        service_modeles.inventaire,
+        lister=services.lister_audios,
     )
 
     @application.context_processor
@@ -206,7 +237,12 @@ def create_app(config: ConfigApplication, services: ServicesApplication) -> Flas
             _verifier_post(jeton, origines)
 
     _enregistrer_routes(
-        application, config, services, service_moteurs, service_modeles
+        application,
+        config,
+        services,
+        service_moteurs,
+        service_modeles,
+        service_executions,
     )
     _enregistrer_erreurs(application)
     return application
@@ -276,6 +312,7 @@ def _enregistrer_routes(
     services: ServicesApplication,
     service_moteurs: InstallationMoteurs,
     service_modeles: GestionModeles,
+    service_executions: ConfigurationExecutions,
 ) -> None:
     @application.get("/")
     def accueil() -> str:
@@ -293,6 +330,50 @@ def _enregistrer_routes(
 
     for page in PAGES_PROVISOIRES:
         _enregistrer_page_provisoire(application, page)
+
+    @application.get("/audios")
+    def audios() -> str:
+        # Une erreur d'accès au dossier n'empêche pas la page : elle est affichée
+        # par un message fixe, sans détail d'exception, comme côté exécutions.
+        try:
+            liste = services.lister_audios(config.dossier_data)
+        except (ValeurRefusee, OSError):
+            liste = ()
+            erreur_dossier = MESSAGE_DOSSIER_AUDIO_INACCESSIBLE
+        else:
+            erreur_dossier = None
+        return render_template(
+            "audios.html",
+            audios=liste,
+            formats=FORMATS_AUDIO,
+            dossier=config.dossier_data / NOM_DOSSIER_AUDIO,
+            erreur_dossier=erreur_dossier,
+        )
+
+    @application.get("/executions")
+    def executions() -> str:
+        return _page_executions(service_executions)
+
+    @application.post("/executions/verifier")
+    def verifier_demande_execution():
+        """Valide une demande d'exécution sans rien lancer ni rien persister.
+
+        La page est rendue directement au lieu de rediriger en 303 : aucune
+        action n'est acceptée ni consignée côté serveur, il n'y a donc rien à
+        relire en GET et aucune valeur à conserver sans session. Les refus
+        restent des réponses 400 à message fixe.
+        """
+        try:
+            refuser_champs_repetes(request.form.items(multi=True))
+            demande = service_executions.valider(
+                modele=request.form.get("modele", ""),
+                audios=request.form.getlist("audios"),
+                threads=request.form.get("threads", ""),
+                reglages=reglages_depuis_formulaire(request.form),
+            )
+        except ValeurRefusee:
+            abort(400)
+        return _page_executions(service_executions, demande)
 
     @application.get("/modeles")
     def modeles() -> str:
@@ -437,6 +518,21 @@ def _enregistrer_routes(
         except ServiceArrete:
             abort(503)
         return redirect(url_for("accueil", action="dossiers-verifies"), code=303)
+
+
+def _page_executions(
+    service: ConfigurationExecutions, demande: DemandeExecution | None = None
+) -> str:
+    """Page du formulaire d'exécution, avec la demande validée éventuelle."""
+    return render_template(
+        "executions.html",
+        modeles=service.modeles_proposables(),
+        audios=service.audios_proposables(),
+        threads_defaut=service.threads_par_defaut(),
+        demande=demande,
+        prefixe_reglage=PREFIXE_CHAMP_REGLAGE,
+        message_lancement=MESSAGE_LANCEMENT_NON_DISPONIBLE,
+    )
 
 
 def _enregistrer_page_provisoire(application: Flask, page: PageProvisoire) -> None:
