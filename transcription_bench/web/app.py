@@ -26,8 +26,10 @@ threads, réglages déclarés), la valide par le service de la tâche 6.2, et so
 bouton de lancement démarre l'exécution dans le créneau global (tâche 6.3) ; la
 page `/operation` affiche l'instantané du créneau et permet d'arrêter
 l'exécution active. Aucune route ne transmet d'objet Flask au travail de fond.
-La page des résultats n'existe pas encore : elle est servie comme page
-provisoire explicite, sans simulation de capacité absente et sans lien mort.
+La page des résultats (tâche 7.1) liste les exécutions enregistrées, des plus
+récentes aux plus anciennes, et ouvre le détail d'une transcription : texte,
+segments, métadonnées, mesures et marques, en lecture seule. La comparaison
+côte à côte (tâche 7.2) n'est pas encore proposée, ce que la page indique.
 """
 
 from __future__ import annotations
@@ -37,13 +39,19 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from hmac import compare_digest
 from pathlib import Path
-from typing import NamedTuple
 
 from flask import Flask, abort, redirect, render_template, request, url_for
 from werkzeug.exceptions import HTTPException
 
 from engines.registre import MoteurInconnu, creer_registre_fourni
 from transcription_bench.audios import FORMATS_AUDIO, AudioListe, lister_audios
+from transcription_bench.consultation_resultats import (
+    REPERE_RTF,
+    ConsultationResultats,
+    LectureResultatsImpossible,
+    ResultatIntrouvable,
+    ResultatNonInterpretable,
+)
 from transcription_bench.execution_moteur import (
     ARRET_AUCUN,
     ARRET_SURVIVANT,
@@ -81,6 +89,7 @@ from transcription_bench.operations import (
 from transcription_bench.paths import (
     DOSSIERS_DATA,
     NOM_DOSSIER_AUDIO,
+    NOM_DOSSIER_RESULTATS,
     ValeurRefusee,
     preparer_dossiers_data,
 )
@@ -113,26 +122,6 @@ MESSAGES_ACTION = {
     "modele-supprime": "Modèle local supprimé ; les résultats déjà produits restent consultables.",
 }
 
-
-class PageProvisoire(NamedTuple):
-    """Page annoncée par l'accueil mais dont la fonctionnalité n'existe pas.
-
-    L'interface affiche honnêtement ces pages comme provisoires plutôt que de
-    pointer vers des adresses inexistantes ou de simuler une capacité absente.
-    """
-
-    route: str
-    titre: str
-    description: str
-
-
-PAGES_PROVISOIRES = (
-    PageProvisoire(
-        "resultats",
-        "Résultats",
-        "la consultation et la comparaison des résultats relèvent des tâches 7.1 et 7.2",
-    ),
-)
 
 MESSAGE_LANCEMENT = (
     "Le bouton « Lancer l'exécution » revalide la demande, décode les audios puis "
@@ -179,6 +168,17 @@ MESSAGE_SUPPRESSION_PENDANT_EXECUTION = (
     "restent en place et les résultats déjà produits restent consultables."
 )
 
+MESSAGE_RESULTATS_INACCESSIBLES = (
+    "Le dossier des résultats n'a pas pu être lu : aucune exécution n'est listée. "
+    "Vérifiez qu'il s'agit d'un dossier accessible en lecture."
+)
+
+MESSAGE_RESULTAT_NON_INTERPRETABLE = (
+    "Résultat non interprétable : son fichier de suivi est illisible, d'un schéma "
+    "inconnu ou incohérent. Le fichier n'a pas été modifié et aucune donnée n'est "
+    "affichée."
+)
+
 
 @dataclass(frozen=True)
 class ConfigApplication:
@@ -214,6 +214,10 @@ class ServicesApplication:
     le service des moteurs, sans aucune E/S. La CLI l'injecte pour que la
     supervision d'arrêt du serveur (tâche 6.6) puisse terminer le moteur de
     l'exécution réellement en cours.
+    `resultats` est le service de consultation des résultats (tâche 7.1),
+    strictement en lecture ; s'il est absent, la fabrique en construit un sur le
+    dossier de données, sans aucune E/S. Il est injectable pour rendre les
+    lectures illisibles ou incohérentes testables.
     """
 
     creneau: CreneauOperations
@@ -223,6 +227,7 @@ class ServicesApplication:
     lister_audios: Callable[[Path], tuple[AudioListe, ...]] = lister_audios
     executions: ConfigurationExecutions | None = None
     execution: ExecutionMoteur | None = None
+    resultats: ConsultationResultats | None = None
 
 
 def create_app(config: ConfigApplication, services: ServicesApplication) -> Flask:
@@ -257,12 +262,12 @@ def create_app(config: ConfigApplication, services: ServicesApplication) -> Flas
     service_execution = services.execution or ExecutionMoteur(
         config.dossier_data, registre, service_moteurs
     )
+    service_resultats = services.resultats or ConsultationResultats(config.dossier_data)
 
     @application.context_processor
     def injecter_jeton() -> dict[str, object]:
         return {
             NOM_CHAMP_JETON: jeton,
-            "pages_provisoires": PAGES_PROVISOIRES,
             "libelles_etats_moteur": LIBELLES_ETATS_MOTEUR,
         }
 
@@ -280,6 +285,7 @@ def create_app(config: ConfigApplication, services: ServicesApplication) -> Flas
         service_modeles,
         service_executions,
         service_execution,
+        service_resultats,
     )
     _enregistrer_erreurs(application)
     return application
@@ -351,6 +357,7 @@ def _enregistrer_routes(
     service_modeles: GestionModeles,
     service_executions: ConfigurationExecutions,
     service_execution: ExecutionMoteur,
+    service_resultats: ConsultationResultats,
 ) -> None:
     @application.get("/")
     def accueil() -> str:
@@ -365,9 +372,6 @@ def _enregistrer_routes(
             moteurs=moteurs,
             message_moteurs=_message_moteurs(moteurs),
         )
-
-    for page in PAGES_PROVISOIRES:
-        _enregistrer_page_provisoire(application, page)
 
     @application.get("/audios")
     def audios() -> str:
@@ -588,6 +592,39 @@ def _enregistrer_routes(
             lignes=lignes,
         )
 
+    @application.get("/resultats")
+    def resultats() -> str:
+        """Liste les exécutions enregistrées, des plus récentes aux plus anciennes."""
+        try:
+            executions_enregistrees = service_resultats.lister()
+        except LectureResultatsImpossible:
+            executions_enregistrees = ()
+            erreur_dossier = MESSAGE_RESULTATS_INACCESSIBLES
+        else:
+            erreur_dossier = None
+        return render_template(
+            "resultats.html",
+            executions=executions_enregistrees,
+            dossier=service_resultats.dossier_resultats,
+            erreur_dossier=erreur_dossier,
+            repere_rtf=REPERE_RTF,
+        )
+
+    @application.get("/resultats/<identifiant>")
+    def resultat_detail(identifiant: str):
+        """Détail en lecture seule d'une exécution et de ses transcriptions."""
+        try:
+            detail = service_resultats.detail(identifiant)
+        except ValeurRefusee:
+            abort(400)
+        except ResultatIntrouvable:
+            abort(404)
+        except ResultatNonInterpretable:
+            return _page_erreur(422, MESSAGE_RESULTAT_NON_INTERPRETABLE)
+        return render_template(
+            "resultat.html", detail=detail, repere_rtf=REPERE_RTF
+        )
+
     @application.get("/operation")
     def operation() -> str:
         instantane = services.creneau.instantane()
@@ -642,19 +679,6 @@ def _page_executions(
         demande=demande,
         prefixe_reglage=PREFIXE_CHAMP_REGLAGE,
         message_lancement=MESSAGE_LANCEMENT,
-    )
-
-
-def _enregistrer_page_provisoire(application: Flask, page: PageProvisoire) -> None:
-    """Déclare une page HTML provisoire, sans lecture ni écriture de données."""
-
-    def page_provisoire() -> str:
-        return render_template(
-            "provisoire.html", titre=page.titre, description=page.description
-        )
-
-    application.add_url_rule(
-        f"/{page.route}", endpoint=page.route, view_func=page_provisoire, methods=["GET"]
     )
 
 

@@ -134,6 +134,11 @@ NOMBRE_ESSAIS_IDENTIFIANT = 5
 
 _MOTIF_BASE_IDENTIFIANT = re.compile(r"[0-9]{8}-[0-9]{6}", re.ASCII)
 _MOTIF_COURT_ID = re.compile(r"[0-9a-f]{8}", re.ASCII)
+#: Forme complète d'un identifiant de résultat (horodatage local et 8
+#: hexadécimaux). Utilisée à la relecture par la consultation des résultats
+#: (tâche 7.1) : un dossier dont le nom ne la respecte pas n'a pas été créé par
+#: le programme et n'est pas interprété.
+MOTIF_IDENTIFIANT = re.compile(r"[0-9]{8}-[0-9]{6}-[0-9a-f]{8}", re.ASCII)
 
 
 class ConsignationImpossible(RuntimeError):

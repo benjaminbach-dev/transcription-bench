@@ -391,8 +391,8 @@ class ProtectionsRequetesTest(SocleWebTest):
         self.assertEqual(self.appels, [self.dossier_data])
 
 
-class AccueilEtPagesProvisoiresTest(SocleWebTest):
-    """Accueil complet (créneau, dossiers, liens) et pages provisoires honnêtes."""
+class AccueilEtPagesReellesTest(SocleWebTest):
+    """Accueil complet (créneau, dossiers, liens) et pages réelles sans effet de bord."""
 
     def texte(self, chemin: str) -> str:
         reponse = self.client.get(chemin, base_url=self.base_url())
@@ -406,6 +406,8 @@ class AccueilEtPagesProvisoiresTest(SocleWebTest):
         self.assertIn("<dd>libre</dd>", corps)
         self.assertIn("Aucun moteur n'est installé", corps)
         self.assertIn("ne télécharge rien", corps)
+        self.assertIn("démarre l'exécution dans le créneau global", corps)
+        self.assertNotIn('href="/"', corps, "l'accueil ne se lie pas à lui-même")
         for nom in DOSSIERS_DATA:
             self.assertIn(str(self.dossier_data / nom), corps)
         self.assertIn("(absent)", corps)
@@ -426,17 +428,15 @@ class AccueilEtPagesProvisoiresTest(SocleWebTest):
             self.verifier_html_seul(page.get_data(as_text=True))
         self.assertFalse(self.dossier_data.exists())
 
-    def test_pages_provisoires_honnetes_sans_effet_de_bord(self) -> None:
-        for route in ("/resultats",):
-            with self.subTest(route=route):
-                corps = self.texte(route)
-                self.assertIn("Fonctionnalité non disponible", corps)
-                self.assertIn("page est provisoire", corps)
-                self.assertIn("Aucune donnée n'est lue", corps)
-                self.assertIn('href="/"', corps)
-                self.verifier_html_seul(corps)
-        # Les pages des moteurs (4.4), des modèles (5.4), des audios (6.1) et
-        # des exécutions (6.2) sont réelles.
+    def test_pages_reelles_sans_effet_de_bord(self) -> None:
+        # Les pages des moteurs (4.4), des modèles (5.4), des audios (6.1), des
+        # exécutions (6.2) et des résultats (7.1) sont réelles.
+        corps_resultats = self.texte("/resultats")
+        self.assertNotIn("Fonctionnalité non disponible", corps_resultats)
+        self.assertIn("Aucune exécution enregistrée", corps_resultats)
+        self.assertIn(str(self.dossier_data / "results"), corps_resultats)
+        self.assertIn('href="/"', corps_resultats)
+        self.verifier_html_seul(corps_resultats)
         corps_moteurs = self.texte("/moteurs")
         self.assertNotIn("Fonctionnalité non disponible", corps_moteurs)
         self.assertIn("Moteurs", corps_moteurs)
@@ -453,7 +453,7 @@ class AccueilEtPagesProvisoiresTest(SocleWebTest):
         self.verifier_html_seul(corps_executions)
         self.assertFalse(
             self.dossier_data.exists(),
-            "une page provisoire a créé ou touché les dossiers de données",
+            "une page réelle a créé ou touché les dossiers de données",
         )
 
     def test_accueil_reflete_une_operation_en_cours_et_lien_operation(self) -> None:

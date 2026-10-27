@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% import "formats.html" as formats %}
+{% block titre %}Résultats — transcription-bench{% endblock %}
+{% block contenu %}
+<h2>Résultats</h2>
+<p><a href="{{ url_for('resultats') }}">Actualiser</a></p>
+{% if erreur_dossier %}
+<p role="status">{{ erreur_dossier }}</p>
+{% endif %}
+<p>Exécutions enregistrées dans <strong>{{ dossier }}</strong>, de la plus récente à la plus ancienne. Cette page ne fait que relire les fichiers de résultats : elle ne lance aucune inférence et ne modifie aucun fichier. Une exécution non terminée affiche ses résultats partiels, et les audios sans résultat sont signalés comme non traités.</p>
+{% if executions %}
+<table>
+<thead>
+<tr><th>Exécution</th><th>Créée le</th><th>Modèle</th><th>Moteur</th><th>État</th><th>Audios traités</th><th>Durée totale de l'opération</th><th>Marques</th></tr>
+</thead>
+<tbody>
+{% for execution in executions %}
+<tr>
+<td>{% if execution.exploitable %}<a href="{{ url_for('resultat_detail', identifiant=execution.identifiant) }}">{{ execution.identifiant }}</a>{% else %}{{ execution.identifiant }}{% endif %}</td>
+<td>{{ formats.afficher(execution.cree_le) }}</td>
+<td>{{ formats.afficher(execution.modele) }}</td>
+<td>{{ formats.afficher(execution.moteur) }}</td>
+<td>{% if execution.exploitable %}{{ execution.libelle_etat }}{% if execution.partiel %} (résultats partiels){% endif %}{% else %}{{ execution.libelle_etat }} : {{ execution.motif }}{% endif %}</td>
+<td>{% if execution.audios_traites is not none %}{{ execution.audios_traites }} sur {{ execution.audios_total }}{% else %}indisponible{% endif %}</td>
+<td>{{ formats.duree(execution.duree_operation_s) }}</td>
+<td>{% if execution.marques is none %}indisponible{% elif execution.marques %}{{ execution.marques | join(', ') }}{% else %}aucune{% endif %}</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+<p>Une durée totale « indisponible » n'a jamais été mesurée : elle n'est pas remplacée par zéro. Une exécution abandonnée après un arrêt brutal du serveur n'a par exemple aucune durée totale ni durée de processus.</p>
+<p>Les marques <strong>FACTICE</strong>, <strong>SYNTHÉTIQUE</strong> et <strong>MESURES SIMULÉES</strong> viennent du moteur factice ou de données synthétiques : leurs textes et leurs mesures ne sont jamais représentatifs d'un PC et ne disent rien de la qualité médicale d'une transcription.</p>
+{% elif not erreur_dossier %}
+<p>Aucune exécution enregistrée pour l'instant. Une exécution apparaît ici dès que la page des exécutions en a lancé une ; les résultats déjà produits restent consultables même si le modèle local est supprimé ensuite.</p>
+{% endif %}
+<h3>Comparaison côte à côte</h3>
+<p>La comparaison de transcriptions d'un même audio, groupées par empreinte du fichier, n'est pas encore disponible : cette page se limite à la liste et au détail d'une transcription.</p>
+<p><a href="{{ url_for('accueil') }}">Retour à l'accueil</a></p>
+{% endblock %}

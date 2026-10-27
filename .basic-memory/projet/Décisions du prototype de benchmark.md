@@ -299,3 +299,12 @@ Provenance : `transcription-bench`, `main`, base `545b421`. **21/39 cochées**, 
 - [decision] Windows : arborescence psutil « au mieux », pas de Job Object ni CTRL_BREAK ; stderr du runner en UTF-8 (`PYTHONIOENCODING`).
 - [constraint] **Case 6.6 laissée ouverte** : le rejeu sur PC Linux/Windows (cas 1.7 via `uv run`, Ctrl+C console, double Ctrl+C, port occupé, arrêt brutal) reste dû. Limites : groupe non signalable après la sortie du processus principal ; un téléchargement bloqué retarde la sortie (pas de délai global) ; un moteur insensible au kill garde le créneau occupé.
 - [status] Lot 6 réalisé côté serveur (6.1–6.5 cochées, 6.6 code livré). Suite : lot 7 (résultats/comparaison), puis 9.x ; jalon PC 1.x et 8.x toujours dus.
+
+
+## Lot 7 — tâche 7.1, 2026-10-27
+
+Provenance : `transcription-bench`, branche `main`, base `4007d17` ; revue finale advisor favorable, publication de la tâche préparée. **22/39 tâches cochées, 572 tests passants** (principal et advisor, hors ligne ; plusieurs graines).
+
+- [validation] Consultation en lecture seule : historique et détail des exécutions, cinq états, transcriptions/segments/métadonnées/mesures, résultats partiels, marques factice/synthétique/mesures simulées. Lectures JSON sous verrou commun, confinement des fichiers eux-mêmes, schémas inconnus et identités incohérentes refusés sans modification ; liste tolérante aux fichiers illisibles. Un vrai runner factice puis lecture et rendu vérifient la compatibilité avec le stockage 6.4. OpenSpec strict, verrou uv et contrôle des espaces Git valides.
+- [decision] Réglages composés affichés en JSON compact échappé ; nombres non finis seuls indisponibles, imbriqués convertis en null pour l'affichage. Le runner laisse encore passer des bornes de segments non finies : la vue les affiche indisponibles sans masquer texte et mesures. À confirmer sur les réglages réels en 8.x, aucune qualification PC/Windows.
+- [continuity] Suite autorisée dans cette session : 7.2 puis 9.1 et 9.2, worker tâche par tâche → contrôle principal → advisor → corrections/recontrôle → commit/push par tâche. Advisor lot 7 à reprendre : `71cdf277-6293-41b`. Aucun moteur/poids réel ni nouvelle dépendance ; jalon PC, 3.2 et 6.6 restent ouverts.

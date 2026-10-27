@@ -35,7 +35,9 @@
 <h3>Audios</h3>
 <p><a href="{{ url_for('audios') }}">Consulter la page des audios</a> : fichiers du dossier d'entrée, formats acceptés, durée indicative et erreurs de lecture par fichier.</p>
 <h3>Exécutions</h3>
-<p><a href="{{ url_for('executions') }}">Consulter la page des exécutions</a> : formulaire d'une demande (modèle prêt, audios, threads demandés, réglages déclarés par la famille) et validation de cette demande. Le lancement d'une exécution n'est pas encore disponible.</p>
+<p><a href="{{ url_for('executions') }}">Consulter la page des exécutions</a> : formulaire d'une demande (modèle prêt, audios, threads demandés, réglages déclarés par la famille) ; le bouton de lancement démarre l'exécution dans le créneau global et la page d'opération en suit l'avancement.</p>
+<h3>Résultats</h3>
+<p><a href="{{ url_for('resultats') }}">Consulter la page des résultats</a> : exécutions enregistrées, des plus récentes aux plus anciennes, avec leur état, leurs marques et le détail de chaque transcription (texte, segments, métadonnées et mesures). La comparaison côte à côte n'est pas encore disponible.</p>
 <h3>Dossiers de données</h3>
 <ul>
 {% for dossier in dossiers %}
@@ -46,11 +48,4 @@
 <input type="hidden" name="jeton_csrf" value="{{ jeton_csrf }}">
 <p><button type="submit">Vérifier les dossiers de données</button></p>
 </form>
-<h3>Pages prévues</h3>
-<p>Les pages suivantes sont annoncées mais leurs fonctionnalités ne sont pas encore implémentées : elles n'affichent aucune donnée et ne permettent aucune action.</p>
-<ul>
-{% for page in pages_provisoires %}
-<li><a href="{{ url_for(page.route) }}">{{ page.titre }}</a> : fonctionnalité non disponible, {{ page.description }}</li>
-{% endfor %}
-</ul>
 {% endblock %}
