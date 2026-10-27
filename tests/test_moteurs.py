@@ -31,6 +31,7 @@ from transcription_bench.moteurs import (
     ETAT_PRET,
     ExecuteurCommandes,
     ExecuteurSubprocess,
+    InstallationEchouee,
     InstallationIndisponible,
     InstallationMoteurs,
     ResultatCommande,
@@ -766,6 +767,37 @@ class PageMoteursWebTest(SocleMoteurs):
         self.assertIn("prêt", corps)
         self.assertIn("Moteur de test engine-test", corps)
         self.assertNotIn("installation en cours", corps)
+
+
+class InterpreteurMoteurTest(SocleMoteurs):
+    """Interpréteur du venv exposé pour le lancement d'une exécution (tâche 6.3)."""
+
+    def test_interpreteur_du_venv_est_rendu_quand_il_existe(self) -> None:
+        service = self.service()
+        attendu = chemin_interpreteur(self.dossier_moteur())
+        attendu.parent.mkdir(parents=True, exist_ok=True)
+        attendu.write_text("", encoding="utf-8")
+
+        self.assertEqual(service.interpreteur("engine-test"), attendu.absolute())
+
+    def test_interpreteur_absent_est_refuse(self) -> None:
+        service = self.service()
+        self.dossier_moteur().mkdir(parents=True, exist_ok=True)
+
+        with self.assertRaises(InstallationEchouee):
+            service.interpreteur("engine-test")
+
+    def test_interpreteur_du_moteur_factice_est_indisponible(self) -> None:
+        service = InstallationMoteurs(
+            self.donnees,
+            creer_registre_fourni(),
+            self.creneau,
+            racine_projet=self.racine,
+            environ=ENVIRON_UV,
+        )
+
+        with self.assertRaises(InstallationIndisponible):
+            service.interpreteur("factice")
 
 
 if __name__ == "__main__":

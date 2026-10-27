@@ -564,7 +564,7 @@ class PageExecutionsTest(SocleWebTest):
     def reference(self) -> str:
         return self.service.modeles_proposables()[0].reference
 
-    def test_page_sans_modele_proposable_annonce_le_lancement_indisponible(self) -> None:
+    def test_page_sans_modele_proposable_n_affiche_aucun_lancement(self) -> None:
         service = ConfigurationExecutions(
             self.dossier_data,
             RegistreMoteurs(),
@@ -577,8 +577,8 @@ class PageExecutionsTest(SocleWebTest):
 
         self.assertEqual(reponse.status_code, 200)
         corps = reponse.get_data(as_text=True)
-        self.assertIn("Lancement non disponible", corps)
         self.assertIn("Aucun modèle proposable", corps)
+        self.assertNotIn("Lancer l'exécution", corps)
         self.verifier_html_seul(corps)
         self.assertFalse(self.dossier_data.exists())
 

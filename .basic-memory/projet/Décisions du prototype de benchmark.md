@@ -251,3 +251,23 @@ Provenance : `transcription-bench`, `main`, base publiée `e425370` ; dernière 
 - [validation] Environnement moteur dédié HF_HUB_OFFLINE=1 sans modifier le serveur ; runner force local_files_only=True/trust_remote_code=False dans une copie des options, active le hors ligne avant import et restaure le contexte. Interpréteur du venv conservé sans résolution du lien. Aucun moteur, poids ou nouvelle dépendance, aucune inférence ni qualification PC.
 - [constraint] En 6.3/6.6, utiliser environnement_moteur/commande_runner et garder le créneau occupé jusqu'à la fin réelle du moteur. En 8.x, transmettre les options aux seules API concernées et charger depuis les fichiers locaux. Jalon PC, 3.2 et 8.x toujours ouverts.
 - [continuity] **Nouveau point de reprise : [[Reprise après le lot 5]]**. Ancienne note lot 5 conservée comme historique. Advisor final `aaf3b07a-0158-496`, worker 5.5 `ed03c123-1bab-4c4`. Lot 6 non commencé ; la demande de terminer le lot 5 n'autorise pas à le démarrer automatiquement.
+
+
+## Lot 6 — tâches 6.1 et 6.2, 2026-10-26 UTC
+
+Provenance : `transcription-bench`, `main`, commit `e83bf5a` (base `15f6682`). **18/39**, 390 tests passants, deux graines hors ligne.
+
+- [validation] 6.1 : liste/décodage PyAV des audios (`transcription_bench/audios.py`), refus des noms réservés Windows, sous-chemins, liens sortants et non-fichiers ; fichiers refusés listés « nom refusé », non sélectionnables. 6.2 : formulaire `/executions` et validation de la demande par service (`executions.py`) ; POST de vérification sans lancement ni 303. Revue advisor puis corrections et recontrôle ; une correction finale appliquée par le principal (`is_dir` dans un `try`).
+- [decision] Le moteur factice est proposé via un **modèle synthétique** à clé constante (sans inventaire, sans fichiers) ; le job 6.3 lui passe un chemin fictif sous `data/`. Une seule fonction `motif_famille_non_executable` (engines/declarations.py) sert le runner et le formulaire ; les familles non exécutables sont affichées non sélectionnables.
+- [constraint] Pour 6.3 : décodage `decoder_audio` n'attrape que FFmpegError/OSError, la boucle d'exécution doit convertir toute autre exception en erreur propre à l'audio ; écrire chaque signal en `<f4` dès son décodage (double copie mémoire actuelle) ; empreinte et décodage lus séparément (TOCTOU, 7.2 regroupe par SHA-256) ; les métadonnées doivent porter `factice` et `synthetique`. Aucun réglage réel déclaré (jalon 0/8.x). La case 6.2 ne prouve pas la consignation des threads dans `job.json`/`run.json` (6.3/6.4).
+- [limit] Aucune validation PC ; durcissement `protocol_whitelist` PyAV non vérifié.
+
+
+## Lot 6 — tâche 6.3, 2026-10-26 UTC
+
+Provenance : `transcription-bench`, `main`, base `e83bf5a`. **19/39**, 427 tests passants (deux graines), revue advisor puis corrections et recontrôle ; dernière correction (`annuler_reservation` conserve le dernier résultat) par le principal.
+
+- [validation] Lancement d'une exécution dans le créneau (`transcription_bench/execution_moteur.py`) : routes POST `/executions/lancer` et `/executions/arreter` (jeton, 303), runner via `commande_runner`/`environnement_moteur()` en groupe de processus propre, arrêt terminate→attente→kill, créneau occupé jusqu'à la fin réelle (y compris chemin d'exception), événements dupliqués = parasites, `reserver()` avant `creneau.demarrer`, arrêt utilisateur = état `interrompue` (`OperationInterrompue`). Seul le factice est exécuté, mesures simulées.
+- [decision] Signaux décodés `<f4` sous `data/cache/<id>` (créé paresseusement, supprimé en fin) ; restes après arrêt brutal à nettoyer en 6.5. `sur_evenement` retiré : 6.4 définira sa propre consignation par exécution (dossier de résultats, AudioPrepare, PID + heure de création, run.log complet, durées D8). `derniere_execution()` → `ResultatExecution` en mémoire (non persistant).
+- [constraint] 6.6 : `terminate`/`kill` ne visent que le PID du runner, pas son groupe (killpg Linux, Job Object Windows à décider) ; `tuple(stderr)` sans protection si le lecteur survit au join ; stderr Windows non forcé en UTF-8 ; `InstallationEchouee` journalise encore une pile complète. Dossiers `data/cache` à nettoyer en 6.5.
+- [limit] Tests parallèles ×8 instables uniquement à cause des limites de tâches du sandbox (RLIMIT_NPROC), pas de la logique. Aucune validation PC ni Windows.

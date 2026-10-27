@@ -449,7 +449,7 @@ class AccueilEtPagesProvisoiresTest(SocleWebTest):
         self.verifier_html_seul(corps_audios)
         corps_executions = self.texte("/executions")
         self.assertNotIn("Fonctionnalité non disponible", corps_executions)
-        self.assertIn("Lancement non disponible", corps_executions)
+        self.assertIn("créneau global", corps_executions)
         self.verifier_html_seul(corps_executions)
         self.assertFalse(
             self.dossier_data.exists(),

@@ -368,6 +368,23 @@ class InstallationMoteurs:
             )
         return dossier
 
+    def interpreteur(self, identifiant: str) -> Path:
+        """Interpréteur du venv d'un moteur réel, pour lancer une exécution.
+
+        Le chemin renvoyé est celui du venv (jamais sa cible résolue, qui
+        perdrait l'environnement). Le moteur factice n'a pas de venv : son
+        lancement utilise l'interpréteur du serveur et `InstallationIndisponible`
+        est levée ici. Un état d'installation n'est pas vérifié : l'appelant
+        contrôle d'abord `inventaire()` (tâche 6.3).
+        """
+        declaration = self._registre.obtenir(identifiant)
+        if declaration.factice:
+            raise InstallationIndisponible(
+                "moteur factice : aucun environnement propre, interpréteur du "
+                "serveur attendu"
+            )
+        return self._chemin_interpreteur(identifiant, self.dossier_moteur(identifiant))
+
     def chemin_journal(self, identifiant: str) -> Path:
         """Journal d'installation, à côté de l'environnement du moteur."""
         self._registre.obtenir(identifiant)

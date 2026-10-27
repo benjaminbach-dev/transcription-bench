@@ -21,13 +21,13 @@ l'inventaire, le dossier d'entrée local ou une demande de formulaire et
 délèguent les actions explicites aux services. La page des audios ne décode
 aucun signal : elle affiche la durée indicative du conteneur et les erreurs de
 lecture par fichier, y compris les noms refusés, et signale un dossier d'entrée
-inaccessible. La page des exécutions ne lance rien : elle prépare une
-demande (modèle prêt, audios, threads, réglages déclarés) et la valide par le
-service de la tâche 6.2, en indiquant que le lancement n'est pas disponible.
+inaccessible. La page des exécutions prépare une demande (modèle prêt, audios,
+threads, réglages déclarés), la valide par le service de la tâche 6.2, et son
+bouton de lancement démarre l'exécution dans le créneau global (tâche 6.3) ; la
+page `/operation` affiche l'instantané du créneau et permet d'arrêter
+l'exécution active. Aucune route ne transmet d'objet Flask au travail de fond.
 La page des résultats n'existe pas encore : elle est servie comme page
 provisoire explicite, sans simulation de capacité absente et sans lien mort.
-La page `/operation` n'affiche que l'instantané du créneau, sans lancer de
-travail.
 """
 
 from __future__ import annotations
@@ -44,6 +44,12 @@ from werkzeug.exceptions import HTTPException
 
 from engines.registre import MoteurInconnu, creer_registre_fourni
 from transcription_bench.audios import FORMATS_AUDIO, AudioListe, lister_audios
+from transcription_bench.execution_moteur import (
+    ARRET_AUCUN,
+    ARRET_SURVIVANT,
+    ExecutionImpossible,
+    ExecutionMoteur,
+)
 from transcription_bench.executions import (
     PREFIXE_CHAMP_REGLAGE,
     ConfigurationExecutions,
@@ -63,6 +69,7 @@ from transcription_bench.moteurs import (
     InstallationMoteurs,
 )
 from transcription_bench.operations import (
+    ETAT_EN_COURS,
     LIBELLES_ETATS,
     LIBELLES_TYPES,
     TYPE_EXECUTION,
@@ -85,6 +92,16 @@ HOTES_AUTORISES = ("127.0.0.1", "localhost")
 
 MESSAGES_ACTION = {
     "dossiers-verifies": "Dossiers de données vérifiés.",
+    "arret-demande": (
+        "Arrêt de l'exécution demandé : les résultats d'audios déjà reçus sont "
+        "conservés et les audios restants sont signalés non traités. Le créneau "
+        "reste occupé jusqu'à la fin réelle du processus moteur."
+    ),
+    "arret-incomplet": (
+        "Arrêt demandé, mais le processus moteur n'a pas pu être terminé, même "
+        "après kill : il peut encore tourner. Le créneau reste occupé jusqu'à sa "
+        "fin réelle et aucun résultat n'est publié avant."
+    ),
     "verification-lancee": (
         "Vérification distante lancée : le résultat apparaîtra après actualisation."
     ),
@@ -117,9 +134,13 @@ PAGES_PROVISOIRES = (
     ),
 )
 
-MESSAGE_LANCEMENT_NON_DISPONIBLE = (
-    "Cette page prépare et valide une demande d'exécution, mais aucune exécution "
-    "n'est démarrée : le lancement, le suivi et l'arrêt relèvent de la tâche 6.3."
+MESSAGE_LANCEMENT = (
+    "Le bouton « Lancer l'exécution » revalide la demande, décode les audios puis "
+    "démarre le moteur dans le créneau global d'opération ; la page d'opération "
+    "suit l'avancement et permet d'arrêter l'exécution. Une seule opération longue "
+    "à la fois : une exécution en cours refuse toute autre demande. Seul le moteur "
+    "factice est exécutable à ce stade, avec des textes et des mesures simulés ; "
+    "les moteurs réels restent non qualifiés sur PC."
 )
 
 MESSAGE_DOSSIER_AUDIO_INACCESSIBLE = (
@@ -146,6 +167,12 @@ MESSAGES_ERREUR = {
 }
 
 MESSAGE_ERREUR_GENERIQUE = "La requête n'a pas pu être traitée."
+
+MESSAGE_MOTEUR_NON_PRET = (
+    "Le moteur demandé n'est pas prêt pour une exécution : installation explicite "
+    "requise, ou interpréteur du moteur indisponible. Aucune exécution n'a été "
+    "lancée."
+)
 
 MESSAGE_SUPPRESSION_PENDANT_EXECUTION = (
     "Une exécution en cours empêche la suppression : les fichiers du modèle "
@@ -182,6 +209,10 @@ class ServicesApplication:
     absent, la fabrique en construit un avec les quatre déclarations fournies,
     l'inventaire du service des modèles et la liste d'audios ci-dessus, sans
     aucune E/S.
+    `execution` est le service de lancement supervisé des exécutions (tâche
+    6.3) ; s'il est absent, la fabrique en construit un avec le même registre et
+    le service des moteurs, sans aucune E/S. La CLI pourra l'injecter pour que la
+    supervision d'arrêt du serveur (tâche 6.6) puisse terminer le moteur.
     """
 
     creneau: CreneauOperations
@@ -190,6 +221,7 @@ class ServicesApplication:
     modeles: GestionModeles | None = None
     lister_audios: Callable[[Path], tuple[AudioListe, ...]] = lister_audios
     executions: ConfigurationExecutions | None = None
+    execution: ExecutionMoteur | None = None
 
 
 def create_app(config: ConfigApplication, services: ServicesApplication) -> Flask:
@@ -221,6 +253,9 @@ def create_app(config: ConfigApplication, services: ServicesApplication) -> Flas
         service_modeles.inventaire,
         lister=services.lister_audios,
     )
+    service_execution = services.execution or ExecutionMoteur(
+        config.dossier_data, registre, service_moteurs
+    )
 
     @application.context_processor
     def injecter_jeton() -> dict[str, object]:
@@ -243,6 +278,7 @@ def create_app(config: ConfigApplication, services: ServicesApplication) -> Flas
         service_moteurs,
         service_modeles,
         service_executions,
+        service_execution,
     )
     _enregistrer_erreurs(application)
     return application
@@ -313,6 +349,7 @@ def _enregistrer_routes(
     service_moteurs: InstallationMoteurs,
     service_modeles: GestionModeles,
     service_executions: ConfigurationExecutions,
+    service_execution: ExecutionMoteur,
 ) -> None:
     @application.get("/")
     def accueil() -> str:
@@ -365,15 +402,67 @@ def _enregistrer_routes(
         """
         try:
             refuser_champs_repetes(request.form.items(multi=True))
-            demande = service_executions.valider(
-                modele=request.form.get("modele", ""),
-                audios=request.form.getlist("audios"),
-                threads=request.form.get("threads", ""),
-                reglages=reglages_depuis_formulaire(request.form),
-            )
+            demande = _demande_validee(service_executions)
         except ValeurRefusee:
             abort(400)
         return _page_executions(service_executions, demande)
+
+    @application.post("/executions/lancer")
+    def lancer_execution():
+        """Revalide la demande puis démarre l'exécution dans le créneau global.
+
+        La demande est revalidée ici (modèle toujours prêt, audios et réglages
+        toujours valides) et le moteur est recontrôlé : prêt au sens de
+        l'inventaire local, sauf le moteur factice. Aucun objet Flask n'est
+        transmis au travail de fond, qui ne reçoit que la demande validée.
+        """
+        try:
+            refuser_champs_repetes(request.form.items(multi=True))
+            demande = _demande_validee(service_executions)
+            service_execution.verifier_lancable(demande)
+        except ValeurRefusee:
+            abort(400)
+        except ExecutionImpossible:
+            # Moteur non prêt : message explicite, distinct du refus de jeton.
+            return _page_erreur(403, MESSAGE_MOTEUR_NON_PRET)
+        try:
+            # Réservation posée avant l'admission : un arrêt demandé dans
+            # l'intervalle n'est pas perdu, et `lancer` ne remet rien à zéro.
+            service_execution.reserver()
+        except ExecutionImpossible:
+            abort(409)
+        try:
+            services.creneau.demarrer(
+                TYPE_EXECUTION,
+                lambda travailleur: service_execution.lancer(demande, travailleur),
+                cible=demande.identifiant,
+            )
+        except CreneauOccupe:
+            service_execution.annuler_reservation()
+            abort(409)
+        except ServiceArrete:
+            service_execution.annuler_reservation()
+            abort(503)
+        except BaseException:
+            service_execution.annuler_reservation()
+            raise
+        return redirect(url_for("operation"), code=303)
+
+    @application.post("/executions/arreter")
+    def arreter_execution():
+        """Demande l'arrêt de l'exécution active, sans dépendre d'un contexte Flask.
+
+        Sans exécution active (aucune opération, ou une autre opération longue),
+        rien n'est arrêté et aucun message d'arrêt n'est affiché. Si le processus
+        survit à `kill`, la page l'indique au lieu de laisser croire à un arrêt
+        effectif.
+        """
+        arret = service_execution.arreter_execution()
+        if arret == ARRET_AUCUN:
+            return redirect(url_for("operation"), code=303)
+        if arret == ARRET_SURVIVANT:
+            return redirect(url_for("operation", action="arret-incomplet"), code=303)
+        return redirect(url_for("operation", action="arret-demande"), code=303)
 
     @application.get("/modeles")
     def modeles() -> str:
@@ -500,11 +589,17 @@ def _enregistrer_routes(
 
     @application.get("/operation")
     def operation() -> str:
+        instantane = services.creneau.instantane()
         return render_template(
             "operation.html",
-            instantane=services.creneau.instantane(),
+            instantane=instantane,
             libelles_etats=LIBELLES_ETATS,
             libelles_types=LIBELLES_TYPES,
+            execution_active=(
+                instantane.etat == ETAT_EN_COURS
+                and instantane.type_operation == TYPE_EXECUTION
+            ),
+            message=_message_action(),
         )
 
     @application.post("/dossiers/verifier")
@@ -520,6 +615,20 @@ def _enregistrer_routes(
         return redirect(url_for("accueil", action="dossiers-verifies"), code=303)
 
 
+def _demande_validee(service: ConfigurationExecutions) -> DemandeExecution:
+    """Forme consommable du formulaire d'exécution, ou `ValeurRefusee`.
+
+    Les champs sont lus depuis la requête courante : la route appelante les
+    revalide donc entièrement, même si la page les a déjà affichés.
+    """
+    return service.valider(
+        modele=request.form.get("modele", ""),
+        audios=request.form.getlist("audios"),
+        threads=request.form.get("threads", ""),
+        reglages=reglages_depuis_formulaire(request.form),
+    )
+
+
 def _page_executions(
     service: ConfigurationExecutions, demande: DemandeExecution | None = None
 ) -> str:
@@ -531,7 +640,7 @@ def _page_executions(
         threads_defaut=service.threads_par_defaut(),
         demande=demande,
         prefixe_reglage=PREFIXE_CHAMP_REGLAGE,
-        message_lancement=MESSAGE_LANCEMENT_NON_DISPONIBLE,
+        message_lancement=MESSAGE_LANCEMENT,
     )
 
 

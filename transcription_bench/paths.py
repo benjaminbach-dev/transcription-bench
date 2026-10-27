@@ -31,6 +31,11 @@ NOM_DOSSIER_AUDIO = "audio"
 NOM_DOSSIER_MODELES = "models"
 NOM_DOSSIER_MOTEURS = "engines"
 NOM_DOSSIER_RESULTATS = "results"
+#: Dossier de travail des exécutions. Volontairement absent de `DOSSIERS_DATA` :
+#: il est créé paresseusement au lancement d'une exécution, jamais au démarrage
+#: du serveur. Les restes d'un arrêt brutal relèvent de la clôture des
+#: exécutions abandonnées (tâche 6.5).
+NOM_DOSSIER_CACHE = "cache"
 DOSSIERS_DATA = (
     NOM_DOSSIER_AUDIO,
     NOM_DOSSIER_MODELES,

@@ -3,7 +3,7 @@
 {% block contenu %}
 <h2>Exécutions</h2>
 <p><a href="{{ url_for('executions') }}">Actualiser</a></p>
-<p><strong>Lancement non disponible.</strong> {{ message_lancement }}</p>
+<p><strong>Lancement dans le créneau global.</strong> {{ message_lancement }}</p>
 {% if demande %}
 <h3>Demande validée</h3>
 <p>La demande ci-dessous est valide : les valeurs effectives sont complètes et les réglages inconnus ont été refusés. <strong>Aucune exécution n'a été lancée</strong> et rien n'est enregistré.</p>
@@ -101,7 +101,9 @@ aucun réglage déclaré par cette famille : aucun réglage n'est proposé.
 <p>{{ reglage.description }} (défaut : {% if reglage.type_valeur == 'booleen' %}{% if reglage.defaut %}oui{% else %}non{% endif %}{% elif reglage.defaut == "" %}(vide){% else %}{{ reglage.defaut }}{% endif %})</p>
 {% endfor %}
 </fieldset>
+<p>Les audios sélectionnés seront décodés par le serveur en signaux bruts 16 kHz mono dans un dossier de travail de l'exécution sous <code>data/cache</code>, supprimé à la fin ; le moteur est lancé dans son propre groupe de processus et le créneau reste occupé jusqu'à sa fin réelle.</p>
 <p><button type="submit">Vérifier la demande (aucun lancement)</button></p>
+<p><button type="submit" formaction="{{ url_for('lancer_execution') }}">Lancer l'exécution</button></p>
 </form>
 {% endif %}
 {% endfor %}

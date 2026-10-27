@@ -98,6 +98,25 @@ class ServiceArrete(RuntimeError):
     """Refus d'une demande : le serveur est en cours d'arrêt (HTTP 503)."""
 
 
+class OperationEchouee(RuntimeError):
+    """Échec prévu d'une opération de fond.
+
+    Le créneau consigne l'échec et son message sans trace complète : une erreur
+    prévue (moteur mort, événements manquants) n'apprend rien de plus sous
+    forme de pile d'appels. Les services concernés en dérivent leurs propres
+    exceptions.
+    """
+
+
+class OperationInterrompue(RuntimeError):
+    """Opération de fond interrompue à la demande de l'utilisateur.
+
+    Ce n'est pas un échec : le créneau la traduit en état `interrompue`, sans
+    erreur consignée. Elle se distingue de l'arrêt du serveur, qui a son propre
+    motif de journal.
+    """
+
+
 def horodatage_iso() -> str:
     """Horodate en ISO 8601 local, à la seconde, pour le journal et les états."""
     return datetime.now().astimezone().isoformat(timespec="seconds")
@@ -324,14 +343,24 @@ class CreneauOperations:
         erreur: BaseException | None = None
         try:
             travail(travailleur)
+        except OperationInterrompue as exception:
+            erreur = exception
+            LOGGER.info("Opération de fond interrompue : %s", exception)
+        except OperationEchouee as exception:
+            # Échec prévu : le message suffit, une pile d'appels n'ajoute rien.
+            erreur = exception
+            LOGGER.warning("Opération de fond en échec : %s", exception)
         except BaseException as exception:  # tout échec doit libérer le créneau
             erreur = exception
             LOGGER.exception("Échec de l'opération de fond du créneau")
         with self._verrou:
             self._fin = self._horloge()
-            if erreur is not None:
+            if not isinstance(erreur, OperationInterrompue) and erreur is not None:
                 self._erreur = f"{type(erreur).__name__} : {erreur}"
-            if self._arrete:
+            if isinstance(erreur, OperationInterrompue):
+                self._etat = ETAT_INTERROMPUE
+                self._consigner("Opération interrompue à la demande de l'utilisateur.")
+            elif self._arrete:
                 self._etat = ETAT_INTERROMPUE
                 self._consigner("Opération interrompue par l'arrêt du serveur.")
             elif erreur is not None:

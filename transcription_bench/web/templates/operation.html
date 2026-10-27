@@ -3,6 +3,9 @@
 {% block contenu %}
 <h2>Opération longue</h2>
 <p><a href="{{ url_for('operation') }}">Actualiser</a></p>
+{% if message %}
+<p>{{ message }}</p>
+{% endif %}
 <dl>
 <dt>État</dt>
 <dd>{{ libelles_etats[instantane.etat] }}</dd>
@@ -40,6 +43,14 @@
 </ul>
 {% else %}
 <p>Aucune opération enregistrée depuis le démarrage.</p>
+{% endif %}
+{% if execution_active %}
+<h3>Arrêt de l'exécution</h3>
+<form method="post" action="{{ url_for('arreter_execution') }}">
+<input type="hidden" name="jeton_csrf" value="{{ jeton_csrf }}">
+<p><button type="submit">Arrêter l'exécution</button></p>
+</form>
+<p>L'arrêt termine le processus du moteur (terminate, attente bornée puis kill) : les résultats d'audios déjà reçus sont conservés et les audios restants sont signalés non traités. Le créneau reste occupé jusqu'à la fin réelle du processus.</p>
 {% endif %}
 <p>Une seule opération longue (installation, téléchargement ou exécution) peut être en cours à la fois ; aucune autre opération du programme ne s'exécute en parallèle.</p>
 <p><a href="{{ url_for('accueil') }}">Retour à l'accueil</a></p>
