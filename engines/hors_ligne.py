@@ -10,8 +10,11 @@ au sous-processus moteur et les options de modèle à forcer.
 il force `HF_HUB_OFFLINE=1`, conserve les autres variables utiles et retire les
 variables d'interpréteur du serveur (`PYTHONHOME`, `PYTHONPATH`, `VIRTUAL_ENV`)
 qui pourraient dérouter l'interpréteur du moteur. `PATH` n'est pas réorganisé.
-Le mapping source et `os.environ` du serveur ne sont jamais modifiés : les
-téléchargements explicites du serveur (tâche 5.4) restent donc possibles.
+Il force aussi `PYTHONIOENCODING=utf-8` : le serveur décode la sortie du moteur
+en UTF-8, et sous Windows la console n'utilise pas cet encodage par défaut, ce
+qui ferait échouer l'écriture d'un message accentué sur la sortie d'erreur du
+runner. Le mapping source et `os.environ` du serveur ne sont jamais modifiés :
+les téléchargements explicites du serveur (tâche 5.4) restent donc possibles.
 
 `mode_hors_ligne()` est le garde-fou du runner lorsqu'il est appelé directement
 (`python engines/runner.py job.json`). Il force `HF_HUB_OFFLINE=1` dans le
@@ -36,6 +39,8 @@ from pathlib import Path
 from typing import Any
 
 CLE_HORS_LIGNE = "HF_HUB_OFFLINE"
+CLE_ENCODAGE_STDIO = "PYTHONIOENCODING"
+ENCODAGE_STDIO = "utf-8"
 VARIABLES_PYTHON_RETIREES = ("PYTHONHOME", "PYTHONPATH", "VIRTUAL_ENV")
 
 
@@ -43,9 +48,10 @@ def environnement_moteur(base: Mapping[str, str] | None = None) -> dict[str, str
     """Prépare un nouvel environnement de sous-processus moteur, hors ligne.
 
     `base` est copié ; sa valeur par défaut est `os.environ` du processus
-    appelant. Le dictionnaire renvoyé force `HF_HUB_OFFLINE=1` et retire les
-    variables d'interpréteur du serveur. Aucune autre variable, notamment
-    `PATH`, n'est modifiée.
+    appelant. Le dictionnaire renvoyé force `HF_HUB_OFFLINE=1`, force l'encodage
+    UTF-8 des entrées/sorties de l'interpréteur enfant et retire les variables
+    d'interpréteur du serveur. Aucune autre variable, notamment `PATH`, n'est
+    modifiée.
     """
     source = os.environ if base is None else base
     environnement = {
@@ -54,6 +60,7 @@ def environnement_moteur(base: Mapping[str, str] | None = None) -> dict[str, str
         if cle not in VARIABLES_PYTHON_RETIREES
     }
     environnement[CLE_HORS_LIGNE] = "1"
+    environnement[CLE_ENCODAGE_STDIO] = ENCODAGE_STDIO
     return environnement
 
 

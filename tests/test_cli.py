@@ -7,6 +7,7 @@ import inspect
 import io
 import json
 import os
+import signal
 import socket
 import subprocess
 import sys
@@ -20,10 +21,12 @@ from unittest import mock
 from flask import Flask
 from waitress import serve as serve_waitress
 
-from transcription_bench import cli, paths
+from transcription_bench import cli, paths, web
+from transcription_bench.execution_moteur import ExecutionMoteur
 from transcription_bench.instance import InstanceDejaActive, VerrouInstance
 from transcription_bench.operations import CreneauOperations
 from transcription_bench.recuperation import EtatAnterieurNonTraitable
+from transcription_bench.supervision import GestionnaireSignaux, NettoyageArret
 
 PAQUETS_MOTEURS = ("ctranslate2", "faster_whisper", "torch", "transcribe_cpp", "transformers")
 CONFIGURATION_ATTENDUE = {
@@ -385,21 +388,119 @@ class DemarrageOrdonneTest(unittest.TestCase):
         self.addCleanup(liberation.set)
         creneau.demarrer("execution", lambda travailleur: liberation.wait(DELAI_PROCESSUS))
         erreur = io.StringIO()
+        nettoyage = NettoyageArret(
+            verrou=verrou, creneau=creneau, delai_operation=0.05
+        )
 
-        with mock.patch.object(cli, "DELAI_ARRET_SERVEUR", 0.05):
-            with contextlib.redirect_stderr(erreur):
-                self.assertFalse(cli._clore_apres_arret(creneau, verrou))
+        with contextlib.redirect_stderr(erreur):
+            self.assertFalse(nettoyage.executer())
 
         self.assertTrue(verrou.detenu)
         with self.assertRaises(InstanceDejaActive):
             VerrouInstance(self.base).acquerir()
-        self.assertIn("verrou d'instance conservé", erreur.getvalue())
+        self.assertIn("opération non close", erreur.getvalue())
 
         liberation.set()
         creneau.thread_travailleur.join(DELAI_PROCESSUS)
-        self.assertTrue(cli._clore_apres_arret(creneau, verrou))
+        # Nettoyage idempotent : l'issue « non close » reste mémorisée et le
+        # verrou n'est pas libéré après coup.
+        self.assertFalse(nettoyage.executer())
+        self.assertTrue(verrou.detenu)
+
+        NettoyageArret(verrou=verrou, creneau=creneau).executer()
         self.assertFalse(verrou.detenu)
         VerrouInstance(self.base).acquerir().liberer()
+
+    def test_service_d_execution_partage_injecte_dans_l_application(self) -> None:
+        with mock.patch.object(paths, "DOSSIER_DATA", self.base):
+            with mock.patch.object(cli, "create_app") as creer:
+                creer.return_value = mock.sentinel.application
+                with mock.patch.object(cli, "serve"):
+                    with contextlib.redirect_stdout(io.StringIO()):
+                        self.assertEqual(cli.main([]), 0)
+
+        services = creer.call_args.args[1]
+        # La supervision doit pouvoir terminer le moteur de l'exécution réelle.
+        self.assertIsInstance(services.execution, ExecutionMoteur)
+        self.assertIsInstance(services.creneau, CreneauOperations)
+        VerrouInstance(self.base).acquerir().liberer()
+
+    def test_ctrl_c_pendant_serve_execute_le_nettoyage_et_libere_le_verrou(self) -> None:
+        class GestionnaireObserve(GestionnaireSignaux):
+            instances: list[GestionnaireSignaux] = []
+
+            def __init__(self, *arguments, **options) -> None:
+                super().__init__(*arguments, **options)
+                GestionnaireObserve.instances.append(self)
+
+        GestionnaireObserve.instances.clear()
+        self.addCleanup(self._restaurer_signaux, GestionnaireObserve)
+
+        def creer(config, services):
+            creer.services = services
+            return mock.sentinel.application
+
+        def servir(application, **options) -> None:
+            signal.raise_signal(signal.SIGINT)
+
+        with mock.patch.object(paths, "DOSSIER_DATA", self.base):
+            with mock.patch.object(cli, "create_app", creer):
+                with mock.patch.object(cli, "serve", servir):
+                    with mock.patch.object(cli, "GestionnaireSignaux", GestionnaireObserve):
+                        sortie = io.StringIO()
+                        with contextlib.redirect_stdout(sortie):
+                            code = cli.main([])
+
+        self.assertEqual(code, 0)
+        self.assertIn("Arrêt du serveur.", sortie.getvalue())
+        self.assertEqual(len(GestionnaireObserve.instances), 1)
+        self.assertTrue(GestionnaireObserve.instances[0].recu)
+        self.assertIs(signal.getsignal(signal.SIGINT), signal.SIG_IGN)
+        self.assertTrue(creer.services.creneau.instantane().arrete)
+        VerrouInstance(self.base).acquerir().liberer()
+
+    @unittest.skipIf(os.name == "nt", "SIGTERM n'est pas un signal d'arrêt Windows")
+    def test_sigterm_pendant_serve_execute_le_nettoyage_puis_sort(self) -> None:
+        class GestionnaireObserve(GestionnaireSignaux):
+            instances: list[GestionnaireSignaux] = []
+
+            def __init__(self, *arguments, **options) -> None:
+                super().__init__(*arguments, **options)
+                GestionnaireObserve.instances.append(self)
+
+        GestionnaireObserve.instances.clear()
+        self.addCleanup(self._restaurer_signaux, GestionnaireObserve)
+
+        def servir(application, **options) -> None:
+            os.kill(os.getpid(), signal.SIGTERM)
+
+        sortie = io.StringIO()
+        with mock.patch.object(paths, "DOSSIER_DATA", self.base):
+            with mock.patch.object(cli, "create_app", return_value=mock.sentinel.application):
+                with mock.patch.object(cli, "serve", servir):
+                    with mock.patch.object(cli, "GestionnaireSignaux", GestionnaireObserve):
+                        with contextlib.redirect_stdout(sortie):
+                            code = cli.main([])
+
+        # `SystemExit` du gestionnaire est intercepté : le message d'arrêt et le
+        # code de sortie viennent du nettoyage, pas de l'exception.
+        self.assertEqual(code, 0)
+        self.assertIn("Arrêt du serveur.", sortie.getvalue())
+        self.assertTrue(GestionnaireObserve.instances[0].recu)
+        self.assertIs(signal.getsignal(signal.SIGTERM), signal.SIG_IGN)
+        VerrouInstance(self.base).acquerir().liberer()
+
+    def test_nettoyage_hors_teardown_et_hors_des_routes(self) -> None:
+        # Aucun enregistrement de nettoyage dans un teardown (appelé à chaque
+        # requête) ni dans une route : seule la CLI supervise l'arrêt.
+        for source in (inspect.getsource(cli), inspect.getsource(web)):
+            self.assertNotIn("teardown_appcontext(", source)
+            self.assertNotIn("teardown_request(", source)
+        self.assertNotIn("NettoyageArret", inspect.getsource(web))
+
+    def _restaurer_signaux(self, gestionnaire: type[GestionnaireSignaux]) -> None:
+        for instance in gestionnaire.instances:
+            instance.restaurer(force=True)
 
 
 class ProcessusReelsTest(unittest.TestCase):

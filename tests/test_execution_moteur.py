@@ -167,6 +167,44 @@ print("pret", flush=True)
 time.sleep(120)
 """
 
+CODE_PROCESSUS_AVEC_DESCENDANT = """
+import subprocess
+import sys
+import time
+
+enfant = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])
+print(enfant.pid, flush=True)
+time.sleep(120)
+"""
+
+#: Descendant qui ignore `SIGTERM` et hérite du stdout du moteur : il en garde
+#: une extrémité ouverte, donc la lecture du serveur ne peut pas se terminer. Il
+#: annonce sur sa sortie d'erreur qu'il a installé son gestionnaire, sans quoi le
+#: signal du groupe pourrait le tuer avant.
+CODE_DESCENDANT_INSENSIBLE_SIGTERM = """
+import signal
+import sys
+import time
+
+signal.signal(signal.SIGTERM, signal.SIG_IGN)
+print("pret", file=sys.stderr, flush=True)
+time.sleep(120)
+"""
+
+CODE_PROCESSUS_AVEC_DESCENDANT_INSENSIBLE = """
+import subprocess
+import sys
+import time
+
+enfant = subprocess.Popen(
+    [sys.executable, "-c", {descendant!r}], stderr=subprocess.PIPE, text=True
+)
+if enfant.stderr is not None:
+    enfant.stderr.readline()  # gestionnaire du descendant installé
+print(enfant.pid, flush=True)
+time.sleep(120)
+""".format(descendant=CODE_DESCENDANT_INSENSIBLE_SIGTERM)
+
 
 CODE_JOURNAL_STDERR_VOLUMINEUX = """
 import runpy
@@ -204,6 +242,14 @@ def attendre_condition(condition, description: str, delai: float = DELAI) -> Non
 def attendre_fichier(chemin: Path) -> None:
     """Attend l'apparition d'un marqueur écrit par le processus enfant."""
     attendre_condition(chemin.exists, f"marqueur jamais créé : {chemin.name}")
+
+
+def _processus_termine(pid: int) -> bool:
+    """Vrai si le processus a disparu ou n'est plus qu'un zombie."""
+    try:
+        return psutil.Process(pid).status() == psutil.STATUS_ZOMBIE
+    except psutil.Error:
+        return True
 
 
 def attendre_journal(creneau: CreneauOperations, extrait: str) -> None:
@@ -1312,6 +1358,70 @@ class ProcessusMoteurTest(unittest.TestCase):
         finally:
             processus.arreter()
             processus.fermer()
+
+    @unittest.skipUnless(os.name == "posix", "groupes de processus POSIX")
+    def test_arret_termine_aussi_le_descendant_du_moteur(self) -> None:
+        """Le signal vise le groupe : un sous-traitant du moteur ne survit pas."""
+        processus = ProcessusMoteur(delai_arret=0.5)
+        enfant = processus.lancer(
+            [sys.executable, "-u", "-c", CODE_PROCESSUS_AVEC_DESCENDANT],
+            environ=environnement_moteur(),
+            dossier=self.dossier,
+        )
+        self.assertIsNotNone(enfant.stdout)
+        pid_descendant = int(enfant.stdout.readline().strip())
+        self.assertIsNotNone(psutil.Process(pid_descendant))
+        try:
+            self.assertTrue(processus.arreter())
+            self.assertIsNotNone(enfant.poll())
+        finally:
+            processus.arreter()
+            processus.fermer()
+
+        # Le descendant n'est pas notre enfant : sa disparition est constatée par
+        # psutil, un zombie comptant comme arrêté (il n'exécute plus rien).
+        attendre_condition(
+            lambda: _processus_termine(pid_descendant),
+            "le descendant du moteur survit à l'arrêt du groupe",
+        )
+
+    @unittest.skipUnless(os.name == "posix", "groupes de processus POSIX")
+    def test_arret_tue_le_descendant_insensible_au_sigterm(self) -> None:
+        """Un descendant qui ignore SIGTERM et garde stdout ouvert est tué.
+
+        Sans ce forçage, la lecture de la sortie du moteur resterait bloquée et
+        le créneau du serveur ne pourrait pas être libéré.
+        """
+        processus = ProcessusMoteur(delai_arret=0.2)
+        enfant = processus.lancer(
+            [sys.executable, "-u", "-c", CODE_PROCESSUS_AVEC_DESCENDANT_INSENSIBLE],
+            environ=environnement_moteur(),
+            dossier=self.dossier,
+        )
+        self.assertIsNotNone(enfant.stdout)
+        pid_descendant = int(enfant.stdout.readline().strip())
+        try:
+            self.assertTrue(processus.arreter())
+            self.assertIsNotNone(enfant.poll())
+
+            # La lecture se termine : le descendant qui détenait une extrémité du
+            # tuyau a bien été tué après l'attente bornée.
+            lignes: list[str] = []
+            lecteur = threading.Thread(
+                target=lambda: lignes.extend(enfant.stdout), daemon=True
+            )
+            lecteur.start()
+            lecteur.join(DELAI)
+            self.assertFalse(lecteur.is_alive(), "lecture de stdout non terminée")
+            self.assertEqual(lignes, [])
+        finally:
+            processus.arreter()
+            processus.fermer()
+
+        attendre_condition(
+            lambda: _processus_termine(pid_descendant),
+            "le descendant insensible au SIGTERM survit à l'arrêt",
+        )
 
     def test_arret_avant_lancement_empeche_le_demarrage(self) -> None:
         processus = ProcessusMoteur()

@@ -32,9 +32,12 @@ une exécution complète, dans le thread de fond du créneau unique :
    Les événements en double le sont aussi : un second événement d'audio pour un
    même index, un second `chargement` ou un second `fin` sont ignorés, le
    premier reçu restant le seul conservé et jamais rejoué ;
-6. **arrêt** à la demande de l'utilisateur : `terminate`, attente bornée puis
-   `kill`, les résultats d'audios déjà reçus sont conservés et les audios
-   restants sont signalés non traités. Après la demande d'arrêt, les lignes
+6. **arrêt** à la demande de l'utilisateur ou à l'arrêt normal du serveur :
+   signal au **groupe** du processus (`SIGTERM`, attente bornée puis `SIGKILL`
+   sous POSIX ; arborescence psutil sous Windows), la descendance étant relevée
+   avant le signal puis attendue et tuée si elle y survit ; les résultats
+   d'audios déjà
+   reçus sont conservés et les audios restants sont signalés non traités. Après la demande d'arrêt, les lignes
    encore lues sont drainées sans être interprétées : la troncature est donc
    bornée au dernier événement reçu avant l'arrêt, de façon déterministe ;
 7. **issue** : sortie non nulle, événement `fin` absent ou événement manquant
@@ -113,7 +116,6 @@ PC.
 from __future__ import annotations
 
 import json
-import os
 import shutil
 import subprocess
 import sys
@@ -161,6 +163,12 @@ from transcription_bench.paths import (
     NOM_DOSSIER_RESULTATS,
     ValeurRefusee,
     resoudre_dans_racine,
+)
+from transcription_bench.processus import (
+    arreter_descendants,
+    arreter_groupe,
+    descendants,
+    options_groupe,
 )
 from transcription_bench.resultats import (
     SOURCE_HEURE_PSUTIL,
@@ -361,8 +369,10 @@ class ProcessusMoteur:
     se font sous le même verrou court : un arrêt demandé avant le lancement
     empêche le démarrage, et un arrêt demandé pendant le démarrage voit toujours
     un processus déjà enregistré. `arreter` est idempotent, ne lève pas et ne
-    laisse pas de processus survivant quand le système coopère : `terminate`,
-    attente bornée par sondage, puis `kill`.
+    laisse pas de processus survivant quand le système coopère : il signale le
+    **groupe** du processus (`SIGTERM`, attente bornée par sondage, puis
+    `SIGKILL`) pour atteindre aussi les descendants lancés par un moteur réel ;
+    sous Windows, l'arborescence psutil est terminée au mieux.
     """
 
     def __init__(
@@ -397,11 +407,7 @@ class ProcessusMoteur:
         rien n'est écrit dans le dépôt. Lève `ExecutionImpossible` si un arrêt a
         déjà été demandé.
         """
-        options: dict[str, Any] = {}
-        if os.name == "nt":
-            options["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
-        else:
-            options["start_new_session"] = True
+        options = options_groupe()
         with self._verrou:
             if self._arrete:
                 raise ExecutionImpossible(
@@ -423,10 +429,15 @@ class ProcessusMoteur:
         return processus
 
     def arreter(self) -> bool:
-        """Termine le processus : `terminate`, attente bornée, puis `kill`.
+        """Termine le groupe du processus : signal d'arrêt, attente, puis forcage.
 
-        Renvoie `True` si le processus est terminé (ou n'a jamais été lancé),
-        `False` s'il survit au délai même après `kill`.
+        Le signal vise le groupe (POSIX) ou l'arborescence (Windows), pas
+        seulement le processus direct : un moteur qui aurait lancé un
+        sous-traitant ne doit pas en laisser un survivant. La descendance est
+        relevée **avant** le signal, puis attendue et tuée si elle y survit :
+        après la sortie du processus principal, le groupe n'est plus signalable.
+        Renvoie `True` si le processus direct est terminé (ou n'a jamais été
+        lancé), `False` s'il survit au délai même après le signal de forçage.
         """
         with self._verrou:
             self._arrete = True
@@ -434,18 +445,18 @@ class ProcessusMoteur:
         if processus is None:
             return True
         if processus.poll() is not None:
+            # Processus déjà collecté : son PID peut déjà avoir été réutilisé, le
+            # groupe n'est donc plus signalé (un descendant resté orphelin après
+            # une sortie propre n'est plus supervisable sans risque).
             return True
-        try:
-            processus.terminate()
-        except OSError:
-            return True
-        if self._attendre_sortie(processus):
-            return True
-        try:
-            processus.kill()
-        except OSError:
-            return True
-        return self._attendre_sortie(processus)
+        arbre = descendants(processus.pid)
+        arreter_groupe(processus)
+        sorti = self._attendre_sortie(processus)
+        if not sorti:
+            arreter_groupe(processus, force=True)
+            sorti = self._attendre_sortie(processus)
+        arreter_descendants(arbre, self._delai_arret)
+        return sorti
 
     def _attendre_sortie(self, processus: subprocess.Popen[str]) -> bool:
         """Sonde la sortie du processus pendant un délai borné, sans `wait` bloquant."""
@@ -530,6 +541,7 @@ class ExecutionMoteur:
         self._travailleur: Travailleur | None = None
         self._active = False
         self._arret_demande = False
+        self._arret_serveur = False
         self._derniere: ResultatExecution | None = None
 
     # -- état observable (routes, tests, tâches 6.4 à 6.6) -------------------
@@ -561,7 +573,7 @@ class ExecutionMoteur:
         """
         self._interpreteur(demande)
 
-    def arreter_execution(self) -> str:
+    def arreter_execution(self, *, arret_serveur: bool = False) -> str:
         """Demande l'arrêt de l'exécution active, sans dépendre d'un contexte Flask.
 
         Idempotent. Renvoie `ARRET_AUCUN` sans exécution active, `ARRET_DEMANDE`
@@ -570,12 +582,15 @@ class ExecutionMoteur:
         `kill`. Le verrou du service n'est pas tenu pendant la journalisation ni
         pendant la terminaison du processus. `reserver` a créé le processus
         moteur : une exécution active en a donc toujours un, même avant son
-        démarrage effectif.
+        démarrage effectif. `arret_serveur` distingue l'arrêt normal du serveur
+        d'une demande de l'utilisateur, pour que le journal du créneau nomme le
+        bon motif.
         """
         with self._verrou:
             if not self._active:
                 return ARRET_AUCUN
             self._arret_demande = True
+            self._arret_serveur = self._arret_serveur or arret_serveur
             processus = self._processus_moteur
             travailleur = self._travailleur
         if travailleur is not None:
@@ -599,6 +614,7 @@ class ExecutionMoteur:
                 raise ExecutionImpossible("une exécution est déjà active")
             self._active = True
             self._arret_demande = False
+            self._arret_serveur = False
             self._processus_moteur = ProcessusMoteur(delai_arret=self._delai_arret)
 
     def annuler_reservation(self) -> None:
@@ -620,9 +636,11 @@ class ExecutionMoteur:
         Ne reçoit que des valeurs (la demande validée) et le handle du créneau :
         aucun objet Flask, aucune demande de persistance. Lève `ExecutionEchouee`
         pour un échec prévu (moteur mort, événements manquants, écriture des
-        résultats impossible) et `OperationInterrompue` après un arrêt de
-        l'utilisateur, afin que le créneau enregistre l'issue ; le
-        `ResultatExecution` reste disponible par `derniere_execution`.
+        résultats impossible) et `OperationInterrompue` après un arrêt demandé
+        par l'utilisateur, afin que le créneau enregistre l'issue ; un arrêt du
+        serveur, lui, n'est pas une demande de l'utilisateur et c'est le créneau,
+        déjà passé à l'arrêt, qui en consigne le motif. Le `ResultatExecution`
+        reste disponible par `derniere_execution`.
 
         La consignation des résultats est propre à cette exécution : créée avant
         toute préparation, elle est close dans tous les cas (y compris une issue
@@ -688,6 +706,10 @@ class ExecutionMoteur:
         if resultat.etat == ETAT_ECHOUEE:
             raise ExecutionEchouee(resultat.erreur or "exécution en échec")
         if resultat.etat == ETAT_INTERROMPUE:
+            if self._arret_serveur_actif():
+                # L'arrêt du serveur n'est pas une demande de l'utilisateur : le
+                # créneau, déjà passé à l'arrêt, consigne ce motif-là.
+                return
             raise OperationInterrompue(
                 "exécution interrompue à la demande de l'utilisateur"
             )
@@ -872,7 +894,8 @@ class ExecutionMoteur:
         # Fin de la collecte du moteur et de l'écriture des résultats d'audios :
         # la durée totale s'arrête ici, avant l'ultime sauvegarde de `run.json`.
         mesures.duree_operation_s = time.perf_counter() - mesures.debut
-        journal_moteur = tuple(stderr_moteur)
+        # `deque.copy()` est atomique vis-à-vis des ajouts d'un fil encore vivant.
+        journal_moteur = tuple(stderr_moteur.copy())
         _journaliser_stderr(journal_moteur, travailleur)
         return self._resultat(
             demande,
@@ -1227,6 +1250,10 @@ class ExecutionMoteur:
     def _arret_demande_actif(self) -> bool:
         with self._verrou:
             return self._arret_demande
+
+    def _arret_serveur_actif(self) -> bool:
+        with self._verrou:
+            return self._arret_serveur
 
     def _factice(self, demande: DemandeExecution) -> bool:
         """Déclaration du moteur demandé, ou `False` s'il est inconnu."""

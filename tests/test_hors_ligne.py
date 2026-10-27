@@ -13,6 +13,8 @@ from pathlib import Path
 from unittest import mock
 
 from engines.hors_ligne import (
+    CLE_ENCODAGE_STDIO,
+    ENCODAGE_STDIO,
     commande_runner,
     environnement_moteur,
     mode_hors_ligne,
@@ -39,6 +41,15 @@ class EnvironnementMoteurTest(unittest.TestCase):
         for cle in ("PYTHONHOME", "PYTHONPATH", "VIRTUAL_ENV"):
             self.assertNotIn(cle, env)
         self.assertEqual(env["PATH"], "/usr/bin")
+        # Le serveur décode la sortie du moteur en UTF-8 : l'interpréteur enfant
+        # doit écrire en UTF-8, y compris sous Windows où la console ne l'impose pas.
+        self.assertEqual(env[CLE_ENCODAGE_STDIO], ENCODAGE_STDIO)
+        self.assertEqual(ENCODAGE_STDIO, "utf-8")
+
+    def test_encodage_stdio_force_meme_si_la_base_en_definit_un_autre(self) -> None:
+        env = environnement_moteur({"PYTHONIOENCODING": "cp1252"})
+
+        self.assertEqual(env["PYTHONIOENCODING"], "utf-8")
 
     def test_sans_base_ne_modifie_pas_os_environ(self) -> None:
         with mock.patch.dict(os.environ, {"HF_HUB_OFFLINE": "0"}):

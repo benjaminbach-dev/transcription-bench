@@ -211,8 +211,9 @@ class ServicesApplication:
     aucune E/S.
     `execution` est le service de lancement supervisé des exécutions (tâche
     6.3) ; s'il est absent, la fabrique en construit un avec le même registre et
-    le service des moteurs, sans aucune E/S. La CLI pourra l'injecter pour que la
-    supervision d'arrêt du serveur (tâche 6.6) puisse terminer le moteur.
+    le service des moteurs, sans aucune E/S. La CLI l'injecte pour que la
+    supervision d'arrêt du serveur (tâche 6.6) puisse terminer le moteur de
+    l'exécution réellement en cours.
     """
 
     creneau: CreneauOperations

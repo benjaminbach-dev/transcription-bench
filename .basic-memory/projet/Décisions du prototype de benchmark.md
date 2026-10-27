@@ -289,3 +289,13 @@ Provenance : `transcription-bench`, `main`, base `31572bf`. **21/39**, 501 tests
 
 - [validation] Vraie récupération au démarrage (`recuperation.py`, après verrou d'instance, avant application) : `run.json` `running` → moteur survivant terminé seulement si PID **et** heure de création concordent (tolérance 1 s `psutil`, 5 s via `lance_a` en repli ; revérification interne psutil 7.2.2 avant signal ; descendance psutil) ; refus de démarrer si non identifiable, inaccessible ou survivant ; puis `abandoned` via `resultats.abandonner_execution` (durées null, pic partiel, audios non traités, statuts consignés conservés, `result.json` fait foi, aucun fichier final réécrit). Purge de `data/cache/execution-*` (jamais si lien/jonction). Idempotent ; états finaux, dossiers sans `run.json` ignorés ; `run.json` illisible/incohérent refusé sans réécriture.
 - [limit] Dérive d'horloge ≥ 1 s : moteur non reconnu (mourra à sa prochaine écriture) ; arrêt brutal entre lancement et écriture du PID ; descendants orphelins → 6.6 (killpg / Job Object). Windows non éprouvé (AccessDenied, terminate immédiat).
+
+
+## Lot 6 — tâche 6.6 (code livré, case ouverte), 2026-10-26 UTC
+
+Provenance : `transcription-bench`, `main`, base `545b421`. **21/39 cochées**, 530 tests passants, revue advisor + corrections.
+
+- [validation] Supervision CLI (`supervision.py`, `processus.py`, `cli.py`) autour de `waitress.serve` : gestionnaire SIGINT (+SIGTERM Linux) → SIG_IGN dès le premier signal puis exception ; `finally` idempotent : créneau à l'arrêt sans attente → moteur (signal au groupe, descendance psutil relevée avant SIGTERM, attente bornée puis kill) → installation uv idem → attente bornée du thread → verrou d'instance libéré en dernier, conservé si l'opération n'est pas close (code 1). Exécution interrompue par arrêt serveur = `interrupted` ; aucun marqueur prêt après arrêt. Vrais serveurs Waitress en sous-processus testés (SIGINT, SIGTERM, double signal) sans survivant.
+- [decision] Windows : arborescence psutil « au mieux », pas de Job Object ni CTRL_BREAK ; stderr du runner en UTF-8 (`PYTHONIOENCODING`).
+- [constraint] **Case 6.6 laissée ouverte** : le rejeu sur PC Linux/Windows (cas 1.7 via `uv run`, Ctrl+C console, double Ctrl+C, port occupé, arrêt brutal) reste dû. Limites : groupe non signalable après la sortie du processus principal ; un téléchargement bloqué retarde la sortie (pas de délai global) ; un moteur insensible au kill garde le créneau occupé.
+- [status] Lot 6 réalisé côté serveur (6.1–6.5 cochées, 6.6 code livré). Suite : lot 7 (résultats/comparaison), puis 9.x ; jalon PC 1.x et 8.x toujours dus.

@@ -32,8 +32,10 @@ processus : seules les lignes de sortie d'uv et du contrôle sont conservées.
 
 La protection commune des JSON vit dans `transcription_bench.stockage`. Ordre
 des verrous : le verrou du créneau peut être tenu pendant l'écriture du marqueur,
-jamais l'inverse. L'arrêt minimal du sous-processus d'installation est fourni
-ici ; la supervision complète des signaux et des processus reste la tâche 6.6.
+jamais l'inverse. L'arrêt du sous-processus d'installation, y compris de son
+groupe (`transcription_bench.processus`), est fourni ici ; la supervision des
+signaux du serveur et l'enchaînement du nettoyage vivent dans
+`transcription_bench.supervision` (tâche 6.6).
 """
 
 from __future__ import annotations
@@ -54,6 +56,7 @@ from transcription_bench.operations import (
     ETAT_EN_COURS,
     TYPE_INSTALLATION,
     CreneauOperations,
+    OperationEchouee,
     ServiceArrete,
     Travailleur,
     horodatage_iso,
@@ -63,6 +66,12 @@ from transcription_bench.paths import (
     RACINE_PROJET,
     ValeurRefusee,
     resoudre_dans_racine,
+)
+from transcription_bench.processus import (
+    arreter_descendants,
+    arreter_groupe,
+    descendants,
+    options_groupe,
 )
 from transcription_bench.stockage import (
     VERROU_STOCKAGE,
@@ -114,8 +123,14 @@ class InstallationIndisponible(RuntimeError):
     """Moteur non installable : factice, identifiant inconnu ou verrou absent."""
 
 
-class InstallationEchouee(RuntimeError):
-    """Étape d'installation en échec : le moteur ne doit pas devenir prêt."""
+class InstallationEchouee(OperationEchouee):
+    """Étape d'installation en échec : le moteur ne doit pas devenir prêt.
+
+    Hérite d'`OperationEchouee` : un échec prévu est consigné par le créneau
+    avec son message seul, sans pile d'appels complète (comme
+    `ExecutionEchouee`). La pile n'apporterait rien pour un code de sortie uv
+    non nul ou un import manquant, et elle noierait le journal.
+    """
 
 
 @dataclass(frozen=True)
@@ -149,8 +164,9 @@ class ResultatCommande:
 class ExecuteurCommandes:
     """Exécuteur minimal, remplaçable par les tests sans effet de bord.
 
-    `arreter` doit terminer le sous-processus éventuellement en cours ; il est
-    idempotent. La supervision complète des signaux reste la tâche 6.6.
+    `arreter` doit terminer le sous-processus éventuellement en cours, y compris
+    son groupe ou son arborescence, et rester idempotent : la supervision d'arrêt
+    du serveur (tâche 6.6) l'appelle au moment du nettoyage.
     """
 
     def executer(
@@ -168,14 +184,17 @@ class ExecuteurCommandes:
 
 
 class ExecuteurSubprocess(ExecuteurCommandes):
-    """Exécuteur réel avec nettoyage borné du sous-processus.
+    """Exécuteur réel avec nettoyage borné du sous-processus et de son groupe.
 
     Le contrôle d'arrêt, `Popen` et l'enregistrement du processus se font sous
     le même verrou court : `arreter` voit donc toujours un processus déjà admis,
-    jamais un démarrage encore en cours qu'il laisserait ensuite s'exécuter.
-    Les tuyaux sont toujours fermés et le processus est toujours attendu, y
-    compris après une erreur ou un délai dépassé, afin de ne pas laisser de
-    processus orphelin ni de descripteur ouvert.
+    jamais un démarrage encore en cours qu'il laisserait ensuite s'exécuter. La
+    commande est lancée dans son propre groupe (`options_groupe`) et `arreter`
+    signale ce groupe : `uv` et les processus qu'il aurait lancés ne survivent
+    pas à l'arrêt du serveur (tâche 6.6). Les tuyaux sont toujours fermés et le
+    processus est toujours attendu, y compris après une erreur ou un délai
+    dépassé, afin de ne pas laisser de processus orphelin ni de descripteur
+    ouvert.
     """
 
     def __init__(self) -> None:
@@ -210,6 +229,7 @@ class ExecuteurSubprocess(ExecuteurCommandes):
                 errors="replace",
                 env=environ,
                 bufsize=1,
+                **options_groupe(),
             )
             self._processus = processus
         morceaux: list[str] = []
@@ -228,7 +248,7 @@ class ExecuteurSubprocess(ExecuteurCommandes):
                     journaliser(ligne)
                 code = processus.returncode
         except subprocess.TimeoutExpired:
-            processus.kill()
+            arreter_groupe(processus, force=True)
             processus.wait()
             journaliser("Délai dépassé : commande arrêtée.")
             code = -1
@@ -236,27 +256,39 @@ class ExecuteurSubprocess(ExecuteurCommandes):
             with self._verrou:
                 self._processus = None
             if processus.poll() is None:
-                processus.kill()
+                arreter_groupe(processus, force=True)
                 processus.wait()
             if processus.stdout is not None:
                 processus.stdout.close()
         return ResultatCommande(code=code, sortie="\n".join(morceaux))
 
     def arreter(self) -> None:
+        """Termine le groupe du sous-processus en cours, avec des délais bornés.
+
+        La descendance est relevée avant le signal, puis attendue et tuée si
+        elle survit à `SIGTERM` : un `uv` qui aurait lancé un sous-traitant ne
+        doit pas en laisser un orphelin, et le groupe n'est plus signalable dès
+        que le processus principal a disparu.
+        """
         with self._verrou:
             self._arrete = True
             processus = self._processus
         if processus is None or processus.poll() is not None:
             return
-        try:
-            processus.terminate()
-        except OSError:
-            return
+        arbre = descendants(processus.pid)
+        arreter_groupe(processus)
         try:
             processus.wait(DELAI_ARRET_PROCESSUS)
         except subprocess.TimeoutExpired:
-            processus.kill()
-            processus.wait(DELAI_ARRET_PROCESSUS)
+            arreter_groupe(processus, force=True)
+            try:
+                processus.wait(DELAI_ARRET_PROCESSUS)
+            except subprocess.TimeoutExpired:
+                # Un processus insensible au forçage reste signalé par son
+                # absence de sortie ; l'appelant garde le créneau occupé.
+                arreter_descendants(arbre, DELAI_ARRET_PROCESSUS)
+                return
+        arreter_descendants(arbre, DELAI_ARRET_PROCESSUS)
 
 
 def empreinte_fichier(chemin: Path) -> str:

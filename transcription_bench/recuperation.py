@@ -63,8 +63,11 @@ psutil à lui-même). psutil 7.2.2 revérifie lui-même l'identité du processus
 peut faire prendre le moteur pour un autre programme — il est alors laissé
 vivant, mais mourra à sa prochaine écriture, la tuyauterie du serveur étant
 fermée ; un arrêt brutal entre le lancement du moteur et l'écriture du PID
-laisse un moteur non enregistré, donc non récupérable ; la supervision des
-descendants orphelins au cours d'une exécution vivante relève de la tâche 6.6.
+laisse un moteur non enregistré, donc non récupérable ; la supervision d'arrêt
+(tâche 6.6) relève, elle, la descendance du moteur avant de signaler son groupe
+et tue les survivants, mais seulement pendant que l'exécution est vivante : un
+descendant déjà orphelin après la sortie du processus principal, ou après un
+arrêt brutal, n'est ni atteint par le groupe ni récupéré ici.
 """
 
 from __future__ import annotations

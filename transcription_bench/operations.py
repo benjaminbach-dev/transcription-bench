@@ -184,6 +184,7 @@ class CreneauOperations:
         self._erreur: str | None = None
         self._journal: list[str] = []
         self._thread: threading.Thread | None = None
+        self._non_close_signale = False
 
     def demarrer(
         self,
@@ -215,6 +216,7 @@ class CreneauOperations:
             self._fin = None
             self._erreur = None
             self._journal = []
+            self._non_close_signale = False
             libelle = LIBELLES_TYPES[type_operation]
             if cible:
                 self._consigner(f"Opération « {libelle} » démarrée : {cible}.")
@@ -267,26 +269,50 @@ class CreneauOperations:
     def arreter(self, delai: float = DELAI_ARRET_DEFAUT) -> bool:
         """Passe le créneau à l'arrêt, puis attend le thread de fond `delai`.
 
+        Raccourci de `passer_a_l_arret` puis `attendre_thread`, conservé pour les
+        appelants qui n'ont pas besoin d'arrêter le moteur entre les deux. La
+        tâche 6.6 utilise les deux étapes séparément : le passage à l'arrêt doit
+        précéder la terminaison du moteur, l'attente du thread la suivre.
+
         Idempotent, y compris pour le journal : seule la première demande d'arrêt
-        consigne le passage à l'arrêt ou une opération non close. La demande
-        d'arrêt est posée sous le verrou, ce qui refuse toute admission, mutation
-        ou publication ultérieure ; une opération déjà admise garde la main pour
-        finir. Renvoie `True` si le thread de fond est
-        terminé après l'attente bornée, `False` s'il est encore actif (le
-        nettoyage complet relève de la tâche 6.6).
+        consigne le passage à l'arrêt, et l'opération non close n'est consignée
+        qu'une fois. Renvoie `True` si le thread de fond est terminé après
+        l'attente bornée, `False` s'il est encore actif.
+        """
+        self.passer_a_l_arret()
+        return self.attendre_thread(delai)
+
+    def passer_a_l_arret(self) -> None:
+        """Pose la demande d'arrêt sous le verrou, sans attendre le thread.
+
+        Ce passage refuse sous le même verrou toute admission, mutation et
+        publication de marqueur prêt ultérieure ; une opération déjà admise garde
+        la main pour finir, et c'est la supervision qui arrête son processus.
+        Idempotent : le journal ne reçoit qu'une fois le passage à l'arrêt.
         """
         with self._verrou:
             premier_passage = not self._arrete
             self._arrete = True
             if premier_passage and self._etat == ETAT_EN_COURS:
                 self._consigner("Arrêt demandé pendant l'opération.")
+
+    def attendre_thread(self, delai: float = DELAI_ARRET_DEFAUT) -> bool:
+        """Attend la fin du thread de fond pendant `delai`, sans tuer de thread.
+
+        Ne repose aucune demande d'arrêt : l'appelant a déjà appelé
+        `passer_a_l_arret`. Renvoie `True` si le thread est terminé (ou s'il n'y
+        en a jamais eu), `False` s'il est encore actif. L'opération non close
+        n'est consignée qu'une fois, quel que soit le nombre d'attentes.
+        """
+        with self._verrou:
             thread = self._thread
         if thread is None:
             return True
         thread.join(delai)
         if thread.is_alive():
-            if premier_passage:
-                with self._verrou:
+            with self._verrou:
+                if not self._non_close_signale:
+                    self._non_close_signale = True
                     self._consigner(
                         "Opération non close : le thread de fond est encore actif."
                     )

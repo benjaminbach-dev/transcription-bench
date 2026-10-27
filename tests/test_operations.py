@@ -339,6 +339,29 @@ class ArretCreneauTest(CreneauTest):
         self.assertTrue(instantane.arrete)
         self.assertNotIn("Arrêt demandé pendant l'opération.", instantane.journal)
 
+    def test_passage_a_l_arret_sans_attente_puis_attente_bornee(self) -> None:
+        self.demarrer_bloque()
+
+        self.creneau.passer_a_l_arret()
+        self.creneau.passer_a_l_arret()
+        instantane = self.creneau.instantane()
+        self.assertTrue(instantane.arrete)
+        self.assertEqual(
+            " ".join(instantane.journal).count("Arrêt demandé pendant l'opération."), 1
+        )
+        self.assertFalse(self.creneau.attendre_thread(ATTENTE_COURTE))
+        self.assertFalse(self.creneau.attendre_thread(ATTENTE_COURTE))
+        self.assertEqual(
+            " ".join(self.creneau.instantane().journal).count("Opération non close"), 1
+        )
+
+        self.fin.set()
+        self.terminer_thread()
+        self.assertTrue(self.creneau.attendre_thread(DELAI))
+        self.assertEqual(
+            self.creneau.instantane().etat, ETAT_INTERROMPUE
+        )
+
     def test_publication_et_mutation_partagent_le_meme_verrou(self) -> None:
         resultats: list[str] = []
         refus: list[str] = []

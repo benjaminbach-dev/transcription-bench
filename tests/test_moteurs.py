@@ -23,6 +23,8 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+import psutil
+
 from engines.declarations import DeclarationAdaptateur, Famille
 from engines.registre import RegistreMoteurs, creer_registre_fourni
 from transcription_bench.moteurs import (
@@ -62,6 +64,16 @@ ENVIRON_UV = {
     "UV_PYTHON_DOWNLOADS": "never",
 }
 SECRET_FACTICE = "valeur-secrete-a-ne-pas-journaliser"
+
+CODE_COMMANDE_AVEC_DESCENDANT = """
+import subprocess
+import sys
+import time
+
+enfant = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])
+print(enfant.pid, flush=True)
+time.sleep(120)
+"""
 
 
 def declaration_test(
@@ -408,6 +420,50 @@ class ArretEtCheminsTest(SocleMoteurs):
         self.assertTrue(
             any("non publié" in ligne for ligne in service.lire_journal("engine-test"))
         )
+
+    @unittest.skipIf(os.name == "nt", "groupes de processus POSIX")
+    def test_arret_de_la_commande_termine_aussi_ses_descendants(self) -> None:
+        """`uv` et ce qu'il a lancé ne survivent pas à l'arrêt du serveur."""
+        executeur = ExecuteurSubprocess()
+        pids: list[int] = []
+        pret = threading.Event()
+        resultat: dict[str, ResultatCommande] = {}
+
+        def journaliser(ligne: str) -> None:
+            if ligne.strip().isdigit():
+                pids.append(int(ligne.strip()))
+                pret.set()
+
+        def travail() -> None:
+            resultat["commande"] = executeur.executer(
+                [sys.executable, "-u", "-c", CODE_COMMANDE_AVEC_DESCENDANT],
+                env=os.environ,
+                journaliser=journaliser,
+            )
+
+        fil = threading.Thread(target=travail, daemon=True)
+        try:
+            fil.start()
+            self.assertTrue(pret.wait(DELAI), "commande de test non démarrée")
+            executeur.arreter()
+            fil.join(DELAI)
+            self.assertFalse(fil.is_alive())
+            self.assertNotEqual(resultat["commande"].code, 0)
+            self.assertFalse(executeur.en_cours)
+        finally:
+            executeur.arreter()
+            fil.join(DELAI)
+
+        echeance = time.monotonic() + DELAI
+        while time.monotonic() < echeance:
+            try:
+                if psutil.Process(pids[0]).status() == psutil.STATUS_ZOMBIE:
+                    break
+            except psutil.Error:
+                break
+            time.sleep(0.01)
+        else:
+            self.fail("le descendant de la commande survit à l'arrêt")
 
     @unittest.skipIf(os.name == "nt", "liens symboliques non qualifiés sous Windows")
     def test_environnement_symbolique_sortant_refuse_sans_io(self) -> None:
