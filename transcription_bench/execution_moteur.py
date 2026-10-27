@@ -1527,14 +1527,18 @@ def _consigner_evenement(
     evenement: Mapping[str, Any],
     consignateur: ConsignateurExecution,
 ) -> None:
-    """Met à jour le résultat de l'audio concerné et le consigne aussitôt.
+    """Retient les mesures puis le résultat de l'audio concerné, aussitôt.
 
-    L'index d'un événement est sa position dans le job, qui exclut les audios
-    dont le décodage a échoué : `indices_job` le ramène à la position dans la
-    demande, qui fixe l'ordre de traitement, de consignation et de lecture par
-    les pages de résultats. La consignation est faite ici, donc avant l'audio
-    suivant, sans mécanisme d'abonnement générique.
+    Les mesures de l'événement sont consignées avant tout filtrage : celles du
+    chargement sont donc persistées dès leur réception, et le pic mémoire de
+    chaque audio est retenu avant l'écriture de son résultat. L'index d'un
+    événement est sa position dans le job, qui exclut les audios dont le décodage
+    a échoué : `indices_job` le ramène à la position dans la demande, qui fixe
+    l'ordre de traitement, de consignation et de lecture par les pages de
+    résultats. La consignation est faite ici, donc avant l'audio suivant, sans
+    mécanisme d'abonnement générique.
     """
+    consignateur.enregistrer_mesures(evenement)
     if evenement.get("type") not in (TYPE_AUDIO, TYPE_AUDIO_ERREUR):
         return
     position = evenement.get("index")

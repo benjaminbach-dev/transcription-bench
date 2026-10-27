@@ -539,6 +539,121 @@ class ConsignateurExecutionTest(unittest.TestCase):
         self.assertEqual(processus["lance_a"], "2026-01-01T10:00:01+01:00")
         self.assertIsNone(processus["code_sortie"])
 
+    def test_mesures_du_chargement_consignees_des_reception(self) -> None:
+        consignateur = self.ouvrir()
+
+        self.assertTrue(
+            consignateur.enregistrer_mesures(
+                {"type": "chargement", "duree_s": 1.2, "pic_memoire_octets": 1024}
+            )
+        )
+
+        run = self.lire("run.json")
+        self.assertEqual(run["etat"], ETAT_EN_COURS)
+        self.assertEqual(run["mesures"]["duree_chargement_s"], 1.2)
+        self.assertEqual(run["mesures"]["pic_memoire_octets"], 1024)
+        self.assertIs(run["mesures"]["pic_memoire_partiel"], True)
+        self.assertIsNone(run["mesures"]["duree_operation_s"])
+        self.assertIsNone(run["mesures"]["duree_processus_s"])
+
+    def test_mesures_d_audio_persistees_avec_le_resultat(self) -> None:
+        consignateur = self.ouvrir()
+        audio = audio_transcrit(pic=4096)
+
+        self.assertTrue(consignateur.enregistrer_mesures(audio.evenement))
+        # Aucune écriture séparée pour un audio : c'est `enregistrer_audio`
+        # qui réécrit `run.json`, juste après, avec le pic à jour.
+        self.assertIsNone(self.lire("run.json")["mesures"]["pic_memoire_octets"])
+
+        self.assertTrue(consignateur.enregistrer_audio(audio))
+
+        run = self.lire("run.json")
+        self.assertEqual(run["mesures"]["pic_memoire_octets"], 4096)
+        self.assertIs(run["mesures"]["pic_memoire_partiel"], True)
+        self.assertIsNone(run["mesures"]["duree_chargement_s"])
+        self.assertEqual(run["progression"], {"audios_traites": 1, "audios_total": 2})
+
+    def test_mesures_non_finies_ou_invalides_jamais_retenues(self) -> None:
+        consignateur = self.ouvrir()
+
+        consignateur.enregistrer_mesures(
+            {"type": "chargement", "duree_s": float("nan"), "pic_memoire_octets": True}
+        )
+        run = self.lire("run.json")
+        self.assertIsNone(run["mesures"]["duree_chargement_s"])
+        self.assertIsNone(run["mesures"]["pic_memoire_octets"])
+        self.assertIsNone(run["mesures"]["pic_memoire_partiel"])
+
+        consignateur.enregistrer_mesures(
+            {"type": "chargement", "duree_s": 1.2, "pic_memoire_octets": 1.5}
+        )
+        consignateur.enregistrer_mesures(
+            {"type": "audio", "index": 0, "pic_memoire_octets": float("inf")}
+        )
+        run = self.lire("run.json")
+        self.assertEqual(run["mesures"]["duree_chargement_s"], 1.2)
+        self.assertIsNone(run["mesures"]["pic_memoire_octets"])
+        self.assertIsNone(run["mesures"]["pic_memoire_partiel"])
+
+        consignateur.enregistrer_mesures(
+            {"type": "audio", "index": 0, "pic_memoire_octets": 4096}
+        )
+        self.assertTrue(consignateur.enregistrer_audio(audio_transcrit(pic=4096)))
+        run = self.lire("run.json")
+        self.assertEqual(run["mesures"]["pic_memoire_octets"], 4096)
+        self.assertIs(run["mesures"]["pic_memoire_partiel"], True)
+
+    def test_duree_de_chargement_retenue_une_seule_fois(self) -> None:
+        consignateur = self.ouvrir()
+
+        consignateur.enregistrer_mesures({"type": "chargement", "duree_s": 1.2})
+        consignateur.enregistrer_mesures({"type": "chargement", "duree_s": 9.9})
+
+        self.assertEqual(
+            self.lire("run.json")["mesures"]["duree_chargement_s"], 1.2
+        )
+
+    def test_mesures_ne_sont_plus_ecrites_apres_cloture(self) -> None:
+        consignateur = self.ouvrir()
+        resultat = resultat_execution(
+            etat=ETAT_EXECUTION_TERMINEE,
+            audios=(audio_non_traite(index=0, nom="a.wav"), audio_non_traite()),
+        )
+        self.assertTrue(consignateur.clore(resultat))
+        chemin = Path(consignateur.dossier) / "run.json"
+        avant = chemin.read_bytes()
+
+        with self.assertRaises(ResultatImmuable):
+            consignateur.enregistrer_mesures(
+                {"type": "chargement", "duree_s": 1.2, "pic_memoire_octets": 1024}
+            )
+
+        self.assertEqual(chemin.read_bytes(), avant)
+
+    def test_echec_d_ecriture_des_mesures_du_chargement_est_retenu(self) -> None:
+        consignateur = self.ouvrir()
+        chemin = Path(consignateur.dossier) / "run.json"
+        avant = chemin.read_text(encoding="utf-8")
+
+        def remplacer(origine: Any, cible: Any) -> None:
+            raise OSError(28, "espace insuffisant sur le périphérique")
+
+        with mock.patch("transcription_bench.stockage.os.replace", remplacer):
+            self.assertFalse(
+                consignateur.enregistrer_mesures(
+                    {"type": "chargement", "duree_s": 1.2, "pic_memoire_octets": 1024}
+                )
+            )
+
+        # L'erreur est retenue, jamais avalée ; aucune mesure n'est publiée et
+        # l'état précédent reste lisible, sans troncature.
+        self.assertIsNotNone(consignateur.erreur)
+        self.assertIn("impossible", consignateur.erreur or "")
+        run = self.lire("run.json")
+        self.assertIsNone(run["mesures"]["duree_chargement_s"])
+        self.assertIsNone(run["mesures"]["pic_memoire_octets"])
+        self.assertEqual(chemin.read_text(encoding="utf-8"), avant)
+
     def test_cloture_ecrit_etat_final_et_rend_immuable(self) -> None:
         consignateur = self.ouvrir()
         consignateur.enregistrer_audio(audio_transcrit())

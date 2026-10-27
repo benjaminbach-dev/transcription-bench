@@ -37,7 +37,8 @@
 <h3>Exécutions</h3>
 <p><a href="{{ url_for('executions') }}">Consulter la page des exécutions</a> : formulaire d'une demande (modèle prêt, audios, threads demandés, réglages déclarés par la famille) ; le bouton de lancement démarre l'exécution dans le créneau global et la page d'opération en suit l'avancement.</p>
 <h3>Résultats</h3>
-<p><a href="{{ url_for('resultats') }}">Consulter la page des résultats</a> : exécutions enregistrées, des plus récentes aux plus anciennes, avec leur état, leurs marques et le détail de chaque transcription (texte, segments, métadonnées et mesures). La comparaison côte à côte n'est pas encore disponible.</p>
+<p><a href="{{ url_for('resultats') }}">Consulter la page des résultats</a> : exécutions enregistrées, des plus récentes aux plus anciennes, avec leur état, leurs marques et le détail de chaque transcription (texte, segments, métadonnées et mesures).</p>
+<p><a href="{{ url_for('comparaisons') }}">Comparer des transcriptions d'un même audio</a> : regroupement par empreinte SHA-256 du fichier source et affichage côte à côte, sans diff textuel, sans score et sans texte de référence.</p>
 <h3>Dossiers de données</h3>
 <ul>
 {% for dossier in dossiers %}

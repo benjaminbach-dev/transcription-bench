@@ -407,6 +407,13 @@ class AccueilEtPagesReellesTest(SocleWebTest):
         self.assertIn("Aucun moteur n'est installé", corps)
         self.assertIn("ne télécharge rien", corps)
         self.assertIn("démarre l'exécution dans le créneau global", corps)
+        self.assertNotIn(
+            "comparaison côte à côte n'est pas encore disponible",
+            corps,
+            "l'accueil ne doit plus annoncer la comparaison comme indisponible (tâche 7.2)",
+        )
+        self.assertIn("Comparer des transcriptions d'un même audio", corps)
+        self.assertIn("empreinte SHA-256", corps)
         self.assertNotIn('href="/"', corps, "l'accueil ne se lie pas à lui-même")
         for nom in DOSSIERS_DATA:
             self.assertIn(str(self.dossier_data / nom), corps)
@@ -420,6 +427,7 @@ class AccueilEtPagesReellesTest(SocleWebTest):
             "/audios",
             "/executions",
             "/resultats",
+            "/resultats/comparaison",
         }
         self.assertLessEqual(attendus, liens)
         for lien in sorted(liens):

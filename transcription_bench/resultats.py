@@ -67,7 +67,7 @@ from typing import IO, TYPE_CHECKING, Any
 
 import psutil
 
-from engines.protocole import TYPE_FIN
+from engines.protocole import TYPE_CHARGEMENT, TYPE_FIN
 from transcription_bench.operations import horodatage_iso
 from transcription_bench.paths import (
     RACINE_PROJET,
@@ -326,8 +326,9 @@ class ConsignateurExecution:
 
     Construit sans E/S ; `ouvrir` crée le dossier, `run.json` en état `running`
     et `run.log` vide. `run.json` est ensuite réécrit à chaque progression
-    (audio consigné, processus lancé) puis une dernière fois par `clore`, qui le
-    rend immuable : toute modification ultérieure lève `ResultatImmuable`.
+    (mesures du chargement, audio consigné, processus lancé) puis une dernière
+    fois par `clore`, qui le rend immuable : toute modification ultérieure lève
+    `ResultatImmuable`.
 
     Aucune méthode d'écriture ne lève pour une erreur d'E/S : la première erreur
     rencontrée est retenue dans `erreur` (avec son message), les écritures de
@@ -493,6 +494,40 @@ class ConsignateurExecution:
                 "lance_a": lance_a,
             }
         )
+        return self._ecrire_execution(etat=ETAT_EN_COURS)
+
+    def enregistrer_mesures(self, evenement: Mapping[str, Any]) -> bool:
+        """Retient les mesures transmises par un événement, sans attendre `clore`.
+
+        La durée de chargement n'est retenue qu'une fois, depuis l'événement de
+        chargement, et seulement si elle est finie ; le pic mémoire est le
+        dernier entier non booléen transmis, comme dans `_pic_memoire` (valeur
+        cumulative du processus moteur), et il est marqué partiel tant que
+        l'exécution n'est pas terminée. Une mesure absente, non finie ou d'un
+        type invalide ne remplace rien : aucune valeur n'est inventée.
+
+        `run.json` n'est réécrit en état `running` que pour l'événement de
+        chargement, afin qu'un arrêt brutal conserve ces mesures. Pour un
+        événement d'audio, l'écriture est celle d'`enregistrer_audio`, appelée
+        juste après, qui porte déjà les mesures à jour. `clore` recalcule les
+        mesures finales à partir de tous les événements. Renvoie `False` si
+        l'écriture du chargement échoue : l'erreur est retenue, jamais avalée,
+        et l'appelant arrête le moteur et conclut en échec.
+        """
+        self._refuser_si_clos()
+        type_evenement = evenement.get("type")
+        if type_evenement == TYPE_CHARGEMENT and self.mesures.duree_chargement_s is None:
+            duree = evenement.get("duree_s")
+            if _est_nombre(duree):
+                self.mesures.duree_chargement_s = duree
+        pic = evenement.get("pic_memoire_octets")
+        if isinstance(pic, int) and not isinstance(pic, bool):
+            self.mesures.pic_memoire_octets = pic
+            self.mesures.pic_memoire_partiel = True
+        if type_evenement != TYPE_CHARGEMENT:
+            return True
+        if self.erreur is not None or self._dossier is None:
+            return False
         return self._ecrire_execution(etat=ETAT_EN_COURS)
 
     def enregistrer_audio(self, audio: ResultatAudio) -> bool:

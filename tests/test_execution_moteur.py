@@ -38,7 +38,12 @@ from engines.protocole import (
     TYPE_FIN,
 )
 from engines.registre import creer_registre_fourni
-from engines.runner import FORMAT_AUDIO, VERSION_JOB as VERSION_JOB_RUNNER
+from engines.runner import (
+    DUREE_CHARGEMENT_SIMULEE_S,
+    FORMAT_AUDIO,
+    PIC_MEMOIRE_SIMULE_OCTETS,
+    VERSION_JOB as VERSION_JOB_RUNNER,
+)
 from tests.test_audios import ecrire_wav
 from tests.test_executions import declaration_avec_reglages, modele_prete
 from transcription_bench.audios import decoder_audio, lister_audios
@@ -1120,6 +1125,106 @@ class ResultatsExecutionTest(SocleExecutionTest):
         run = self.lire_json(self.dossiers_resultat()[0] / "run.json")
         self.assertEqual(run["etat"], "completed")
         self.assertEqual(run["progression"], {"audios_traites": 2, "audios_total": 2})
+        self.assertCacheNettoye()
+
+    def test_mesures_du_chargement_et_pic_consignes_pendant_l_execution(self) -> None:
+        """Vrai runner factice : `run.json` running porte les mesures dès réception."""
+        self.ecrire_audio("a.wav")
+        self.ecrire_audio("b.wav")
+        service, paliers = self.service_a_paliers()
+        self.service = service
+        service.reserver()
+        self.creneau.demarrer(
+            TYPE_EXECUTION,
+            lambda travailleur: service.lancer(
+                self.demande(("a.wav", "b.wav")), travailleur
+            ),
+            cible="factice",
+        )
+        try:
+            # Le runner a émis l'événement de chargement puis attend dans le
+            # premier audio : `run.json` doit déjà porter ses mesures simulées.
+            attendre_fichier(paliers / "palier-1")
+            dossiers = self.dossiers_resultat()
+            self.assertEqual(len(dossiers), 1, "dossier de résultat attendu")
+            dossier = dossiers[0]
+            attendre_condition(
+                lambda: self.lire_json(dossier / "run.json")["mesures"][
+                    "duree_chargement_s"
+                ]
+                is not None,
+                "mesures du chargement jamais consignées pendant l'exécution",
+            )
+            run = self.lire_json(dossier / "run.json")
+            self.assertEqual(run["etat"], "running")
+            self.assertEqual(
+                run["mesures"]["duree_chargement_s"], DUREE_CHARGEMENT_SIMULEE_S
+            )
+            self.assertEqual(
+                run["mesures"]["pic_memoire_octets"], PIC_MEMOIRE_SIMULE_OCTETS
+            )
+            self.assertIs(run["mesures"]["pic_memoire_partiel"], True)
+            self.assertIsNone(run["mesures"]["duree_operation_s"])
+
+            self.liberer_paliers(paliers, 1)
+            attendre_fichier(paliers / "palier-2")
+            attendre_condition(
+                lambda: self.lire_json(dossier / "run.json")["progression"][
+                    "audios_traites"
+                ]
+                == 1,
+                "résultat du premier audio jamais consigné pendant l'exécution",
+            )
+            run = self.lire_json(dossier / "run.json")
+            self.assertEqual(run["etat"], "running")
+            self.assertEqual(
+                run["mesures"]["duree_chargement_s"], DUREE_CHARGEMENT_SIMULEE_S
+            )
+            self.assertEqual(
+                run["mesures"]["pic_memoire_octets"], PIC_MEMOIRE_SIMULE_OCTETS
+            )
+            self.assertIs(run["mesures"]["pic_memoire_partiel"], True)
+        finally:
+            self.liberer_paliers(paliers, 1, 2)
+        self.creneau.thread_travailleur.join(DELAI)
+
+        run = self.lire_json(self.dossiers_resultat()[0] / "run.json")
+        self.assertEqual(run["etat"], "completed")
+        self.assertEqual(
+            run["mesures"]["duree_chargement_s"], DUREE_CHARGEMENT_SIMULEE_S
+        )
+        self.assertFalse(run["mesures"]["pic_memoire_partiel"])
+        self.assertCacheNettoye()
+
+    def test_echec_d_ecriture_des_mesures_du_chargement_arrete_le_moteur(
+        self,
+    ) -> None:
+        self.ecrire_audio("a.wav")
+        vrai = module_execution_moteur.ConsignateurExecution.enregistrer_mesures
+
+        def enregistrer_mesures(consignateur, evenement):
+            with mock.patch(
+                "transcription_bench.stockage.os.replace",
+                side_effect=OSError(28, "espace insuffisant sur le périphérique"),
+            ):
+                return vrai(consignateur, evenement)
+
+        with mock.patch.object(
+            module_execution_moteur.ConsignateurExecution,
+            "enregistrer_mesures",
+            enregistrer_mesures,
+        ):
+            resultat = self.executer(self.demande(("a.wav",)))
+
+        # Une écriture de mesures impossible n'est pas avalée : le moteur est
+        # arrêté et l'exécution conclut en échec, comme pour un résultat d'audio.
+        self.assertEqual(resultat.etat, ETAT_ECHOUEE)
+        self.assertEqual(self.creneau.instantane().etat, ETAT_CRENEAU_ECHOUEE)
+        dossier = self.dossier_resultat(resultat)
+        run = self.lire_json(dossier / "run.json")
+        self.assertEqual(run["etat"], "failed")
+        self.assertIn("impossible", run["erreur"] or "")
+        self.assertEqual([plan["statut"] for plan in run["audios"]], ["non_traite"])
         self.assertCacheNettoye()
 
     def test_audio_en_erreur_n_empeche_pas_les_suivants(self) -> None:

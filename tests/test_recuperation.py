@@ -557,6 +557,32 @@ class RecuperationTest(unittest.TestCase):
             avant_transcription,
         )
 
+    def test_abandon_conserve_les_mesures_consignees_pendant_l_execution(self) -> None:
+        """Vrai chemin : chargement puis audio écrits, puis abandon au redémarrage."""
+        consignateur = self.ouvrir_consignation(("a.wav", "b.wav"))
+        self.assertTrue(
+            consignateur.enregistrer_mesures(
+                {"type": "chargement", "duree_s": 1.2, "pic_memoire_octets": 1024}
+            )
+        )
+        audio = audio_transcrit(0, "a.wav")
+        self.assertTrue(consignateur.enregistrer_mesures(audio.evenement))
+        self.assertTrue(consignateur.enregistrer_audio(audio))
+        run_json = self.run_json(consignateur)
+        avant = self.lire(run_json)["mesures"]
+        self.assertEqual(avant["duree_chargement_s"], 1.2)
+        self.assertEqual(avant["pic_memoire_octets"], 4096)
+        self.assertIs(avant["pic_memoire_partiel"], True)
+
+        self.recuperer()
+
+        mesures = self.lire(run_json)["mesures"]
+        self.assertIsNone(mesures["duree_operation_s"])
+        self.assertIsNone(mesures["duree_processus_s"])
+        self.assertEqual(mesures["duree_chargement_s"], 1.2)
+        self.assertEqual(mesures["pic_memoire_octets"], 4096)
+        self.assertIs(mesures["pic_memoire_partiel"], True)
+
     def test_resultat_present_mais_non_encore_reflete_fait_foi(self) -> None:
         consignateur = self.ouvrir_consignation(("a.wav", "b.wav"))
         consignateur.enregistrer_audio(audio_transcrit(0, "a.wav"))
