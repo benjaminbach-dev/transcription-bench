@@ -65,7 +65,7 @@ Ce jalon reste préalable aux adaptateurs réels, à la qualification effective 
 
 ## 9. Documentation et intégration
 
-- [ ] 9.1 Rédiger le README de lancement (installation de uv Windows/Linux, commande unique, dossiers de données, jeton Hugging Face, fonctionnement hors ligne, règle « aucun modèle sur le serveur de développement »), expliquer l'organisation routes/templates/services et le choix Flask/Jinja2/Waitress ; documenter Ctrl+C, la différence arrêt normal/brutal, l'absence de délai global d'arrêt garanti pendant un téléchargement (Ctrl+C suivants ignorés, arrêt forcé considéré brutal) et l'interdiction de `flask run`, debug et reloader ; vérifier que seule la commande documentée démarre le serveur local et permet de l'arrêter proprement
+- [x] 9.1 Rédiger le README de lancement (installation de uv Windows/Linux, commande unique, dossiers de données, jeton Hugging Face, fonctionnement hors ligne, règle « aucun modèle sur le serveur de développement »), expliquer l'organisation routes/templates/services et le choix Flask/Jinja2/Waitress ; documenter Ctrl+C, la différence arrêt normal/brutal, l'absence de délai global d'arrêt garanti pendant un téléchargement (Ctrl+C suivants ignorés, arrêt forcé considéré brutal) et l'interdiction de `flask run`, debug et reloader ; vérifier que seule la commande documentée démarre le serveur local et permet de l'arrêter proprement
 - [ ] 9.2 Vérifier de bout en bout sur le serveur de développement avec le moteur factice : lancement, dépôt d'un audio, exécution par lot, arrêt, arrêt du serveur, clôture d'une exécution abandonnée, consultation et comparaison ; puis `openspec validate add-benchmark-prototype --strict`
 
 ## Workflow follow-up

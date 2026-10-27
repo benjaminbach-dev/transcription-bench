@@ -318,3 +318,12 @@ Provenance : `transcription-bench`, `main`, base publiée `50aebcc` ; revue fina
 - [decision] Comparaison des réglages demandés/defaults et effectifs sur les valeurs JSON brutes, séparées des valeurs formatées. Liste et chaîne JSON, null et NaN/infini, types JSON distincts ne sont pas confondus ; l'affichage des non-finis peut être identique malgré une différence brute signalée. Aucun diff textuel, WER, référence ni score de qualité.
 - [limit] Historique relu à chaque affichage, sans index ni pagination ; empreinte absente/invalide jamais groupée. Aucune validation PC/Windows, moteur/poids réel ni dépendance nouvelle.
 - [continuity] Suite : 9.1 puis 9.2 selon méthode autorisée. Advisor 7 initial expiré ; contexte reconstitué dans `7eeb80de-cede-4c3`, feu vert 7.2. Nouveau lot 9 : nouveau contexte advisor. Tâches PC, 3.2 et 6.6 toujours ouvertes.
+
+
+## Lot 9 — tâche 9.1, 2026-10-27
+
+Provenance : `transcription-bench`, `main`, base publiée `175d84b` ; README relu favorablement après corrections, publication préparée. **24/39 tâches cochées**, suite inchangée **621 tests passants**.
+
+- [validation] README de lancement et utilisation, installation officielle uv Linux/PowerShell, versions verrouillées, données, factice, architecture, hors ligne et limites documentés. Vérification worker en copie temporaire avec ressources déjà en cache : commande uv --locked --offline, accueil200, SIGINT et SIGTERM code0, instance concurrente refusée, ports invalides refusés, 621 tests. Copie et processus nettoyés, data du dépôt intact. Aucune nouvelle dépendance, moteur ou poids ; contrôle serveur uniquement, pas qualification PC.
+- [decision] Documentation distingue synchronisation de .venv et immuabilité de uv.lock, interpréteur 3.12 existant ou géré par uv sans modification système, mesures serveur réelles et mesures moteur factice simulées, variables hors ligne et options de chargement. Arrêt décrit sans promesse de délai global ni de suivi des descendants échappés ; code1 si nettoyage incomplet, code2 si récupération impossible.
+- [continuity] Prochaine tâche 9.2 autorisée : parcours intégré factice, corriger aussi le texte périmé de l'accueil annonçant encore la comparaison indisponible. Advisor lot9 à reprendre `46d2959b-894d-452`. Les validations PC et adaptateurs réels restent dus ; aucune archive du change à ce stade.
