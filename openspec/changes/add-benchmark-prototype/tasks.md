@@ -54,7 +54,7 @@ Ce jalon reste préalable aux adaptateurs réels, à la qualification effective 
 ## 7. Résultats et comparaison
 
 - [x] 7.1 Implémenter la liste des exécutions et le détail d'une transcription (texte, segments, métadonnées, durée totale de l'opération, durée du processus, RTF avec repère 2 non bloquant, marque factice, absence de RTF sur durée nulle) ; vérifier par test sur des résultats d'exemple
-- [ ] 7.2 Implémenter la comparaison côte à côte par empreinte audio avec mise en évidence des réglages différents, des états (terminée, interrompue, abandonnée, échec) et des résultats partiels ; vérifier par test que deux fichiers de même nom et d'empreintes différentes ne sont pas regroupés
+- [x] 7.2 Implémenter la comparaison côte à côte par empreinte audio avec mise en évidence des réglages différents, des états (terminée, interrompue, abandonnée, échec) et des résultats partiels ; vérifier par test que deux fichiers de même nom et d'empreintes différentes ne sont pas regroupés
 
 ## 8. Adaptateurs réels (validation sur PC uniquement)
 

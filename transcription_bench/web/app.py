@@ -28,8 +28,12 @@ page `/operation` affiche l'instantané du créneau et permet d'arrêter
 l'exécution active. Aucune route ne transmet d'objet Flask au travail de fond.
 La page des résultats (tâche 7.1) liste les exécutions enregistrées, des plus
 récentes aux plus anciennes, et ouvre le détail d'une transcription : texte,
-segments, métadonnées, mesures et marques, en lecture seule. La comparaison
-côte à côte (tâche 7.2) n'est pas encore proposée, ce que la page indique.
+segments, métadonnées, mesures et marques, en lecture seule. La page de
+comparaison (tâche 7.2) regroupe les transcriptions par empreinte SHA-256 du
+fichier audio source et affiche côte à côte celles d'un même fichier, avec les
+réglages effectifs qui diffèrent, les états, les marques et les mesures
+principales. Lecture seule également : aucune route de résultats ne lance
+d'inférence ni ne modifie un fichier.
 """
 
 from __future__ import annotations
@@ -51,6 +55,7 @@ from transcription_bench.consultation_resultats import (
     LectureResultatsImpossible,
     ResultatIntrouvable,
     ResultatNonInterpretable,
+    analyser_selection,
 )
 from transcription_bench.execution_moteur import (
     ARRET_AUCUN,
@@ -96,6 +101,7 @@ from transcription_bench.paths import (
 
 LIMITE_CORPS_APPLICATION = 64 * 1024
 NOM_CHAMP_JETON = "jeton_csrf"
+CHAMP_SELECTION_COMPARAISON = "transcription"
 TYPE_FORMULAIRE = "application/x-www-form-urlencoded"
 HOTES_AUTORISES = ("127.0.0.1", "localhost")
 
@@ -177,6 +183,13 @@ MESSAGE_RESULTAT_NON_INTERPRETABLE = (
     "Résultat non interprétable : son fichier de suivi est illisible, d'un schéma "
     "inconnu ou incohérent. Le fichier n'a pas été modifié et aucune donnée n'est "
     "affichée."
+)
+
+MESSAGE_COMPARAISON_REFUSEE = (
+    "Comparaison refusée : sélectionnez au moins deux transcriptions d'un même "
+    "fichier audio, reconnues par la même empreinte SHA-256. Une sélection ne peut "
+    "ni mélanger deux fichiers différents, ni désigner une transcription absente, "
+    "ni porter un identifiant invalide. Aucun fichier n'a été modifié."
 )
 
 
@@ -623,6 +636,42 @@ def _enregistrer_routes(
             return _page_erreur(422, MESSAGE_RESULTAT_NON_INTERPRETABLE)
         return render_template(
             "resultat.html", detail=detail, repere_rtf=REPERE_RTF
+        )
+
+    @application.get("/resultats/comparaison")
+    def comparaisons() -> str:
+        """Groupes de transcriptions par empreinte SHA-256 de l'audio source."""
+        try:
+            groupes = service_resultats.groupes_par_empreinte()
+        except LectureResultatsImpossible:
+            groupes = ()
+            erreur_dossier = MESSAGE_RESULTATS_INACCESSIBLES
+        else:
+            erreur_dossier = None
+        return render_template(
+            "comparaisons.html",
+            groupes=groupes,
+            erreur_dossier=erreur_dossier,
+            champ_selection=CHAMP_SELECTION_COMPARAISON,
+        )
+
+    @application.get("/resultats/comparaison/<empreinte>")
+    def comparaison(empreinte: str):
+        """Comparaison côte à côte, limitée à une seule empreinte audio."""
+        try:
+            selections = tuple(
+                analyser_selection(valeur)
+                for valeur in request.args.getlist(CHAMP_SELECTION_COMPARAISON)
+            )
+            vue = service_resultats.comparer(empreinte, selections)
+        except ValeurRefusee:
+            return _page_erreur(400, MESSAGE_COMPARAISON_REFUSEE)
+        except ResultatIntrouvable:
+            abort(404)
+        except ResultatNonInterpretable:
+            return _page_erreur(422, MESSAGE_RESULTAT_NON_INTERPRETABLE)
+        return render_template(
+            "comparaison.html", comparaison=vue, repere_rtf=REPERE_RTF
         )
 
     @application.get("/operation")

@@ -34,6 +34,7 @@
 <p>Aucune exécution enregistrée pour l'instant. Une exécution apparaît ici dès que la page des exécutions en a lancé une ; les résultats déjà produits restent consultables même si le modèle local est supprimé ensuite.</p>
 {% endif %}
 <h3>Comparaison côte à côte</h3>
-<p>La comparaison de transcriptions d'un même audio, groupées par empreinte du fichier, n'est pas encore disponible : cette page se limite à la liste et au détail d'une transcription.</p>
+<p>La comparaison de transcriptions regroupe les résultats par empreinte SHA-256 du fichier audio source, et non par leur nom : deux fichiers de même nom mais d'empreintes différentes ne sont jamais comparés, et un même contenu déposé sous deux noms reste dans un seul groupe.</p>
+<p><a href="{{ url_for('comparaisons') }}">Comparer des transcriptions d'un même audio</a></p>
 <p><a href="{{ url_for('accueil') }}">Retour à l'accueil</a></p>
 {% endblock %}

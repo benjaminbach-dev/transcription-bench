@@ -20,6 +20,11 @@
 {%- else -%}{{ "%.3f"|format(valeur) }}
 {%- endif -%}
 {% endmacro %}
+{% macro nombre(valeur) -%}
+{%- if valeur is none -%}indisponible
+{%- else -%}{{ "%.3f"|format(valeur) }}
+{%- endif -%}
+{% endmacro %}
 {% macro octets(valeur) -%}
 {%- if valeur is none -%}indisponible
 {%- else -%}{{ valeur }} octets

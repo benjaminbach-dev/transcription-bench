@@ -1,8 +1,8 @@
 """Consultation des résultats enregistrés : liste et détail d'une transcription.
 
-Tâche 7.1, format de stockage de D11. Ce module est **strictement en lecture** :
-il ne crée, ne réécrit ni ne supprime aucun fichier, et n'appelle aucun moteur.
-La comparaison côte à côte relève de la tâche 7.2 et n'est pas ici.
+Tâches 7.1 et 7.2, format de stockage de D11. Ce module est **strictement en
+lecture** : il ne crée, ne réécrit ni ne supprime aucun fichier, et n'appelle
+aucun moteur.
 
 **Source unique** : les exécutions sont relues dans `data/results/*/run.json` et
 les transcriptions dans chaque `<n>-<audio>/result.json`. Les lectures passent
@@ -39,13 +39,27 @@ transcription plus lente.
 **Marques** : les marques `factice`, `synthetique` et `mesures_simulees` sont
 reprises telles quelles de `run.json` et de chaque `result.json`, et affichées
 dans toutes les vues ; aucune n'est déduite.
+
+**Comparaison (7.2)** : les transcriptions sont regroupées par l'empreinte
+SHA-256 du fichier audio source, relue dans chaque `result.json`, et jamais par
+le nom du fichier. Deux fichiers de même nom et d'empreintes différentes
+forment donc deux groupes distincts, et une transcription dont l'empreinte est
+absente ou invalide n'est jamais regroupée. Une comparaison ne réunit que des
+transcriptions d'une même empreinte : toute sélection qui la mélangerait est
+refusée, comme tout identifiant ou ordre hostile. Les réglages demandés et les
+réglages effectifs de chaque audio sont comparés sur leur valeur JSON brute —
+les valeurs formatées ne servent qu'à l'affichage : listes et objets compris, une
+clé absente reste distincte d'une valeur explicite nulle, et deux valeurs non
+finies restent distinctes entre elles. Aucun diff de texte, aucun WER ni aucune
+référence ne sont calculés.
 """
 
 from __future__ import annotations
 
 import json
 import math
-from collections.abc import Mapping, Sequence
+import re
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -75,6 +89,22 @@ from transcription_bench.stockage import JsonInvalide, lire_json
 
 #: Repère d'objectif du RTF, affiché sans jamais bloquer ni exclure.
 REPERE_RTF = 2
+
+#: Empreinte SHA-256 d'un fichier audio source, en minuscules hexadécimales.
+MOTIF_EMPREINTE = re.compile(r"[0-9a-f]{64}", re.ASCII)
+
+#: Séparateur d'une sélection de comparaison : `identifiant:ordre`.
+SEPARATEUR_SELECTION = ":"
+_MOTIF_ORDRE = re.compile(r"[0-9]{1,6}", re.ASCII)
+
+#: Natures de cellule, qui décident du formatage dans le template.
+NATURE_TEXTE = "texte"
+NATURE_DUREE = "duree"
+NATURE_OCTETS = "octets"
+#: Texte transcrit, affiché tel quel dans un bloc préformaté, sans diff.
+NATURE_TRANSCRIPTION = "transcription"
+#: RTF, affiché avec le repère d'objectif non bloquant.
+NATURE_RTF = "rtf"
 
 LIBELLES_ETATS_EXECUTION: dict[str, str] = {
     ETAT_EN_COURS: "en cours",
@@ -234,7 +264,19 @@ class SegmentVue:
 
 @dataclass(frozen=True)
 class TranscriptionVue:
-    """Transcription relue dans le `result.json` d'un audio."""
+    """Transcription relue dans le `result.json` d'un audio.
+
+    `empreinte_sha256` est l'empreinte du fichier audio source, normalisée en
+    minuscules ; elle vaut `None` quand la valeur consignée est absente ou n'a
+    pas la forme d'un SHA-256. Les durées indicatives et décodées sont typées :
+    une valeur absente ou non finie reste `None`, jamais zéro.
+
+    Les réglages existent sous deux formes : `reglages` et `reglages_effectifs`
+    sont les paires formatées pour l'affichage (listes et objets en JSON
+    compact), tandis que `reglages_bruts` et `reglages_effectifs_bruts` gardent
+    la valeur JSON telle qu'elle a été lue. La comparaison utilise les valeurs
+    brutes : elle ne dépend donc jamais du formatage d'affichage.
+    """
 
     statut: str
     ecrit_le: str | None
@@ -242,11 +284,20 @@ class TranscriptionVue:
     segments: tuple[SegmentVue, ...]
     marques: tuple[str, ...]
     audio: tuple[Paire, ...]
+    empreinte_sha256: str | None
+    duree_indicative_s: float | int | None
+    duree_decodee_s: float | int | None
     mesures: MesuresAudioVue
+    reglages: tuple[Paire, ...]
+    reglages_bruts: Mapping[str, Any]
     reglages_effectifs: tuple[Paire, ...]
+    reglages_effectifs_bruts: Mapping[str, Any]
     threads: tuple[Paire, ...]
     langue_imposee: str | None
     fenetre: tuple[Paire, ...]
+    modele: tuple[Paire, ...]
+    moteur: tuple[Paire, ...]
+    famille: str | None
     erreur: str | None
 
 
@@ -289,6 +340,100 @@ class DetailExecutionVue:
     partiel: bool
 
 
+@dataclass(frozen=True)
+class EntreeEmpreinte:
+    """Transcription rattachée à l'empreinte SHA-256 de son audio source.
+
+    `partiel` signale une exécution non terminée ; `marques` réunit celles de
+    l'exécution et celles du résultat, sans doublon et sans en déduire aucune.
+    """
+
+    execution: str
+    ordre: int
+    nom: str
+    empreinte: str
+    statut: str
+    libelle_statut: str
+    libelle_etat: str
+    partiel: bool
+    marques: tuple[str, ...]
+    modele: str | None
+    moteur: str | None
+
+
+@dataclass(frozen=True)
+class GroupeEmpreinte:
+    """Transcriptions d'un même fichier audio, quelle que soit l'exécution.
+
+    `noms` réunit les noms d'audios consignés par ces transcriptions : un même
+    contenu déposé sous plusieurs noms apparaît donc dans un seul groupe.
+    """
+
+    empreinte: str
+    noms: tuple[str, ...]
+    entrees: tuple[EntreeEmpreinte, ...]
+
+
+@dataclass(frozen=True)
+class CelluleComparaison:
+    """Valeur d'une cellule de comparaison.
+
+    `presente` vaut `False` quand la clé est absente du fichier : une clé
+    absente n'est pas une valeur explicite nulle, et cette distinction est
+    conservée jusqu'à l'affichage. `valeur` est la valeur affichable (une liste
+    ou un objet y sont déjà formatés en JSON compact), tandis que `brut` est la
+    valeur JSON d'origine : c'est elle, et elle seule, qui décide si deux
+    cellules diffèrent. Une liste `[0, 0.2]` ne peut donc pas être confondue
+    avec la chaîne `"[0,0.2]"`, ni un objet avec sa représentation textuelle.
+    """
+
+    presente: bool
+    valeur: Any
+    brut: Any
+
+
+@dataclass(frozen=True)
+class LigneComparaison:
+    """Ligne de la table de comparaison, une cellule par transcription.
+
+    `nature` vaut `texte`, `transcription`, `duree`, `octets` ou `rtf` :
+    le formatage reste fait par le template, qui ne reçoit aucune chaîne déjà
+    formatée pour une mesure. Pour `transcription`, la cellule porte le texte
+    transcrit, affiché dans un bloc préformaté et jamais comparé. `differents`
+    vaut `True` dès qu'une cellule diffère des autres sur sa valeur brute.
+    """
+
+    libelle: str
+    nature: str
+    cellules: tuple[CelluleComparaison, ...]
+    differents: bool
+
+
+@dataclass(frozen=True)
+class ComparaisonVue:
+    """Comparaison côte à côte de transcriptions d'un même fichier audio.
+
+    `factice` et `partiel` signalent que la comparaison porte au moins une
+    transcription factice ou issue d'une exécution non terminée.
+    """
+
+    empreinte: str
+    noms: tuple[str, ...]
+    colonnes: tuple[EntreeEmpreinte, ...]
+    lignes: tuple[LigneComparaison, ...]
+    factice: bool
+    partiel: bool
+
+
+@dataclass(frozen=True)
+class _Colonne:
+    """Colonne de comparaison : entrée, transcription relue et mesures du lot."""
+
+    entree: EntreeEmpreinte
+    transcription: TranscriptionVue
+    mesures: MesuresVue
+
+
 class ConsultationResultats:
     """Lectures des résultats d'un dossier de données, sans aucune écriture.
 
@@ -316,18 +461,7 @@ class ConsultationResultats:
         sans empêcher l'affichage des autres. Lève `LectureResultatsImpossible`
         si le dossier des résultats existe mais ne peut pas être parcouru.
         """
-        try:
-            entrees = sorted(
-                self.dossier_resultats.iterdir(),
-                key=lambda entree: entree.name,
-                reverse=True,
-            )
-        except FileNotFoundError:
-            return ()
-        except OSError as erreur:
-            raise LectureResultatsImpossible(
-                f"dossier des résultats illisible : {_message(erreur)}"
-            ) from None
+        entrees = self._entrees_resultats()
         executions: list[ExecutionListee] = []
         for entree in entrees:
             if not MOTIF_IDENTIFIANT.fullmatch(entree.name):
@@ -383,20 +517,158 @@ class ConsultationResultats:
             processus=_paires(
                 _mapping(contenu.get("processus_moteur")), CHAMPS_PROCESSUS
             ),
-            mesures=MesuresVue(
-                duree_operation_s=_nombre(mesure.get("duree_operation_s")),
-                duree_processus_s=_nombre(mesure.get("duree_processus_s")),
-                duree_chargement_s=_nombre(mesure.get("duree_chargement_s")),
-                pic_memoire_octets=_entier(mesure.get("pic_memoire_octets")),
-                pic_memoire_partiel=_booleen(mesure.get("pic_memoire_partiel")),
-            ),
+            mesures=_mesures_execution(mesure),
             audios=tuple(
                 _audio(dossier, plan, partiel=partiel) for plan in contenu["audios"]
             ),
             partiel=partiel,
         )
 
+    def groupes_par_empreinte(self) -> tuple[GroupeEmpreinte, ...]:
+        """Transcriptions regroupées par empreinte SHA-256 de l'audio source.
+
+        Une transcription n'est groupée que si son `result.json` est
+        interprétable et consigne une empreinte valide : un résultat absent, une
+        empreinte absente ou d'une autre forme n'apparaît dans aucun groupe et
+        n'est donc jamais comparable. Deux fichiers de même nom et d'empreintes
+        différentes forment deux groupes distincts. L'ordre suit les exécutions,
+        des plus récentes aux plus anciennes ; une exécution refusée est ignorée.
+        Lève `LectureResultatsImpossible` si le dossier des résultats existe mais
+        ne peut pas être parcouru.
+        """
+        groupes: dict[str, list[EntreeEmpreinte]] = {}
+        for dossier, contenu in self._executions_interpretables():
+            execution = _resume(contenu)
+            for plan in contenu["audios"]:
+                transcription, _motif = _lire_transcription(dossier, plan)
+                if transcription is None:
+                    continue
+                empreinte = transcription.empreinte_sha256
+                if empreinte is None:
+                    continue
+                groupes.setdefault(empreinte, []).append(
+                    _entree(execution, plan, transcription, empreinte)
+                )
+        return tuple(
+            GroupeEmpreinte(
+                empreinte=empreinte,
+                noms=tuple(sorted({entree.nom for entree in entrees})),
+                entrees=tuple(entrees),
+            )
+            for empreinte, entrees in groupes.items()
+        )
+
+    def comparer(
+        self, empreinte: str, selections: Sequence[tuple[str, int]]
+    ) -> ComparaisonVue:
+        """Comparaison côte à côte de transcriptions d'une même empreinte.
+
+        `selections` est une suite de couples `(identifiant d'exécution, ordre
+        d'audio)`, tels que décodés par `analyser_selection` ; un doublon est
+        retiré. Lève `ValeurRefusee` si l'empreinte demandée n'est pas un
+        SHA-256 valide, si moins de deux transcriptions distinctes sont
+        sélectionnées, si une transcription sélectionnée n'a pas d'empreinte
+        valide ou si son empreinte diffère de celle demandée : aucun mélange de
+        fichiers audio n'est comparé. Lève `ResultatIntrouvable` si une
+        sélection ne désigne pas une transcription enregistrée, et
+        `ResultatNonInterpretable` si un fichier de suivi concerné est refusé.
+        Aucun fichier n'est modifié.
+        """
+        empreinte_valide = _empreinte(empreinte)
+        if empreinte_valide is None:
+            raise ValeurRefusee("empreinte SHA-256 invalide : comparaison refusée")
+        choix: list[tuple[str, int]] = []
+        for selection in selections:
+            if selection not in choix:
+                choix.append(selection)
+        if len(choix) < 2:
+            raise ValeurRefusee(
+                "au moins deux transcriptions différentes sont nécessaires"
+            )
+        colonnes = tuple(
+            self._colonne_comparaison(identifiant, ordre, empreinte_valide)
+            for identifiant, ordre in choix
+        )
+        entrees = tuple(colonne.entree for colonne in colonnes)
+        return ComparaisonVue(
+            empreinte=empreinte_valide,
+            noms=tuple(sorted({entree.nom for entree in entrees})),
+            colonnes=entrees,
+            lignes=_lignes_comparaison(colonnes),
+            factice=any("FACTICE" in entree.marques for entree in entrees),
+            partiel=any(entree.partiel for entree in entrees),
+        )
+
     # -- lecture -------------------------------------------------------------
+
+    def _executions_interpretables(self) -> Iterator[tuple[Path, Mapping[str, Any]]]:
+        """Exécutions dont `run.json` est interprétable, les autres ignorées."""
+        for entree in self._entrees_resultats():
+            if not MOTIF_IDENTIFIANT.fullmatch(entree.name):
+                continue
+            try:
+                lecture = self._lire(entree.name)
+            except (ResultatIntrouvable, ResultatNonInterpretable, ValeurRefusee):
+                continue
+            if lecture is not None:
+                yield lecture
+
+    def _colonne_comparaison(
+        self, identifiant: str, ordre: int, empreinte: str
+    ) -> _Colonne:
+        """Colonne d'une sélection, refusée si elle mélange les empreintes."""
+        lecture = self._lire(identifiant)
+        if lecture is None:
+            raise ResultatIntrouvable(f"exécution inconnue : {identifiant!r}")
+        dossier, contenu = lecture
+        plan = next(
+            (candidat for candidat in contenu["audios"] if candidat["ordre"] == ordre),
+            None,
+        )
+        if plan is None:
+            raise ResultatIntrouvable(
+                f"audio {ordre} inconnu dans l'exécution {identifiant!r}"
+            )
+        transcription, _motif = _lire_transcription(dossier, plan)
+        if transcription is None:
+            raise ResultatIntrouvable(
+                f"aucun résultat enregistré pour l'audio {ordre} de {identifiant!r}"
+            )
+        if transcription.empreinte_sha256 is None:
+            raise ValeurRefusee(
+                "empreinte SHA-256 absente ou invalide : comparaison refusée"
+            )
+        if transcription.empreinte_sha256 != empreinte:
+            raise ValeurRefusee(
+                "empreintes différentes : la comparaison ne mélange pas deux "
+                "fichiers audio"
+            )
+        return _Colonne(
+            entree=_entree(_resume(contenu), plan, transcription, empreinte),
+            transcription=transcription,
+            mesures=_mesures_execution(_mapping(contenu.get("mesures"))),
+        )
+
+    def _entrees_resultats(self) -> tuple[Path, ...]:
+        """Entrées du dossier des résultats, des plus récentes aux plus anciennes.
+
+        Lève `LectureResultatsImpossible` si le dossier existe mais ne peut pas
+        être parcouru ; renvoie un tuple vide s'il n'existe pas encore.
+        """
+        try:
+            return tuple(
+                sorted(
+                    self.dossier_resultats.iterdir(),
+                    key=lambda entree: entree.name,
+                    reverse=True,
+                )
+            )
+        except FileNotFoundError:
+            return ()
+        except OSError as erreur:
+            raise LectureResultatsImpossible(
+                f"dossier des résultats illisible : {_message(erreur)}"
+            ) from None
 
     def _lire(self, identifiant: str) -> tuple[Path, Mapping[str, Any]] | None:
         """Lit et valide `run.json` ; `None` s'il n'existe pas.
@@ -432,6 +704,326 @@ class ConsultationResultats:
             return None
         _valider_execution(contenu, identifiant)
         return dossier, contenu
+
+
+# -- comparaison : sélection, entrées et lignes -------------------------------
+
+
+def analyser_selection(texte: str) -> tuple[str, int]:
+    """Décode une sélection de comparaison `identifiant:ordre`.
+
+    Refuse par `ValeurRefusee` toute autre forme : chemin absolu, séparateur
+    Windows, remontée `..`, identifiant hors du format produit par le programme
+    ou ordre non numérique. La sélection n'est jamais interprétée avant ce
+    contrôle, et la résolution de chemin reste faite par `resoudre_resultat`.
+    """
+    if not isinstance(texte, str):
+        raise ValeurRefusee("sélection de comparaison attendue sous forme de texte")
+    identifiant, separateur, ordre = texte.partition(SEPARATEUR_SELECTION)
+    if not separateur or SEPARATEUR_SELECTION in ordre:
+        raise ValeurRefusee(
+            "sélection refusée : forme 'identifiant d'exécution:ordre d'audio' attendue"
+        )
+    if not MOTIF_IDENTIFIANT.fullmatch(identifiant):
+        raise ValeurRefusee("sélection refusée : identifiant d'exécution invalide")
+    if not _MOTIF_ORDRE.fullmatch(ordre) or int(ordre) < 1:
+        raise ValeurRefusee("sélection refusée : ordre d'audio invalide")
+    return identifiant, int(ordre)
+
+
+def _entree(
+    execution: ExecutionListee,
+    plan: Mapping[str, Any],
+    transcription: TranscriptionVue,
+    empreinte: str,
+) -> EntreeEmpreinte:
+    """Entrée de comparaison d'une transcription déjà relue."""
+    return EntreeEmpreinte(
+        execution=execution.identifiant,
+        ordre=plan["ordre"],
+        nom=plan["nom"],
+        empreinte=empreinte,
+        statut=transcription.statut,
+        libelle_statut=LIBELLES_STATUTS_AUDIO[transcription.statut],
+        libelle_etat=execution.libelle_etat,
+        partiel=execution.partiel,
+        # Marques de l'exécution puis du résultat, sans doublon et sans déduction.
+        marques=tuple(dict.fromkeys(execution.marques + transcription.marques)),
+        modele=execution.modele,
+        moteur=execution.moteur,
+    )
+
+
+#: État et marques, toujours affichés en premières lignes de la table.
+_CHAMPS_ETAT: tuple[tuple[str, Callable[[_Colonne], Any]], ...] = (
+    ("Statut du résultat", lambda colonne: colonne.entree.libelle_statut),
+    ("État de l'exécution", lambda colonne: colonne.entree.libelle_etat),
+    ("Résultats partiels", lambda colonne: colonne.entree.partiel),
+    ("Marques", lambda colonne: _texte_marques(colonne.entree.marques)),
+)
+
+#: Configuration comparée ligne par ligne, avec la valeur lue par colonne.
+#: `None` reste « indisponible » ; une clé absente est traitée à part.
+_CHAMPS_CONFIGURATION: tuple[tuple[str, Callable[[_Colonne], Any]], ...] = (
+    (
+        "Modèle demandé",
+        lambda colonne: _champ(colonne.transcription.modele, "Identifiant demandé"),
+    ),
+    (
+        "Modèle canonique",
+        lambda colonne: _champ(colonne.transcription.modele, "Identifiant canonique"),
+    ),
+    (
+        "Révision figée",
+        lambda colonne: _champ(colonne.transcription.modele, "Révision figée"),
+    ),
+    (
+        "Variante GGUF",
+        lambda colonne: _champ(colonne.transcription.modele, "Variante GGUF"),
+    ),
+    ("Famille", lambda colonne: colonne.transcription.famille),
+    (
+        "Moteur",
+        lambda colonne: _champ(
+            colonne.transcription.moteur, "Identifiant du moteur"
+        ),
+    ),
+    (
+        "Nom du moteur",
+        lambda colonne: _champ(colonne.transcription.moteur, "Nom du moteur"),
+    ),
+    (
+        "Threads demandés",
+        lambda colonne: _champ(colonne.transcription.threads, "Threads demandés"),
+    ),
+    (
+        "Threads appliqués",
+        lambda colonne: _champ(colonne.transcription.threads, "Threads appliqués"),
+    ),
+    ("Langue imposée", lambda colonne: colonne.transcription.langue_imposee),
+    (
+        "Durée de fenêtre (s)",
+        lambda colonne: _champ(
+            colonne.transcription.fenetre, "Durée de fenêtre (s)"
+        ),
+    ),
+    (
+        "Découpage",
+        lambda colonne: _champ(
+            colonne.transcription.fenetre, "Méthode de découpage"
+        ),
+    ),
+    (
+        "Nombre de fenêtres",
+        lambda colonne: _champ(colonne.transcription.fenetre, "Nombre de fenêtres"),
+    ),
+)
+
+#: Mesures principales comparées, avec leur nature de formatage.
+_MESURES_COMPAREES: tuple[tuple[str, str, Callable[[_Colonne], Any]], ...] = (
+    (
+        "Durée totale de l'opération",
+        NATURE_DUREE,
+        lambda colonne: colonne.mesures.duree_operation_s,
+    ),
+    (
+        "Durée du processus moteur",
+        NATURE_DUREE,
+        lambda colonne: colonne.mesures.duree_processus_s,
+    ),
+    (
+        "Durée de chargement du modèle",
+        NATURE_DUREE,
+        lambda colonne: colonne.mesures.duree_chargement_s,
+    ),
+    (
+        "Pic de mémoire de l'exécution",
+        NATURE_OCTETS,
+        lambda colonne: colonne.mesures.pic_memoire_octets,
+    ),
+    (
+        "Pic de mémoire de l'exécution partiel",
+        NATURE_TEXTE,
+        lambda colonne: colonne.mesures.pic_memoire_partiel,
+    ),
+    (
+        "Durée décodée (référence du RTF)",
+        NATURE_DUREE,
+        lambda colonne: colonne.transcription.duree_decodee_s,
+    ),
+    (
+        "Durée indicative du fichier",
+        NATURE_DUREE,
+        lambda colonne: colonne.transcription.duree_indicative_s,
+    ),
+    (
+        "Temps de décodage (serveur)",
+        NATURE_DUREE,
+        lambda colonne: colonne.transcription.mesures.temps_decodage_s,
+    ),
+    (
+        "Durée de transcription",
+        NATURE_DUREE,
+        lambda colonne: colonne.transcription.mesures.duree_transcription_s,
+    ),
+    (
+        "Temps CPU consommé",
+        NATURE_DUREE,
+        lambda colonne: colonne.transcription.mesures.temps_cpu_s,
+    ),
+    (
+        "RTF (durée de transcription / durée décodée)",
+        NATURE_RTF,
+        lambda colonne: colonne.transcription.mesures.rtf,
+    ),
+    (
+        "Pic de mémoire du moteur (audio)",
+        NATURE_OCTETS,
+        lambda colonne: colonne.transcription.mesures.pic_memoire_octets,
+    ),
+)
+
+
+def _lignes_comparaison(colonnes: Sequence[_Colonne]) -> tuple[LigneComparaison, ...]:
+    """Lignes de la table : état, textes, configuration puis mesures.
+
+    Les textes transcrits sont affichés tels quels, une colonne par
+    transcription, et ne sont jamais comparés entre eux : aucun diff textuel,
+    aucun WER et aucune référence ne sont calculés.
+
+    Les réglages demandés (validés, défauts compris) et les réglages effectifs
+    sont comparés sur l'union des clés de chaque audio. La comparaison porte sur
+    la valeur JSON brute : listes, objets, `null`, `NaN`, `Infinity` et
+    `-Infinity` restent distincts, et une valeur formatée pour l'affichage ne
+    peut jamais être confondue avec la donnée d'origine.
+    """
+    affiches_demandes = [dict(colonne.transcription.reglages) for colonne in colonnes]
+    affiches_effectifs = [
+        dict(colonne.transcription.reglages_effectifs) for colonne in colonnes
+    ]
+    bruts_demandes = [colonne.transcription.reglages_bruts for colonne in colonnes]
+    bruts_effectifs = [
+        colonne.transcription.reglages_effectifs_bruts for colonne in colonnes
+    ]
+    noms_demandes = sorted({nom for bruts in bruts_demandes for nom in bruts})
+    noms_effectifs = sorted({nom for bruts in bruts_effectifs for nom in bruts})
+    lignes = [
+        _ligne(
+            libelle,
+            NATURE_TEXTE,
+            _cellules([extraire(colonne) for colonne in colonnes]),
+        )
+        for libelle, extraire in _CHAMPS_ETAT
+    ]
+    # Le texte est la matière comparée : il précède la configuration. Il n'est
+    # jamais marqué « différent » pour ne suggérer aucun diff caractère à
+    # caractère.
+    lignes.append(
+        LigneComparaison(
+            libelle="Texte transcrit",
+            nature=NATURE_TRANSCRIPTION,
+            cellules=_cellules(
+                [colonne.transcription.texte for colonne in colonnes]
+            ),
+            differents=False,
+        )
+    )
+    lignes.extend(
+        _ligne(
+            libelle,
+            NATURE_TEXTE,
+            _cellules([extraire(colonne) for colonne in colonnes]),
+        )
+        for libelle, extraire in _CHAMPS_CONFIGURATION
+    )
+    lignes.extend(
+        _ligne(
+            f"Réglage demandé : {nom}",
+            NATURE_TEXTE,
+            _cellules_reglages(affiches_demandes, bruts_demandes, nom),
+        )
+        for nom in noms_demandes
+    )
+    lignes.extend(
+        _ligne(
+            f"Réglage effectif : {nom}",
+            NATURE_TEXTE,
+            _cellules_reglages(affiches_effectifs, bruts_effectifs, nom),
+        )
+        for nom in noms_effectifs
+    )
+    lignes.extend(
+        _ligne(
+            libelle,
+            nature,
+            _cellules([extraire(colonne) for colonne in colonnes]),
+        )
+        for libelle, nature, extraire in _MESURES_COMPAREES
+    )
+    return tuple(lignes)
+
+
+def _ligne(
+    libelle: str, nature: str, cellules: Sequence[CelluleComparaison]
+) -> LigneComparaison:
+    """Ligne de comparaison, marquée dès qu'une cellule diffère des autres."""
+    return LigneComparaison(
+        libelle=libelle,
+        nature=nature,
+        cellules=tuple(cellules),
+        differents=len({_canonique(cellule) for cellule in cellules}) > 1,
+    )
+
+
+def _canonique(cellule: CelluleComparaison) -> str:
+    """Forme comparable d'une cellule : absente, ou JSON brut trié.
+
+    La comparaison porte sur `brut`, jamais sur la valeur formatée pour
+    l'affichage. Le JSON trié suffit à distinguer les cas utiles : `1` et
+    `1.0`, `true` et `1`, une liste et la chaîne qui la représente, `null` et
+    une clé absente. `json.dumps` garde `NaN`, `Infinity` et `-Infinity`
+    distincts au lieu de les ramener à `null`.
+    """
+    if not cellule.presente:
+        return "absente"
+    return json.dumps(cellule.brut, ensure_ascii=False, sort_keys=True)
+
+
+def _cellules(valeurs: Sequence[Any]) -> tuple[CelluleComparaison, ...]:
+    """Cellules présentes : la valeur brute est aussi la valeur affichée."""
+    return tuple(
+        CelluleComparaison(presente=True, valeur=valeur, brut=valeur)
+        for valeur in valeurs
+    )
+
+
+def _cellules_reglages(
+    affiches: Sequence[Mapping[str, Any]],
+    bruts: Sequence[Mapping[str, Any]],
+    nom: str,
+) -> tuple[CelluleComparaison, ...]:
+    """Cellules d'un réglage : valeur affichée formatée, valeur brute à part."""
+    return tuple(
+        CelluleComparaison(
+            presente=nom in brut,
+            valeur=affiche.get(nom),
+            brut=brut.get(nom),
+        )
+        for affiche, brut in zip(affiches, bruts, strict=True)
+    )
+
+
+def _champ(paires: Sequence[Paire], libelle: str) -> Any:
+    """Valeur d'une paire déjà construite, ou `None` si le libellé est absent."""
+    for nom, valeur in paires:
+        if nom == libelle:
+            return valeur
+    return None
+
+
+def _texte_marques(marques: Sequence[str]) -> str:
+    """Marques affichées en une ligne ; « aucune » n'en invente aucune."""
+    return ", ".join(marques) if marques else "aucune"
 
 
 # -- validation du suivi d'exécution -----------------------------------------
@@ -493,6 +1085,17 @@ def _execution_non_interpretable(identifiant: str, motif: str) -> ExecutionListe
         marques=None,
         exploitable=False,
         motif=motif,
+    )
+
+
+def _mesures_execution(mesure: Mapping[str, Any]) -> MesuresVue:
+    """Mesures globales d'une exécution ; une mesure absente reste `None`."""
+    return MesuresVue(
+        duree_operation_s=_nombre(mesure.get("duree_operation_s")),
+        duree_processus_s=_nombre(mesure.get("duree_processus_s")),
+        duree_chargement_s=_nombre(mesure.get("duree_chargement_s")),
+        pic_memoire_octets=_entier(mesure.get("pic_memoire_octets")),
+        pic_memoire_partiel=_booleen(mesure.get("pic_memoire_partiel")),
     )
 
 
@@ -601,6 +1204,8 @@ def _vue_transcription(
     mesures = _mapping(contenu.get("mesures"))
     duree_transcription = _nombre(mesures.get("duree_transcription_s"))
     audio = _mapping(contenu.get("audio"))
+    modele = _mapping(contenu.get("modele"))
+    duree_decodee = _nombre(audio.get("duree_decodee_s"))
     return TranscriptionVue(
         statut=statut,
         ecrit_le=_texte(contenu.get("ecrit_le")),
@@ -608,16 +1213,22 @@ def _vue_transcription(
         segments=_segments(transcription.get("segments")),
         marques=_marques(contenu),
         audio=_paires(audio, CHAMPS_AUDIO),
+        empreinte_sha256=_empreinte(audio.get("empreinte_sha256")),
+        duree_indicative_s=_nombre(audio.get("duree_indicative_s")),
+        duree_decodee_s=duree_decodee,
         mesures=MesuresAudioVue(
             temps_decodage_s=_nombre(mesures.get("temps_decodage_s")),
             duree_transcription_s=duree_transcription,
             temps_cpu_s=_nombre(mesures.get("temps_cpu_s")),
             # RTF recalculé sur la durée décodée : jamais sur l'indicative, et
             # jamais sur une durée nulle ou absente.
-            rtf=calculer_rtf(duree_transcription, _nombre(audio.get("duree_decodee_s"))),
+            rtf=calculer_rtf(duree_transcription, duree_decodee),
             pic_memoire_octets=_entier(mesures.get("pic_memoire_octets")),
         ),
+        reglages=_paires_reglages(contenu.get("reglages")),
+        reglages_bruts=_mapping(contenu.get("reglages")),
         reglages_effectifs=_paires_reglages(contenu.get("reglages_effectifs")),
+        reglages_effectifs_bruts=_mapping(contenu.get("reglages_effectifs")),
         threads=_paires(
             _mapping(contenu.get("threads")),
             (("demandes", "Threads demandés"), ("appliques", "Threads appliqués")),
@@ -631,6 +1242,9 @@ def _vue_transcription(
                 ("nb_fenetres", "Nombre de fenêtres"),
             ),
         ),
+        modele=_paires(modele, CHAMPS_MODELE),
+        moteur=_paires(_mapping(contenu.get("moteur")), CHAMPS_MOTEUR),
+        famille=_texte(modele.get("famille")),
         erreur=_texte(contenu.get("erreur")),
     )
 
@@ -693,10 +1307,14 @@ def _paires_programme(programme: Mapping[str, Any]) -> tuple[Paire, ...]:
 def _paires_reglages(valeur: Any) -> tuple[Paire, ...]:
     """Réglages d'un objet JSON, triés par nom, sans perdre listes ni objets.
 
-    Un réglage comme la température faster-whisper est une liste : il est
-    affiché en JSON compact, échappé par Jinja comme le reste. Une valeur
-    absente ou un nombre non fini au premier niveau reste « indisponible » ; un
-    nombre non fini imbriqué devient `null` dans le texte JSON, jamais `NaN`.
+    **Affichage seulement** : la comparaison lit `reglages_bruts` et
+    `reglages_effectifs_bruts`, jamais ces paires formatées. Un réglage comme la
+    température faster-whisper est une liste : il est affiché en JSON compact,
+    échappé par Jinja comme le reste. Une valeur absente ou un nombre non fini
+    au premier niveau reste « indisponible » ; un nombre non fini imbriqué
+    devient `null` dans le texte JSON, jamais `NaN`. Ce formatage peut donc
+    rapprocher deux valeurs brutes différentes : il ne décide d'aucune
+    différence.
     """
     contenu = _mapping(valeur)
     return tuple(
@@ -765,6 +1383,18 @@ def _texte(valeur: Any) -> str | None:
 def _texte_brut(valeur: Any) -> str | None:
     """Texte tel quel, y compris vide ; `None` si ce n'est pas un texte."""
     return valeur if isinstance(valeur, str) else None
+
+
+def _empreinte(valeur: Any) -> str | None:
+    """Empreinte SHA-256 en minuscules hexadécimales, ou `None` si invalide.
+
+    Seule la casse est normalisée : une valeur absente, d'une autre longueur ou
+    contenant d'autres caractères n'est jamais considérée comme une empreinte.
+    """
+    if not isinstance(valeur, str):
+        return None
+    empreinte = valeur.lower()
+    return empreinte if MOTIF_EMPREINTE.fullmatch(empreinte) else None
 
 
 def _numerique(valeur: Any) -> bool:
