@@ -42,6 +42,7 @@ from transcription_bench.resultats import (
     ConsignateurExecution,
     ConsignationImpossible,
     ResultatImmuable,
+    abandonner_execution,
     calculer_rtf,
     creer_dossier_resultat,
     etat_resultat,
@@ -843,6 +844,40 @@ class ConsignateurExecutionTest(unittest.TestCase):
                     chemin.read_text(encoding="utf-8", errors="replace"),
                     chemin,
                 )
+
+
+class AbandonnerExecutionTest(unittest.TestCase):
+    """La clôture en abandonné (6.5) ne s'applique qu'à une exécution `running`."""
+
+    def setUp(self) -> None:
+        temporaire = tempfile.TemporaryDirectory()
+        self.addCleanup(temporaire.cleanup)
+        self.dossier = Path(temporaire.name) / "results" / "20260101-120000-aaaaaaaa"
+        self.dossier.mkdir(parents=True)
+        self.run_json = self.dossier / "run.json"
+
+    def test_refus_si_etat_deja_final(self) -> None:
+        for etat in ("completed", "interrupted", "failed", "abandoned"):
+            with self.subTest(etat):
+                with self.assertRaises(ValueError) as capture:
+                    abandonner_execution(
+                        self.dossier, {"schema": SCHEMA, "etat": etat, "audios": []}
+                    )
+
+                self.assertIn(etat, str(capture.exception))
+                self.assertFalse(self.run_json.exists(), "un état final a été réécrit")
+
+    def test_execution_en_cours_close_en_abandonnee(self) -> None:
+        contenu = abandonner_execution(
+            self.dossier,
+            {"schema": SCHEMA, "etat": ETAT_EN_COURS, "audios": []},
+            fin="2026-01-01T12:00:00+00:00",
+        )
+
+        self.assertEqual(contenu["etat"], "abandoned")
+        self.assertEqual(
+            json.loads(self.run_json.read_text(encoding="utf-8"))["etat"], "abandoned"
+        )
 
 
 if __name__ == "__main__":

@@ -39,9 +39,10 @@ d'un audio provenant du moteur sont recopiées telles quelles et restent marqué
 
 **Format** : `schema` vaut `SCHEMA` dans `run.json` et dans chaque
 `result.json` ; les clés sont toujours présentes, avec `null` pour une valeur
-indisponible. La clôture des exécutions restées `running` (état `abandoned`) et
-les pages de résultats relèvent des tâches 6.5 et 7.x : ce module n'écrit jamais
-cet état final et ne relit rien.
+indisponible. La clôture des exécutions restées `running` (état `abandoned`) est
+faite par `abandonner_execution`, appelée par la récupération du démarrage
+(tâche 6.5), qui lui remet le `run.json` déjà lu et validé : le format n'a ainsi
+qu'un seul écrivain. Les pages de résultats relèvent des tâches 7.x.
 
 **Secrets** : rien de l'environnement du serveur n'est recopié : ni jeton, ni
 variable d'environnement. Les chemins persistés comme données (identifiant,
@@ -76,8 +77,10 @@ from transcription_bench.paths import (
 )
 from transcription_bench.stockage import (
     VERROU_STOCKAGE,
+    JsonInvalide,
     ecrire_json_atomique,
     ecrire_texte_atomique,
+    lire_json,
 )
 
 if TYPE_CHECKING:  # pragma: no cover - uniquement pour les annotations
@@ -93,15 +96,15 @@ NOM_FICHIER_JOURNAL = "run.log"
 NOM_FICHIER_RESULTAT = "result.json"
 NOM_FICHIER_TRANSCRIPTION = "transcription.txt"
 
-#: États persistés de `run.json`. `running` est mutable ; les trois autres sont
+#: États persistés de `run.json`. `running` est mutable ; les quatre autres sont
 #: finaux : le fichier n'est plus modifié ensuite.
 ETAT_EN_COURS = "running"
 ETAT_TERMINEE = "completed"
 ETAT_INTERROMPUE = "interrupted"
 ETAT_ECHOUEE = "failed"
-#: Réservé à la clôture des exécutions abandonnées (tâche 6.5) : jamais écrit ici.
+#: Écrit uniquement par la clôture des exécutions abandonnées (tâche 6.5).
 ETAT_ABANDONNEE = "abandoned"
-ETATS_FINAUX = (ETAT_TERMINEE, ETAT_INTERROMPUE, ETAT_ECHOUEE)
+ETATS_FINAUX = (ETAT_TERMINEE, ETAT_INTERROMPUE, ETAT_ECHOUEE, ETAT_ABANDONNEE)
 
 #: États internes du service d'exécution (tâche 6.3) vers les états persistés :
 #: la conversion vit ici pour que le format reste la seule référence écrite.
@@ -818,6 +821,130 @@ class ConsignateurExecution:
                 f"résultat déjà finalisé ({self._etat_final}) : "
                 f"{self._identifiant or 'identifiant inconnu'} n'est plus modifiable"
             )
+
+
+def abandonner_execution(
+    dossier: Path | str,
+    contenu: Mapping[str, Any],
+    *,
+    fin: str | None = None,
+    horloge: Any = horodatage_iso,
+) -> dict[str, Any]:
+    """Finalise en `abandoned` une exécution restée `running`, sans reprise.
+
+    Appelée par la récupération du démarrage (tâche 6.5) avec le contenu de
+    `run.json` déjà lu et validé : `etat` vaut `running`, le schéma est connu et
+    les entrées d'`audios` sont exploitables. Le fichier est réécrit une seule
+    fois, atomiquement, par le même écrivain que le reste du format ; la
+    fonction renvoie le contenu écrit.
+
+    Règles, conformes à D8 et D11 : `fin` est renseignée, `etat` vaut
+    `abandoned`, les durées totale et du processus deviennent inconnues (le
+    serveur est mort avant de les mesurer) alors que la durée de chargement
+    déjà consignée est conservée ; le dernier pic mémoire transmis est conservé
+    et marqué partiel ; `erreur`, `processus_moteur` et les autres clés gardent
+    leur valeur, aucun fait n'étant inventé. Un statut d'audio déjà consigné
+    (`ok` ou `erreur`) n'est jamais rétrogradé ; un audio sans `result.json`
+    exploitable est marqué non traité, et un `result.json` présent mais non
+    encore reflété dans `run.json` fait foi (la consignation écrit le résultat
+    de l'audio avant de réécrire `run.json`). Ni `result.json`, ni
+    `transcription.txt`, ni `run.log` ne sont touchés : la clôture ne produit
+    aucune inférence et ne réécrit aucun résultat existant.
+
+    Une erreur d'écriture remonte à l'appelant (`OSError`, `ValueError`) :
+    `run.json` reste alors lisible dans son état précédent et le démarrage est
+    refusé plutôt que de laisser une exécution en cours. Un contenu qui n'est
+    plus `running` est refusé de la même façon : une exécution finale est
+    immuable (D11).
+    """
+    if contenu.get("etat") != ETAT_EN_COURS:
+        raise ValueError(
+            f"clôture en abandonné refusée : état {contenu.get('etat')!r} au lieu de "
+            f"{ETAT_EN_COURS!r}"
+        )
+    dossier_resultat = Path(dossier)
+    final = _contenu_abandon(
+        dossier_resultat,
+        contenu,
+        fin=horloge() if fin is None else fin,
+    )
+    ecrire_json_atomique(dossier_resultat / NOM_FICHIER_EXECUTION, final)
+    return final
+
+
+def _contenu_abandon(
+    dossier_resultat: Path, contenu: Mapping[str, Any], *, fin: str
+) -> dict[str, Any]:
+    """Contenu de `run.json` finalisé en `abandoned`, à partir du contenu validé."""
+    final = dict(contenu)
+    final["etat"] = ETAT_ABANDONNEE
+    final["fin"] = fin
+    mesures = dict(_mapping(contenu.get("mesures")))
+    # Le serveur est mort avant la clôture : ces deux durées n'ont jamais été
+    # mesurées et ne doivent pas être déduites d'un horodatage de fichier.
+    mesures["duree_operation_s"] = None
+    mesures["duree_processus_s"] = None
+    pic = mesures.get("pic_memoire_octets")
+    mesures["pic_memoire_partiel"] = None if pic is None else True
+    final["mesures"] = mesures
+    audios = [_plan_abandon(dossier_resultat, plan) for plan in contenu.get("audios") or ()]
+    final["audios"] = audios
+    final["progression"] = {
+        **_mapping(contenu.get("progression")),
+        "audios_traites": sum(
+            1 for plan in audios if plan["statut"] != STATUT_NON_TRAITE
+        ),
+        "audios_total": len(audios),
+    }
+    return final
+
+
+def _plan_abandon(dossier_resultat: Path, plan: Mapping[str, Any]) -> dict[str, Any]:
+    """Plan d'audio finalisé : statut consigné conservé, sinon relu du résultat."""
+    final = dict(plan)
+    if final.get("statut") in (STATUT_OK, STATUT_ERREUR):
+        return final
+    consigne = _statut_resultat_audio(dossier_resultat, final.get("dossier"))
+    if consigne is None:
+        final.update({"statut": STATUT_NON_TRAITE, "erreur": None})
+        return final
+    final.update(consigne)
+    return final
+
+
+def _statut_resultat_audio(
+    dossier_resultat: Path, nom_dossier: Any
+) -> dict[str, Any] | None:
+    """Statut consigné dans le `result.json` d'un audio, ou `None` s'il manque.
+
+    Un `result.json` absent, illisible ou incohérent n'est jamais réécrit : il
+    est traité comme non exploitable et l'audio reste non traité.
+    """
+    if not isinstance(nom_dossier, str) or not nom_dossier:
+        return None
+    try:
+        chemin = resoudre_dans_racine(dossier_resultat, nom_dossier)
+        contenu = lire_json(chemin / NOM_FICHIER_RESULTAT)
+    except (ValeurRefusee, JsonInvalide):
+        return None
+    if not isinstance(contenu, Mapping):
+        return None
+    statut = contenu.get("statut")
+    if statut not in (STATUT_OK, STATUT_ERREUR):
+        return None
+    fenetre = contenu.get("fenetre")
+    fenetre = fenetre if isinstance(fenetre, Mapping) else {}
+    return {
+        "statut": statut,
+        "erreur": contenu.get("erreur"),
+        "fenetre_s": fenetre.get("duree_s"),
+        "decoupage": fenetre.get("decoupage"),
+    }
+
+
+def _mapping(valeur: Any) -> Mapping[str, Any]:
+    """Valeur d'un sous-objet de `run.json`, vide si elle n'est pas un objet."""
+    return valeur if isinstance(valeur, Mapping) else {}
 
 
 def _statut_audio(audio: ResultatAudio) -> str:

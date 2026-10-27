@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import inspect
 import io
+import json
 import os
 import socket
 import subprocess
@@ -286,6 +287,46 @@ class DemarrageOrdonneTest(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(ordre, ["recuperation", "dossiers", "application", "serve"])
         self.assertTrue((self.base / "instance.lock").is_file())
+        VerrouInstance(self.base).acquerir().liberer()
+
+    def test_recuperation_par_defaut_clot_en_abandonne_avant_de_servir(self) -> None:
+        resultat = self.base / "results" / "20260101-120000-aaaaaaaa" / "run.json"
+        resultat.parent.mkdir(parents=True)
+        resultat.write_text(
+            json.dumps(
+                {
+                    "schema": 1,
+                    "etat": "running",
+                    "processus_moteur": {"pid": None},
+                    "audios": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        def servir(application, **options) -> None:
+            contenu = json.loads(resultat.read_text(encoding="utf-8"))
+            self.assertEqual(contenu["etat"], "abandoned")
+            self.assertIsNotNone(contenu["fin"])
+
+        with (
+            mock.patch.object(paths, "DOSSIER_DATA", self.base),
+            mock.patch.object(cli, "create_app", return_value=mock.sentinel.application),
+            mock.patch.object(cli, "serve", servir),
+        ):
+            erreurs = io.StringIO()
+            with (
+                contextlib.redirect_stdout(io.StringIO()),
+                contextlib.redirect_stderr(erreurs),
+            ):
+                code = cli.main([])
+
+        self.assertEqual(code, 0)
+        # Une ligne de journal par exécution traitée, sans chemin absolu ni secret.
+        self.assertIn(
+            "exécution 20260101-120000-aaaaaaaa close en abandonnée",
+            erreurs.getvalue(),
+        )
         VerrouInstance(self.base).acquerir().liberer()
 
     def test_refus_de_recuperation_avant_dossiers_et_serve(self) -> None:

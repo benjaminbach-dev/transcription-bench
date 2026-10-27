@@ -1,9 +1,11 @@
 """Point d'entrée en ligne de commande du prototype.
 
 Ordre de démarrage : verrou système d'instance sur le dossier de données,
-récupération des exécutions antérieures (point d'injection de la tâche 6.5,
-refus explicite par défaut), préparation des dossiers, création de
-l'application, puis service HTTP par la seule API publique `waitress.serve`.
+récupération des exécutions antérieures (tâche 6.5 : terminaison vérifiée du
+moteur survivant, clôture en état `abandoned`, nettoyage des restes du dossier
+de travail, refus explicite si un état douteux subsiste), préparation des
+dossiers, création de l'application, puis service HTTP par la seule API publique
+`waitress.serve`.
 Une seconde instance est donc refusée avant toute récupération et sans toucher
 aux données existantes. Un port occupé produit un message clair, un code de
 sortie non nul, sans trace, et le verrou est libéré.
@@ -33,7 +35,7 @@ from transcription_bench.moteurs import InstallationMoteurs
 from transcription_bench.operations import CreneauOperations
 from transcription_bench.recuperation import (
     EtatAnterieurNonTraitable,
-    verifier_executions_anterieures,
+    recuperer_executions_anterieures,
 )
 from transcription_bench.web import ConfigApplication, ServicesApplication, create_app
 
@@ -85,10 +87,11 @@ def main(
 ) -> int:
     """Verrouille, récupère, prépare, sert, puis libère le verrou.
 
-    `recuperer` est le point d'injection de la récupération : par défaut la
-    fonction de `transcription_bench.recuperation`, qui refuse le démarrage si
-    un résultat antérieur n'est pas dans un état final. Elle n'est jamais
-    appelée si une autre instance tient déjà le verrou.
+    `recuperer` est le point d'injection de la récupération, utilisé par les
+    tests ; par défaut `recuperer_executions_anterieures`, qui termine le moteur
+    survivant vérifié et clôt en `abandoned` les exécutions restées en cours, ou
+    refuse le démarrage avec un code non nul si un état douteux subsiste. Elle
+    n'est jamais appelée si une autre instance tient déjà le verrou.
     """
     arguments = construire_analyseur().parse_args(argv)
     dossier_data = paths.DOSSIER_DATA
@@ -101,7 +104,9 @@ def main(
         _signaler(f"verrou d'instance indisponible dans {dossier_data} : {erreur}")
         return CODE_REFUS
 
-    recuperation = verifier_executions_anterieures if recuperer is None else recuperer
+    recuperation = (
+        recuperer_executions_anterieures if recuperer is None else recuperer
+    )
     creneau: CreneauOperations | None = None
     installation: InstallationMoteurs | None = None
     code = 0

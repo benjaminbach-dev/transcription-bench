@@ -74,8 +74,9 @@ et l'exécution est close en échec — l'état final est malgré tout tenté, e
 consigné au lancement, le moteur est également arrêté et l'exécution échoue
 avant toute collecte : sans PID persisté, la récupération de 6.5 ne pourrait pas
 retrouver le processus. Une fois l'état final écrit, `run.json` n'est plus
-modifié : la clôture des exécutions restées `running` relève de la tâche 6.5, et
-les pages de résultats de la tâche 7.x.
+modifié : la clôture des exécutions restées `running` est faite par la
+récupération du démarrage (tâche 6.5), et les pages de résultats relèvent de la
+tâche 7.x.
 
 Après interruption ou échec, les durées vont jusqu'à la clôture et la sortie du
 moteur, et le pic mémoire consigné est le dernier relevé transmis, marqué comme
@@ -99,9 +100,9 @@ créneau (journal) ni pendant une E/S longue : l'ordre « verrou du créneau pui
 verrou de stockage » du reste du programme n'est donc jamais inversé ici.
 
 Limites assumées : le dossier de travail et les signaux décodés vivent sous
-`data/cache/`. Après un arrêt brutal du serveur, ou si un processus insensible
-à `kill` survit, ils peuvent subsister : la tâche 6.5 devra nettoyer ces restes,
-car aucun autre code ne les supprime. La supervision des signaux du
+`data/cache/`. Après un arrêt brutal du serveur ils subsistent : la récupération
+du démarrage (tâche 6.5) les supprime, une fois vérifié qu'aucun moteur
+enregistré n'est vivant. La supervision des signaux du
 serveur et l'arrêt du moteur au moment de l'arrêt normal du serveur relèvent de
 la tâche 6.6. Aucune inférence réelle n'est possible ici pour les moteurs réels,
 dont les familles ne sont pas qualifiées sur PC : seul le moteur factice est
@@ -179,7 +180,9 @@ TYPE_SIGNAL = "<f4"
 NOM_FICHIER_JOB = "job.json"
 PREFIXE_FICHIER_BRUT = "audio-"
 SUFFIXE_FICHIER_BRUT = ".f32"
-#: Sous-dossier de `data/` où vivent les dossiers de travail des exécutions.
+#: Préfixe des dossiers de travail créés sous `data/cache`, tenu égal à
+#: `recuperation.PREFIXE_DOSSIER_TRAVAIL` par un test : la récupération ne purge
+#: que ces dossiers-là.
 PREFIXE_DOSSIER_TRAVAIL = "execution-"
 
 #: Délai d'attente après `terminate` avant `kill`, puis après `kill`.

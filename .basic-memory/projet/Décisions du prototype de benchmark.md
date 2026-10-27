@@ -271,3 +271,21 @@ Provenance : `transcription-bench`, `main`, base `e83bf5a`. **19/39**, 427 tests
 - [decision] Signaux décodés `<f4` sous `data/cache/<id>` (créé paresseusement, supprimé en fin) ; restes après arrêt brutal à nettoyer en 6.5. `sur_evenement` retiré : 6.4 définira sa propre consignation par exécution (dossier de résultats, AudioPrepare, PID + heure de création, run.log complet, durées D8). `derniere_execution()` → `ResultatExecution` en mémoire (non persistant).
 - [constraint] 6.6 : `terminate`/`kill` ne visent que le PID du runner, pas son groupe (killpg Linux, Job Object Windows à décider) ; `tuple(stderr)` sans protection si le lecteur survit au join ; stderr Windows non forcé en UTF-8 ; `InstallationEchouee` journalise encore une pile complète. Dossiers `data/cache` à nettoyer en 6.5.
 - [limit] Tests parallèles ×8 instables uniquement à cause des limites de tâches du sandbox (RLIMIT_NPROC), pas de la logique. Aucune validation PC ni Windows.
+
+
+## Lot 6 — tâche 6.4, 2026-10-26 UTC
+
+Provenance : `transcription-bench`, `main`, base `1a3fe57`. **20/39**, 476 tests passants, revue advisor + corrections + recontrôle favorable.
+
+- [validation] Stockage des résultats (`transcription_bench/resultats.py`) : `data/results/<AAAAMMJJ-HHMMSS>-<8 hex>/` créé sous verrou, jamais réutilisé ; `run.json` (schéma 1, états `running` → `completed|interrupted|failed`), `run.log` complet, `<n>-<nom>/result.json` + `transcription.txt` écrits audio par audio. Mesures D8 serveur (durée d'opération, durée du processus), `null` = indisponible, jamais zéro. Format documenté en D11.
+- [decision] `clore` tente toujours d'écrire l'état final `failed` après une erreur d'écriture, cache supprimé avant ; une erreur d'écriture arrête le moteur ; un statut d'audio consigné n'est jamais rétrogradé ; `heure_creation` = flottant brut de `psutil.create_time()` (source consignée) ; échec d'écriture de `run.log` signalé sans faire échouer l'exécution.
+- [constraint] 6.5 : comparer `heure_creation` avec tolérance (sur ce serveur ~0,9 s avant l'horloge serveur) ou se rabattre sur `lance_a` ; tolérer un dossier sans `run.json` (échec d'`ouvrir` après mkdir) ; `run.json` peut rester `running` si l'ultime écriture échoue → `abandoned` ; NaN possible dans segments/réglages recopiés bruts ; nettoyer `data/cache`. Le mode mmap/`timings` transcribe.cpp est absent du schéma 1 (8.x). Immuabilité garantie en processus seulement.
+- [limit] Aucune validation PC/Windows (os.replace, verrous).
+
+
+## Lot 6 — tâche 6.5, 2026-10-26 UTC
+
+Provenance : `transcription-bench`, `main`, base `31572bf`. **21/39**, 501 tests passants, revue advisor + corrections (contrôle final par le principal : suite et validations).
+
+- [validation] Vraie récupération au démarrage (`recuperation.py`, après verrou d'instance, avant application) : `run.json` `running` → moteur survivant terminé seulement si PID **et** heure de création concordent (tolérance 1 s `psutil`, 5 s via `lance_a` en repli ; revérification interne psutil 7.2.2 avant signal ; descendance psutil) ; refus de démarrer si non identifiable, inaccessible ou survivant ; puis `abandoned` via `resultats.abandonner_execution` (durées null, pic partiel, audios non traités, statuts consignés conservés, `result.json` fait foi, aucun fichier final réécrit). Purge de `data/cache/execution-*` (jamais si lien/jonction). Idempotent ; états finaux, dossiers sans `run.json` ignorés ; `run.json` illisible/incohérent refusé sans réécriture.
+- [limit] Dérive d'horloge ≥ 1 s : moteur non reconnu (mourra à sa prochaine écriture) ; arrêt brutal entre lancement et écriture du PID ; descendants orphelins → 6.6 (killpg / Job Object). Windows non éprouvé (AccessDenied, terminate immédiat).
