@@ -16,6 +16,7 @@ enveloppe.
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 import html
@@ -50,6 +51,7 @@ from transcription_bench.execution_moteur import (
     ETAT_INTERROMPUE,
     ETAT_TERMINEE,
     FORMAT_AUDIO_BRUT,
+    NOMBRE_LIGNES_STDERR_MAX,
     VERSION_JOB,
     ExecutionImpossible,
     ExecutionMoteur,
@@ -163,6 +165,19 @@ import time
 signal.signal(signal.SIGTERM, signal.SIG_IGN)
 print("pret", flush=True)
 time.sleep(120)
+"""
+
+
+CODE_JOURNAL_STDERR_VOLUMINEUX = """
+import runpy
+import sys
+
+for numero in range(2500):
+    print("ligne d'erreur simulée %d" % numero, file=sys.stderr)
+sys.stderr.flush()
+chemin_job, chemin_runner = sys.argv[1], sys.argv[2]
+sys.argv = ["runner.py", chemin_job]
+runpy.run_path(chemin_runner, run_name="__main__")
 """
 
 
@@ -786,6 +801,488 @@ class ArretExecutionTest(SocleExecutionTest):
                 ),
             )
         self.assertIsNone(self.service.derniere_execution())
+        self.assertCacheNettoye()
+
+
+class ResultatsExecutionTest(SocleExecutionTest):
+    """Consignation des résultats et mesures serveur d'une exécution (tâche 6.4).
+
+    Les résultats sont écrits sous le `data/` temporaire du socle. Le moteur est
+    toujours le factice : textes et mesures du moteur sont simulés, tandis que
+    les mesures serveur (durée de l'opération, durée du processus) sont réelles.
+    """
+
+    def racine_resultats(self) -> Path:
+        return self.dossier_data / "results"
+
+    def dossiers_resultat(self) -> list[Path]:
+        racine = self.racine_resultats()
+        if not racine.is_dir():
+            return []
+        return sorted(chemin for chemin in racine.iterdir() if chemin.is_dir())
+
+    def dossier_resultat(self, resultat) -> Path:
+        self.assertIsNotNone(resultat.identifiant_resultat)
+        return self.racine_resultats() / str(resultat.identifiant_resultat)
+
+    def lire_json(self, chemin: Path) -> Any:
+        return json.loads(chemin.read_text(encoding="utf-8"))
+
+    def arborescence(self, dossier: Path) -> dict[str, bytes]:
+        return {
+            str(chemin.relative_to(dossier)): chemin.read_bytes()
+            for chemin in sorted(dossier.rglob("*"))
+            if chemin.is_file()
+        }
+
+    def test_resultats_complets_et_seconde_execution_sans_ecrasement(self) -> None:
+        self.ecrire_audio("a.wav", 0.25)
+        self.ecrire_audio("b.wav", 0.5)
+        demande = self.demande(("b.wav", "a.wav"))
+
+        premier = self.executer(demande)
+
+        self.assertTerminee(premier)
+        dossier = self.dossier_resultat(premier)
+        self.assertEqual(dossier.name, premier.identifiant_resultat)
+        self.assertEqual(
+            [chemin.name for chemin in sorted(dossier.iterdir())],
+            ["1-b.wav", "2-a.wav", "run.json", "run.log"],
+        )
+        run = self.lire_json(dossier / "run.json")
+        self.assertEqual(run["etat"], "completed")
+        self.assertEqual(run["demande"]["audios"], ["b.wav", "a.wav"])
+        self.assertEqual([plan["ordre"] for plan in run["audios"]], [1, 2])
+        self.assertEqual([plan["nom"] for plan in run["audios"]], ["b.wav", "a.wav"])
+        self.assertEqual([plan["statut"] for plan in run["audios"]], ["ok", "ok"])
+        self.assertEqual(
+            run["progression"], {"audios_traites": 2, "audios_total": 2}
+        )
+        resultat_audio = self.lire_json(dossier / "1-b.wav" / "result.json")
+        self.assertEqual(resultat_audio["statut"], "ok")
+        self.assertEqual(resultat_audio["nom"], "b.wav")
+        self.assertAlmostEqual(
+            resultat_audio["audio"]["duree_decodee_s"], 0.5, places=2
+        )
+        self.assertIn("[FACTICE]", resultat_audio["transcription"]["texte"])
+        self.assertTrue(
+            (dossier / "1-b.wav" / "transcription.txt")
+            .read_text(encoding="utf-8")
+            .startswith("[FACTICE]")
+        )
+        # Marques simulées conservées de bout en bout.
+        self.assertTrue(resultat_audio["factice"])
+        self.assertTrue(resultat_audio["synthetique"])
+        self.assertTrue(resultat_audio["mesures_simulees"])
+
+        avant = self.arborescence(dossier)
+        second = self.executer(demande)
+
+        self.assertTerminee(second)
+        self.assertNotEqual(premier.identifiant_resultat, second.identifiant_resultat)
+        self.assertEqual(self.arborescence(dossier), avant)
+        self.assertEqual(len(self.dossiers_resultat()), 2)
+
+    def test_metadonnees_completes(self) -> None:
+        self.ecrire_audio("a.wav", 0.2)
+
+        resultat = self.executer(self.demande(("a.wav",), threads=3))
+
+        run = self.lire_json(self.dossier_resultat(resultat) / "run.json")
+        self.assertEqual(run["schema"], 1)
+        self.assertTrue(run["identifiant"].startswith(run["cree_le"][:4]))
+        self.assertEqual(run["demande"]["moteur"], "factice")
+        self.assertEqual(run["demande"]["famille"], "factice")
+        self.assertEqual(run["demande"]["threads_demandes"], 3)
+        self.assertEqual(run["demande"]["reglages"], {})
+        self.assertEqual(run["demande"]["fenetre_fixe_secondes"], 30.0)
+        # Le moteur factice ne rapporte aucun thread appliqué : rien n'est affirmé.
+        self.assertEqual(run["effectifs"]["threads_demandes"], 3)
+        self.assertIsNone(run["effectifs"]["threads_appliques"])
+        self.assertEqual(run["effectifs"]["reglages_effectifs"], {})
+        self.assertIn("identifiant", run["demande"]["modele"])
+        self.assertIn("commit", run["demande"]["modele"])
+        self.assertEqual(run["moteur"]["identifiant"], "factice")
+        self.assertTrue(run["moteur"]["factice"])
+        self.assertIsNone(run["moteur"]["empreinte_verrou"])
+        # Machine : OS, CPU, cœurs physiques et logiques, RAM totale.
+        self.assertEqual(
+            set(run["machine"]),
+            {
+                "os",
+                "version_os",
+                "architecture",
+                "processeur",
+                "coeurs_physiques",
+                "coeurs_logiques",
+                "ram_totale_octets",
+            },
+        )
+        self.assertIsInstance(run["machine"]["coeurs_physiques"], int)
+        self.assertIsInstance(run["machine"]["ram_totale_octets"], int)
+        # Programme : version, Python, verrou du serveur, PyAV et FFmpeg.
+        self.assertEqual(run["programme"]["nom"], "transcription-bench")
+        self.assertRegex(run["programme"]["empreinte_verrou"], r"^[0-9a-f]{64}$")
+        self.assertTrue(run["programme"]["python"].startswith("3."))
+        self.assertIsNotNone(run["programme"]["pyav"])
+        self.assertIsNotNone(run["programme"]["ffmpeg"]["version"])
+        # Processus moteur : PID, heure de création et code de sortie.
+        self.assertIsInstance(run["processus_moteur"]["pid"], int)
+        source_heure = run["processus_moteur"]["heure_creation_source"]
+        self.assertIn(source_heure, ("psutil", "serveur"))
+        if source_heure == "psutil":
+            # Horodatage epoch brut, non tronqué à la seconde.
+            self.assertIsInstance(run["processus_moteur"]["heure_creation"], float)
+            self.assertLess(
+                abs(run["processus_moteur"]["heure_creation"] - time.time()), 3600
+            )
+        else:
+            self.assertIsNone(run["processus_moteur"]["heure_creation"])
+        self.assertEqual(run["processus_moteur"]["code_sortie"], 0)
+        # Audio : ordre, empreinte, durées indicative et décodée, format,
+        # segments, réglages effectifs, threads et fenêtres.
+        resultat_audio = self.lire_json(
+            self.dossier_resultat(resultat) / "1-a.wav" / "result.json"
+        )
+        self.assertEqual(resultat_audio["ordre"], 1)
+        self.assertEqual(resultat_audio["audio"]["format"], "wav")
+        self.assertEqual(len(resultat_audio["audio"]["empreinte_sha256"]), 64)
+        self.assertAlmostEqual(resultat_audio["audio"]["duree_decodee_s"], 0.2, places=2)
+        self.assertIsNotNone(resultat_audio["audio"]["duree_indicative_s"])
+        self.assertEqual(len(resultat_audio["transcription"]["segments"]), 1)
+        self.assertEqual(resultat_audio["reglages"], {})
+        self.assertEqual(resultat_audio["reglages_effectifs"], {})
+        self.assertIsNone(resultat_audio["threads"]["appliques"])
+        self.assertEqual(resultat_audio["threads"]["demandes"], 3)
+        self.assertEqual(resultat_audio["fenetre"]["duree_s"], 30.0)
+        self.assertEqual(resultat_audio["fenetre"]["decoupage"], "fenetres-fixes")
+        self.assertEqual(resultat_audio["fenetre"]["nb_fenetres"], 1)
+        self.assertIn("machine", resultat_audio)
+        self.assertIn("programme", resultat_audio)
+        self.assertIsNotNone(resultat_audio["ecrit_le"])
+
+    def test_mesures_serveur_et_rtf_sur_duree_decodee(self) -> None:
+        self.ecrire_audio("a.wav", 0.4)
+
+        resultat = self.executer(self.demande(("a.wav",)))
+
+        self.assertTerminee(resultat)
+        dossier = self.dossier_resultat(resultat)
+        run = self.lire_json(dossier / "run.json")
+        operation = run["mesures"]["duree_operation_s"]
+        processus = run["mesures"]["duree_processus_s"]
+        self.assertIsInstance(operation, float)
+        self.assertIsInstance(processus, float)
+        self.assertGreater(operation, 0.0)
+        self.assertGreater(processus, 0.0)
+        # Le processus moteur est contenu dans l'opération, qui englobe en plus
+        # décodage, écriture des résultats et collecte.
+        self.assertLessEqual(processus, operation)
+        self.assertEqual(resultat.duree_operation_s, operation)
+        self.assertEqual(resultat.duree_processus_s, processus)
+        # Mesures par audio : temps de décodage serveur réel, RTF cohérent avec
+        # la durée décodée du même audio.
+        audio = self.lire_json(dossier / "1-a.wav" / "result.json")
+        self.assertGreater(audio["mesures"]["temps_decodage_s"], 0.0)
+        self.assertAlmostEqual(
+            audio["mesures"]["rtf"],
+            audio["mesures"]["duree_transcription_s"] / audio["audio"]["duree_decodee_s"],
+        )
+
+    def test_mesures_absentes_jamais_zero_avant_lancement(self) -> None:
+        self.ecrire_audio("a.wav")
+        self.ecrire_audio("b.wav")
+
+        def decoder(nom: str, donnees):
+            # Arrêt demandé pendant la préparation : aucun processus n'est lancé.
+            self.service.arreter_execution()
+            return decoder_audio(nom, donnees)
+
+        service = self.creer_service(decoder=decoder)
+        self.service = service
+        resultat = self.executer(self.demande(("a.wav", "b.wav")), service=service)
+
+        self.assertEqual(resultat.etat, ETAT_INTERROMPUE)
+        run = self.lire_json(self.dossier_resultat(resultat) / "run.json")
+        self.assertEqual(run["etat"], "interrupted")
+        self.assertIsNone(run["processus_moteur"]["pid"])
+        self.assertIsNone(run["processus_moteur"]["heure_creation"])
+        self.assertIsNone(run["processus_moteur"]["code_sortie"])
+        self.assertIsNone(run["mesures"]["duree_processus_s"])
+        self.assertIsNone(run["mesures"]["duree_chargement_s"])
+        self.assertIsNone(run["mesures"]["pic_memoire_octets"])
+        self.assertIsNone(run["mesures"]["pic_memoire_partiel"])
+        # La durée de l'opération, elle, est connue jusqu'à la clôture.
+        self.assertGreater(run["mesures"]["duree_operation_s"], 0.0)
+        self.assertEqual(
+            [plan["statut"] for plan in run["audios"]], ["non_traite", "non_traite"]
+        )
+        # Aucun résultat d'audio n'est inventé pour un audio non traité.
+        self.assertEqual(
+            [chemin.name for chemin in sorted(self.dossier_resultat(resultat).iterdir())],
+            ["run.json", "run.log"],
+        )
+
+    def test_resultat_de_l_audio_ecrit_avant_le_suivant(self) -> None:
+        self.ecrire_audio("a.wav")
+        self.ecrire_audio("b.wav")
+        service, paliers = self.service_a_paliers()
+        self.service = service
+        self.liberer_paliers(paliers, 1)
+
+        service.reserver()
+        self.creneau.demarrer(
+            TYPE_EXECUTION,
+            lambda travailleur: service.lancer(
+                self.demande(("a.wav", "b.wav")), travailleur
+            ),
+            cible="factice",
+        )
+        def premier_audio_consigne() -> bool:
+            dossiers = self.dossiers_resultat()
+            if not dossiers:
+                return False
+            dossier = dossiers[0]
+            if not (dossier / "1-a.wav" / "result.json").is_file():
+                return False
+            run = self.lire_json(dossier / "run.json")
+            return run["progression"]["audios_traites"] == 1
+
+        try:
+            # Moteur bloqué avant l'audio 2 : le résultat de l'audio 1 est déjà écrit.
+            attendre_fichier(paliers / "palier-2")
+            attendre_condition(
+                premier_audio_consigne,
+                "résultat du premier audio jamais écrit pendant l'exécution",
+            )
+            dossier = self.dossiers_resultat()[0]
+            run = self.lire_json(dossier / "run.json")
+            self.assertEqual(run["etat"], "running")
+            self.assertEqual(
+                run["progression"], {"audios_traites": 1, "audios_total": 2}
+            )
+            self.assertEqual(
+                [plan["statut"] for plan in run["audios"]], ["ok", "non_traite"]
+            )
+            self.assertTrue((dossier / "1-a.wav" / "result.json").is_file())
+            self.assertTrue((dossier / "1-a.wav" / "transcription.txt").is_file())
+            self.assertFalse((dossier / "2-b.wav").exists())
+        finally:
+            self.liberer_paliers(paliers, 2)
+        self.creneau.thread_travailleur.join(DELAI)
+
+        run = self.lire_json(self.dossiers_resultat()[0] / "run.json")
+        self.assertEqual(run["etat"], "completed")
+        self.assertEqual(run["progression"], {"audios_traites": 2, "audios_total": 2})
+        self.assertCacheNettoye()
+
+    def test_audio_en_erreur_n_empeche_pas_les_suivants(self) -> None:
+        self.ecrire_audio("a.wav")
+        self.ecrire_fichier_illisible("casse.wav")
+        self.ecrire_audio("b.wav")
+
+        resultat = self.executer(self.demande(("a.wav", "casse.wav", "b.wav")))
+
+        self.assertTerminee(resultat)
+        dossier = self.dossier_resultat(resultat)
+        run = self.lire_json(dossier / "run.json")
+        self.assertEqual(
+            [plan["statut"] for plan in run["audios"]], ["ok", "erreur", "ok"]
+        )
+        en_erreur = self.lire_json(dossier / "2-casse.wav" / "result.json")
+        self.assertIn("décodage impossible", en_erreur["erreur"])
+        self.assertIsNone(en_erreur["transcription"])
+        self.assertFalse((dossier / "2-casse.wav" / "transcription.txt").exists())
+        self.assertTrue((dossier / "3-b.wav" / "transcription.txt").is_file())
+        self.assertEqual(
+            self.lire_json(dossier / "3-b.wav" / "result.json")["nom"], "b.wav"
+        )
+        self.assertEqual(run["progression"], {"audios_traites": 3, "audios_total": 3})
+
+    def test_arret_utilisateur_interrompu_conserve_les_resultats(self) -> None:
+        for nom in ("a.wav", "b.wav", "c.wav"):
+            self.ecrire_audio(nom)
+        service, paliers = self.service_a_paliers()
+        self.service = service
+        self.liberer_paliers(paliers, 1)
+
+        service.reserver()
+        self.creneau.demarrer(
+            TYPE_EXECUTION,
+            lambda travailleur: service.lancer(
+                self.demande(("a.wav", "b.wav", "c.wav")), travailleur
+            ),
+            cible="factice",
+        )
+        attendre_fichier(paliers / "palier-2")
+        attendre_journal(self.creneau, "Audio « a.wav » transcrit")
+        self.assertEqual(service.arreter_execution(), ARRET_DEMANDE)
+        dossier_execution = self.dossiers_resultat()[0]
+        transcription = dossier_execution / "1-a.wav" / "transcription.txt"
+        avant = transcription.read_bytes()
+        self.creneau.thread_travailleur.join(DELAI)
+
+        resultat = service.derniere_execution()
+        self.assertEqual(resultat.etat, ETAT_INTERROMPUE)
+        run = self.lire_json(dossier_execution / "run.json")
+        self.assertEqual(run["etat"], "interrupted")
+        self.assertEqual(
+            [plan["statut"] for plan in run["audios"]],
+            ["ok", "non_traite", "non_traite"],
+        )
+        self.assertEqual(transcription.read_bytes(), avant)
+        self.assertEqual(
+            self.lire_json(dossier_execution / "1-a.wav" / "result.json")["statut"],
+            "ok",
+        )
+        # Durées mesurées jusqu'à la sortie du moteur, pic mémoire partiel.
+        self.assertIsNotNone(run["mesures"]["duree_processus_s"])
+        self.assertIsNotNone(run["mesures"]["duree_operation_s"])
+        self.assertIsNotNone(run["mesures"]["pic_memoire_octets"])
+        self.assertTrue(run["mesures"]["pic_memoire_partiel"])
+        self.assertCacheNettoye()
+
+    def test_run_log_complet_non_borne(self) -> None:
+        self.ecrire_audio("a.wav")
+        service = self.creer_service(
+            construire_commande=commande_enveloppee(CODE_JOURNAL_STDERR_VOLUMINEUX)
+        )
+
+        resultat = self.executer(self.demande(("a.wav",)), service=service)
+
+        self.assertTerminee(resultat)
+        # Le résumé en mémoire reste borné, le fichier ne l'est pas.
+        self.assertEqual(len(resultat.journal_moteur), NOMBRE_LIGNES_STDERR_MAX)
+        lignes = (
+            (self.dossier_resultat(resultat) / "run.log")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        )
+        self.assertEqual(len(lignes), 2500)
+        self.assertEqual(lignes[0], "ligne d'erreur simulée 0")
+        self.assertEqual(lignes[-1], "ligne d'erreur simulée 2499")
+
+    def test_echec_d_ecriture_echoue_et_laisse_un_etat_final_en_echec(self) -> None:
+        self.ecrire_audio("a.wav", 0.2)
+        self.ecrire_audio("b.wav", 0.2)
+        vrai_remplacer = os.replace
+        remplacements: list[str] = []
+        cache_absent_a_la_cloture: list[bool] = []
+
+        def remplacer(origine: Any, cible: Any) -> None:
+            nom = Path(cible).name
+            remplacements.append(nom)
+            if nom == "result.json":
+                raise OSError(28, "espace insuffisant sur le périphérique")
+            if nom == "run.json":
+                # Le cache décodé est libéré avant l'écriture de l'état final.
+                cache_absent_a_la_cloture.append(not self.dossiers_de_travail())
+            vrai_remplacer(origine, cible)
+
+        with mock.patch("transcription_bench.stockage.os.replace", remplacer):
+            resultat = self.executer(self.demande(("a.wav", "b.wav")))
+
+        self.assertEqual(resultat.etat, ETAT_ECHOUEE)
+        self.assertIn("espace insuffisant", resultat.erreur or "")
+        self.assertEqual(self.creneau.instantane().etat, ETAT_CRENEAU_ECHOUEE)
+        dossier = self.dossier_resultat(resultat)
+        # Une seule écriture en échec n'empêche pas l'état final : `failed`.
+        run = self.lire_json(dossier / "run.json")
+        self.assertEqual(run["etat"], "failed")
+        self.assertIn("espace insuffisant", run["erreur"])
+        self.assertFalse((dossier / "1-a.wav" / "result.json").exists())
+        self.assertEqual([plan["statut"] for plan in run["audios"]], ["non_traite"] * 2)
+        # Le moteur a été arrêté d'autant plus tôt : aucune transcription des
+        # audios suivants n'est tentée après l'échec d'écriture.
+        self.assertFalse((dossier / "2-b.wav").exists())
+        self.assertEqual(remplacements[-1], "run.json")
+        # Les écritures intermédiaires de run.json voient encore le cache ; seule
+        # l'ultime, celle de l'état final, le voit déjà supprimé.
+        self.assertGreater(len(cache_absent_a_la_cloture), 1)
+        self.assertFalse(cache_absent_a_la_cloture[0])
+        self.assertTrue(cache_absent_a_la_cloture[-1])
+        self.assertCacheNettoye()
+        for chemin in dossier.rglob("*"):
+            self.assertFalse(chemin.name.endswith(".tmp"), chemin)
+            if chemin.is_file() and chemin.suffix == ".json":
+                self.lire_json(chemin)
+
+    def test_exception_imprevue_pendant_la_collecte_conserve_les_audios_consignes(
+        self,
+    ) -> None:
+        self.ecrire_audio("a.wav")
+        self.ecrire_audio("b.wav")
+        vrai_journaliser = module_execution_moteur.ExecutionMoteur._journaliser_evenement
+        vus: list[str] = []
+
+        def journaliser(moteur, evenement, travailleur, total):
+            vus.append(str(evenement.get("type")))
+            if len(vus) == 3:  # chargement, audio a.wav, puis audio b.wav
+                raise RuntimeError("panne de test pendant la collecte")
+            return vrai_journaliser(moteur, evenement, travailleur, total)
+
+        with mock.patch.object(
+            module_execution_moteur.ExecutionMoteur,
+            "_journaliser_evenement",
+            journaliser,
+        ):
+            resultat = self.executer(self.demande(("a.wav", "b.wav")))
+
+        self.assertEqual(resultat.etat, ETAT_ECHOUEE)
+        self.assertIn("erreur interne", resultat.erreur or "")
+        self.assertEqual(self.creneau.instantane().etat, ETAT_CRENEAU_ECHOUEE)
+        dossier = self.dossier_resultat(resultat)
+        run = self.lire_json(dossier / "run.json")
+        self.assertEqual(run["etat"], "failed")
+        # Le statut du premier audio, déjà consigné, n'est pas rétrogradé.
+        self.assertEqual(
+            [plan["statut"] for plan in run["audios"]], ["ok", "non_traite"]
+        )
+        self.assertEqual(
+            self.lire_json(dossier / "1-a.wav" / "result.json")["statut"], "ok"
+        )
+        self.assertCacheNettoye()
+
+    def test_echec_de_cloture_libere_quand_meme_l_execution(self) -> None:
+        self.ecrire_audio("a.wav")
+        with mock.patch.object(
+            module_execution_moteur.ConsignateurExecution,
+            "clore",
+            side_effect=RuntimeError("panne de clôture"),
+        ):
+            resultat = self.executer(self.demande(("a.wav",)))
+
+        # Une clôture qui lève ne doit ni masquer l'issue ni empêcher la
+        # libération de l'état et la suppression du cache.
+        self.assertEqual(resultat.etat, ETAT_ECHOUEE)
+        self.assertIn("clôture de la consignation impossible", resultat.erreur or "")
+        self.assertFalse(self.service.en_cours())
+        self.assertIsNone(self.service.pid_actif())
+        self.assertCacheNettoye()
+        self.assertEqual(self.creneau.instantane().etat, ETAT_CRENEAU_ECHOUEE)
+        journal = "\n".join(self.creneau.instantane().journal)
+        self.assertIn("Clôture de la consignation impossible", journal)
+
+    def test_echec_de_consignation_du_pid_arrete_le_moteur(self) -> None:
+        self.ecrire_audio("a.wav")
+        with mock.patch.object(
+            module_execution_moteur.ConsignateurExecution,
+            "enregistrer_processus",
+            return_value=False,
+        ):
+            resultat = self.executer(self.demande(("a.wav",)))
+
+        # Sans PID persisté, la récupération de 6.5 serait aveugle : échec propre,
+        # moteur arrêté, aucune collecte d'événements.
+        self.assertEqual(resultat.etat, ETAT_ECHOUEE)
+        self.assertIsNotNone(resultat.pid)
+        self.assertIn("PID", resultat.erreur or "")
+        self.assertEqual(resultat.evenements, ())
+        self.assertEqual(self.creneau.instantane().etat, ETAT_CRENEAU_ECHOUEE)
+        run = self.lire_json(self.dossier_resultat(resultat) / "run.json")
+        self.assertEqual(run["etat"], "failed")
+        self.assertIn("PID", run["erreur"])
+        self.assertIsNone(self.service.pid_actif())
         self.assertCacheNettoye()
 
 

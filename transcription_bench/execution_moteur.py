@@ -41,23 +41,56 @@ une exécution complète, dans le thread de fond du créneau unique :
    pour un audio donnent un échec explicite (`ExecutionEchouee`), jamais un
    succès déduit d'un silence. Les audios sans résultat restent signalés non
    traités ;
-8. **nettoyage** du cache décodé (suppression du dossier de travail) dans tous
-   les cas, y compris après échec ou arrêt, mais seulement une fois le processus
-   moteur réellement terminé.
+8. **consignation** des résultats de l'exécution (tâche 6.4) sous
+   `data/results/<AAAAMMJJ-HHMMSS>-<court-id>/` : `run.json` créé en état
+   `running` puis réécrit à chaque progression, `run.log` recevant la sortie
+   d'erreur **complète** du moteur (le résumé en mémoire reste borné), et un
+   dossier `<n>-<nom-audio>/` par audio avec `transcription.txt` et
+   `result.json`. Chaque résultat d'audio est écrit dès qu'il est connu, donc
+   avant de passer au suivant ; aucun dossier existant n'est réutilisé ni
+   écrasé ;
+9. **mesures serveur** (D8) : durée totale de l'opération, du début de la
+   préparation à la fin de la collecte du moteur et de l'écriture des résultats
+   d'audios (décodage, chargement, inférence et écriture compris, hors ultime
+   sauvegarde de `run.json`), et durée du processus moteur, du lancement à sa
+   sortie. Le temps de décodage par audio vient du décodeur commun ; le RTF est
+   calculé sur la durée décodée. Une mesure indisponible reste absente, jamais
+   zéro ;
+10. **nettoyage** du cache décodé (suppression du dossier de travail) dans tous
+    les cas, y compris après échec ou arrêt, mais seulement une fois le processus
+    moteur réellement terminé, et avant la clôture de la consignation : de la
+    place est ainsi libérée pour l'écriture de l'état final.
 
 Le processus est toujours attendu avant la fin du thread de fond : le créneau
 reste donc occupé jusqu'à la fin **réelle** du processus moteur, même après un
 arrêt, un plantage ou le dépassement du délai d'arrêt.
 
-Ce module ne persiste aucun résultat : le stockage final (`run.json`,
-`result.json`, `transcription.txt`, mesures serveur) relève de la tâche 6.4. Il
-laisse à cet effet un `ResultatExecution` en mémoire, avec ses événements dans
-l'ordre reçu : la tâche 6.4 y branchera sa propre consignation, audio par audio,
-sans que ce module impose de format de fichier.
+Le format de stockage et les mesures globales vivent dans
+`transcription_bench.resultats` ; ce module ne fait que les alimenter. Une erreur
+d'écriture (disque plein, remplacement refusé) n'est jamais ignorée : elle est
+retenue par la consignation, le moteur est arrêté aussitôt, la collecte s'arrête
+et l'exécution est close en échec — l'état final est malgré tout tenté, en
+`failed` avec le motif retenu. Si le PID du processus moteur ne peut pas être
+consigné au lancement, le moteur est également arrêté et l'exécution échoue
+avant toute collecte : sans PID persisté, la récupération de 6.5 ne pourrait pas
+retrouver le processus. Une fois l'état final écrit, `run.json` n'est plus
+modifié : la clôture des exécutions restées `running` relève de la tâche 6.5, et
+les pages de résultats de la tâche 7.x.
+
+Après interruption ou échec, les durées vont jusqu'à la clôture et la sortie du
+moteur, et le pic mémoire consigné est le dernier relevé transmis, marqué comme
+partiel. `run.log` et `result.json` conservent les marques `factice`,
+`synthetique` et `mesures_simulees` : un résultat simulé ne peut pas être
+présenté comme réel.
 
 Métadonnées : chaque `ResultatExecution` et chaque `ResultatAudio` porte
 `factice` et `synthetique`, en plus des champs de provenance `factice` et
 `mesures_simulees` déjà présents dans chaque événement du runner.
+
+Aucun secret n'est persisté : ni jeton, ni variable d'environnement. Les chemins
+persistés comme données sont relatifs au dossier de résultat ; seuls un message
+d'erreur et les lignes brutes du journal du moteur (`run.log`) peuvent citer un
+chemin absolu du système.
 
 Verrous : ce service n'utilise ni verrou du créneau ni verrou de stockage de
 façon imbriquée. Son verrou interne protège l'état d'exécution (processus en
@@ -93,6 +126,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+import psutil
 
 from engines.hors_ligne import commande_runner, environnement_moteur
 from engines.protocole import (
@@ -112,17 +146,26 @@ from transcription_bench.moteurs import (
     InstallationEchouee,
     InstallationIndisponible,
     InstallationMoteurs,
+    empreinte_fichier,
 )
 from transcription_bench.operations import (
     OperationEchouee,
     OperationInterrompue,
     Travailleur,
+    horodatage_iso,
 )
 from transcription_bench.paths import (
     NOM_DOSSIER_CACHE,
     NOM_DOSSIER_MODELES,
+    NOM_DOSSIER_RESULTATS,
     ValeurRefusee,
     resoudre_dans_racine,
+)
+from transcription_bench.resultats import (
+    SOURCE_HEURE_PSUTIL,
+    SOURCE_HEURE_SERVEUR,
+    ConsignateurExecution,
+    metadonnees_moteur,
 )
 
 #: Version et format de signal du job, tenus égaux à ceux du runner par un test
@@ -219,14 +262,20 @@ class ResultatAudio:
 
 @dataclass(frozen=True)
 class ResultatExecution:
-    """Issue complète d'une exécution, en mémoire, destinée à la tâche 6.4.
+    """Issue complète d'une exécution, en mémoire, et référence de sa consignation.
 
     `evenements` conserve tous les événements interprétés, dans l'ordre reçu :
-    c'est le journal que la tâche 6.4 persistera. `journal_moteur` contient la
-    sortie d'erreur du moteur (borne aux dernières lignes). `pid` est celui du
-    processus lancé, utile aux tâches 6.4 et 6.5. Les mesures serveur (durée de
-    l'opération, durée du processus) ne sont pas prises ici : elles relèvent de
-    la tâche 6.4.
+    c'est le journal que la consignation persiste au fil de l'eau. Le résumé
+    du moteur (`journal_moteur`) est borné ; le fichier `run.log` de la
+    consignation, lui, n'est pas borné. `pid` est celui du processus lancé,
+    utile aux tâches 6.4 et 6.5.
+
+    `identifiant_resultat` nomme le dossier écrit sous `data/results` (absent si
+    le stockage n'a pas pu être ouvert), et les deux durées sont les mesures
+    serveur de D8 : `duree_operation_s` va du début de la préparation à la fin de
+    la collecte du moteur et de l'écriture des résultats d'audios, hors ultime
+    sauvegarde de `run.json` ; `duree_processus_s` va du lancement du moteur à sa
+    sortie. Une durée inconnue vaut `None`, jamais zéro.
     """
 
     etat: str
@@ -244,6 +293,9 @@ class ResultatExecution:
     code_sortie: int | None = None
     pid: int | None = None
     arret_demande: bool = False
+    identifiant_resultat: str | None = None
+    duree_operation_s: float | None = None
+    duree_processus_s: float | None = None
 
     @property
     def audios_non_traites(self) -> tuple[str, ...]:
@@ -564,19 +616,34 @@ class ExecutionMoteur:
 
         Ne reçoit que des valeurs (la demande validée) et le handle du créneau :
         aucun objet Flask, aucune demande de persistance. Lève `ExecutionEchouee`
-        pour un échec prévu (moteur mort, événements manquants) et
-        `OperationInterrompue` après un arrêt de l'utilisateur, afin que le
-        créneau enregistre l'issue ; le `ResultatExecution` reste disponible par
-        `derniere_execution`.
+        pour un échec prévu (moteur mort, événements manquants, écriture des
+        résultats impossible) et `OperationInterrompue` après un arrêt de
+        l'utilisateur, afin que le créneau enregistre l'issue ; le
+        `ResultatExecution` reste disponible par `derniere_execution`.
+
+        La consignation des résultats est propre à cette exécution : créée avant
+        toute préparation, elle est close dans tous les cas (y compris une issue
+        imprévue), une fois le processus moteur terminé et son journal fermé.
         """
         processus = self._processus_reserve()
         resultat: ResultatExecution | None = None
         dossier: Path | None = None
+        consignateur: ConsignateurExecution | None = None
+        # Début de la préparation : référence de la durée totale de l'opération.
+        debut_operation = time.perf_counter()
         try:
             dossier = self._creer_dossier_travail()
             with self._verrou:
                 self._travailleur = travailleur
-            resultat = self._executer(demande, travailleur, dossier, processus)
+            consignateur, erreur_stockage = self._ouvrir_consignation(
+                demande, travailleur, debut_operation
+            )
+            if consignateur is None:
+                resultat = self._resultat_avant_lancement(demande, erreur_stockage)
+            else:
+                resultat = self._executer(
+                    demande, travailleur, dossier, processus, consignateur
+                )
         except ExecutionImpossible as exception:
             # Dossier de travail impossible : échec prévu, aucun processus lancé.
             resultat = self._resultat_avant_lancement(demande, _message_erreur(exception))
@@ -586,11 +653,33 @@ class ExecutionMoteur:
         finally:
             # Aucun survivant, quels que soient le chemin et l'issue : le dossier
             # de travail n'est supprimé et l'état libéré qu'après la fin réelle
-            # du processus.
+            # du processus. Le cache décodé part avant la clôture : de la place
+            # est ainsi libérée pour l'écriture de l'état final, même après une
+            # erreur d'écriture (disque plein).
             self._clore_processus(processus, travailleur)
             processus.fermer()
             if dossier is not None:
                 shutil.rmtree(dossier, ignore_errors=True)
+            if consignateur is not None:
+                consignateur.fermer()
+                try:
+                    resultat = self._clore_consignation(
+                        consignateur, resultat, travailleur
+                    )
+                except Exception as erreur:  # la libération ne doit jamais manquer
+                    travailleur.journaliser(
+                        "Clôture de la consignation impossible : "
+                        f"{_message_erreur(erreur)}"
+                    )
+                    if resultat is not None:
+                        resultat = replace(
+                            resultat,
+                            etat=ETAT_ECHOUEE,
+                            erreur=(
+                                "clôture de la consignation impossible : "
+                                f"{_message_erreur(erreur)}"
+                            ),
+                        )
             self._liberer_execution(resultat)
         self._journaliser_issue(resultat, travailleur)
         if resultat.etat == ETAT_ECHOUEE:
@@ -606,8 +695,16 @@ class ExecutionMoteur:
         travailleur: Travailleur,
         dossier: Path,
         processus: ProcessusMoteur,
+        consignateur: ConsignateurExecution,
     ) -> ResultatExecution:
-        """Prépare, lance et collecte l'exécution ; ne lève pas pour un échec prévu."""
+        """Prépare, lance, collecte et consigne ; ne lève pas pour un échec prévu.
+
+        Les mesures serveur vivent dans la consignation : durée du processus
+        moteur autour de son lancement et de sa sortie, durée totale de
+        l'opération arrêtée après la collecte du moteur et l'écriture des
+        résultats d'audios (l'ultime sauvegarde de `run.json` est exclue).
+        """
+        mesures = consignateur.mesures
         try:
             declaration = self._registre.obtenir(demande.moteur)
         except MoteurInconnu:
@@ -636,7 +733,18 @@ class ExecutionMoteur:
             f"thread(s) demandé(s)"
             + (" (modèle synthétique, textes et mesures simulés)." if synthetique else ".")
         )
-        audios = self._preparer_audios(demande, travailleur, dossier, factice)
+        audios = self._preparer_audios(
+            demande, travailleur, dossier, factice, consignateur
+        )
+        if consignateur.erreur is not None:
+            # Stockage indisponible : aucun moteur n'est lancé, l'exécution échoue.
+            return self._resultat(
+                demande,
+                factice=factice,
+                audios=audios,
+                etat=ETAT_ECHOUEE,
+                erreur=consignateur.erreur,
+            )
         if self._arret_demande_actif():
             travailleur.journaliser(
                 "Arrêt demandé avant le lancement du moteur : aucun processus n'est "
@@ -671,6 +779,10 @@ class ExecutionMoteur:
                 etat=ETAT_ECHOUEE,
                 erreur=f"préparation du job impossible : {_message_erreur(erreur)}",
             )
+        # Heure de création et PID consignés dès le lancement : la source dit si
+        # l'heure vient du système ou de l'horloge du serveur (repli).
+        lance_a = horodatage_iso()
+        debut_processus = time.perf_counter()
         try:
             enfant = processus.lancer(
                 self._construire_commande(interpreteur, chemin_job),
@@ -687,24 +799,63 @@ class ExecutionMoteur:
                 erreur=None if arret else _message_erreur(erreur),
                 arret_demande=arret,
             )
+        heure_creation, source_heure = _heure_creation_processus(enfant.pid)
+        if not consignateur.enregistrer_processus(
+            pid=enfant.pid,
+            heure_creation=heure_creation,
+            source=source_heure or SOURCE_HEURE_SERVEUR,
+            lance_a=lance_a,
+        ):
+            # Sans PID persisté, la récupération de 6.5 ne peut pas retrouver ce
+            # processus : le moteur est arrêté et l'exécution conclut en échec
+            # avant toute collecte, plutôt que de continuer sans trace du PID.
+            arret_reel = processus.arreter()
+            if arret_reel:
+                mesures.duree_processus_s = time.perf_counter() - debut_processus
+            mesures.duree_operation_s = time.perf_counter() - mesures.debut
+            travailleur.journaliser(
+                "PID du processus moteur impossible à consigner : moteur arrêté, "
+                "exécution en échec."
+            )
+            return self._resultat(
+                demande,
+                factice=factice,
+                audios=audios,
+                etat=ETAT_ECHOUEE,
+                erreur=(
+                    consignateur.erreur
+                    or "PID du processus moteur impossible à consigner"
+                ),
+                code_sortie=enfant.poll(),
+                pid=enfant.pid,
+            )
         travailleur.journaliser(f"Processus moteur lancé (PID {enfant.pid}).")
         # File locale de cette exécution : aucune ligne d'une exécution précédente
         # ne peut s'y mêler, et sa borne reste valable même si le tuyau déborde.
+        # Le fichier `run.log` de la consignation, lui, reçoit toutes les lignes.
         stderr_moteur: deque[str] = deque(maxlen=NOMBRE_LIGNES_STDERR_MAX)
         fil_stderr = threading.Thread(
             target=_collecter_stderr,
-            args=(enfant, stderr_moteur),
+            args=(enfant, stderr_moteur, consignateur),
             name="transcription-bench-moteur-stderr",
             daemon=True,
         )
         fil_stderr.start()
         evenements, parasites = self._collecter_evenements(
-            enfant, travailleur, demande, indices_job, factice
+            enfant,
+            processus,
+            travailleur,
+            demande,
+            indices_job,
+            factice,
+            audios,
+            consignateur,
         )
         code_sortie = enfant.wait()
+        mesures.duree_processus_s = time.perf_counter() - debut_processus
         fil_stderr.join(self._delai_arret)
+        consignateur.fermer()
         arret = self._arret_demande_actif()
-        resultats = _appliquer_evenements(audios, evenements, indices_job)
         etat, motif = evaluer_issue(
             code_sortie=code_sortie,
             arret_demande=arret,
@@ -712,12 +863,18 @@ class ExecutionMoteur:
             indices_job=indices_job,
             nb_audios=len(demande.audios),
         )
+        if consignateur.erreur is not None:
+            # Une écriture a échoué pendant la collecte : l'exécution est en échec.
+            etat, motif = ETAT_ECHOUEE, consignateur.erreur
+        # Fin de la collecte du moteur et de l'écriture des résultats d'audios :
+        # la durée totale s'arrête ici, avant l'ultime sauvegarde de `run.json`.
+        mesures.duree_operation_s = time.perf_counter() - mesures.debut
         journal_moteur = tuple(stderr_moteur)
         _journaliser_stderr(journal_moteur, travailleur)
         return self._resultat(
             demande,
             factice=factice,
-            audios=resultats,
+            audios=audios,
             etat=etat,
             erreur=motif,
             evenements=evenements,
@@ -768,17 +925,21 @@ class ExecutionMoteur:
         travailleur: Travailleur,
         dossier: Path,
         factice: bool,
+        consignateur: ConsignateurExecution,
     ) -> list[ResultatAudio]:
         """Décode chaque audio et écrit son signal brut dès qu'il est décodé.
 
         Une erreur sur un audio (décodage, écriture) devient une erreur propre à
-        cet audio : les suivants sont traités normalement. Une demande d'arrêt
-        interrompt la préparation sans lancer le moteur.
+        cet audio : les suivants sont traités normalement, et son résultat est
+        consigné immédiatement, donc avant de passer au suivant. Une demande
+        d'arrêt interrompt la préparation sans lancer le moteur. Si le stockage
+        devient indisponible, les audios restants ne sont plus décodés (ils
+        resteront non traités) : l'appelant close l'exécution en échec.
         """
         resultats: list[ResultatAudio] = []
         total = len(demande.audios)
         for index, nom in enumerate(demande.audios):
-            if self._arret_demande_actif():
+            if consignateur.erreur is not None or self._arret_demande_actif():
                 resultats.append(_audio_non_traite(index, nom, factice, demande.synthetique))
                 continue
             try:
@@ -800,6 +961,7 @@ class ExecutionMoteur:
                     f"Audio {index + 1}/{total} « {nom} » : décodage impossible "
                     f"({message})."
                 )
+                consignateur.enregistrer_audio(resultats[-1])
                 continue
             fichier_brut = f"{PREFIXE_FICHIER_BRUT}{index}{SUFFIXE_FICHIER_BRUT}"
             try:
@@ -822,6 +984,7 @@ class ExecutionMoteur:
                     f"Audio {index + 1}/{total} « {nom} » : écriture du signal brut "
                     f"impossible ({message})."
                 )
+                consignateur.enregistrer_audio(resultats[-1])
                 continue
             prepare = AudioPrepare(
                 index=index,
@@ -898,10 +1061,13 @@ class ExecutionMoteur:
     def _collecter_evenements(
         self,
         enfant: subprocess.Popen[str],
+        processus: ProcessusMoteur,
         travailleur: Travailleur,
         demande: DemandeExecution,
         indices_job: Sequence[int],
         factice: bool,
+        audios: list[ResultatAudio],
+        consignateur: ConsignateurExecution,
     ) -> tuple[list[Mapping[str, Any]], int]:
         """Lit la sortie standard, n'interprète que les événements du protocole.
 
@@ -910,15 +1076,23 @@ class ExecutionMoteur:
         double) est comptée et journalisée sans provoquer d'échec. Après une
         demande d'arrêt, les lignes suivantes sont drainées sans être
         interprétées.
+
+        Chaque événement d'audio met à jour le résultat de cet audio et le
+        consigne aussitôt, donc avant l'audio suivant. Une erreur d'écriture ne
+        lève pas : la consignation la retient, le moteur est aussitôt arrêté (la
+        fin réelle reste attendue par l'appelant, qui garde le créneau jusqu'à
+        elle), les lignes suivantes sont drainées sans être interprétées et
+        l'appelant conclut à un échec. Les résultats déjà écrits restent valides.
         """
         evenements: list[Mapping[str, Any]] = []
         parasites = 0
+        ecriture_impossible = False
         vus: set[tuple[str, int | None]] = set()
         flux = enfant.stdout
         if flux is None:
             return evenements, parasites
         for brut in flux:
-            if self._arret_demande_actif():
+            if ecriture_impossible or self._arret_demande_actif():
                 continue
             ligne = brut.rstrip("\r\n")
             evenement = analyser_ligne(ligne)
@@ -935,6 +1109,10 @@ class ExecutionMoteur:
             vus.add(_cle_evenement(evenement))
             evenements.append(evenement)
             self._journaliser_evenement(evenement, travailleur, len(demande.audios))
+            _consigner_evenement(audios, indices_job, evenement, consignateur)
+            if consignateur.erreur is not None:
+                ecriture_impossible = True
+                processus.arreter()
         return evenements, parasites
 
     def _journaliser_evenement(
@@ -979,6 +1157,11 @@ class ExecutionMoteur:
         else:
             travailleur.journaliser(
                 f"Exécution en échec : {resume} ({resultat.erreur})."
+            )
+        if resultat.identifiant_resultat is not None:
+            travailleur.journaliser(
+                f"Résultats consignés : {NOM_DOSSIER_RESULTATS}/"
+                f"{resultat.identifiant_resultat}."
             )
 
     # -- état et helpers -----------------------------------------------------
@@ -1058,6 +1241,107 @@ class ExecutionMoteur:
             for index, nom in enumerate(demande.audios)
         ]
 
+    # -- consignation des résultats (tâche 6.4) ------------------------------
+
+    def _metadonnees_moteur(self, demande: DemandeExecution) -> dict[str, Any]:
+        """Identité du moteur demandé, verrou de dépendances et versions lues.
+
+        Les versions viennent du marqueur d'installation relu par l'inventaire
+        local, jamais d'une supposition ; le moteur factice n'a ni verrou ni
+        version, et un moteur inconnu est consigné comme tel.
+        """
+        try:
+            declaration = self._registre.obtenir(demande.moteur)
+        except MoteurInconnu:
+            return metadonnees_moteur(demande.moteur, demande.moteur, factice=False)
+        empreinte: str | None = None
+        versions: dict[str, str | None] | None = None
+        if not declaration.factice:
+            try:
+                empreinte = empreinte_fichier(self._moteurs.chemin_verrou(declaration))
+            except (InstallationIndisponible, ValeurRefusee, OSError):
+                empreinte = None
+            etats = {moteur.identifiant: moteur for moteur in self._moteurs.inventaire()}
+            etat = etats.get(declaration.identifiant)
+            if etat is not None and etat.versions:
+                versions = dict(etat.versions)
+        return metadonnees_moteur(
+            declaration.identifiant,
+            declaration.nom,
+            factice=declaration.factice,
+            empreinte_verrou=empreinte,
+            versions=versions,
+        )
+
+    def _ouvrir_consignation(
+        self, demande: DemandeExecution, travailleur: Travailleur, debut: float
+    ) -> tuple[ConsignateurExecution | None, str | None]:
+        """Crée la consignation de cette exécution, ou explique son impossibilité.
+
+        Le dossier de résultat, `run.json` en état `running` et `run.log` sont
+        créés ici, avant tout décodage : une exécution qui ne peut pas être
+        consignée ne lance aucun moteur.
+        """
+        consignateur = ConsignateurExecution(
+            self._donnees,
+            demande,
+            self._metadonnees_moteur(demande),
+            debut=debut,
+        )
+        if not consignateur.ouvrir():
+            # Aucun handle ne doit rester ouvert derrière une consignation refusée.
+            consignateur.fermer()
+            return None, (
+                "enregistrement des résultats impossible : "
+                f"{consignateur.erreur or 'stockage indisponible'}"
+            )
+        travailleur.journaliser(
+            f"Résultats de l'exécution : {NOM_DOSSIER_RESULTATS}/"
+            f"{consignateur.identifiant}."
+        )
+        return consignateur, None
+
+    def _clore_consignation(
+        self,
+        consignateur: ConsignateurExecution,
+        resultat: ResultatExecution,
+        travailleur: Travailleur,
+    ) -> ResultatExecution:
+        """Écrit l'état final, puis rapporte identifiant et mesures au résultat.
+
+        Une erreur d'écriture ici (disque plein) ne doit pas masquer l'issue
+        réelle : `clore` tente malgré tout l'état final, en `failed` avec le
+        motif retenu, l'exécution est close en échec et aucune exception ne
+        remonte au créneau. Une erreur d'écriture du journal du moteur, elle, est
+        seulement signalée : `run.log` n'est qu'une trace et les résultats
+        restent exploitables.
+        """
+        mesures = consignateur.mesures
+        if mesures.duree_operation_s is None:
+            # Issue imprévue avant la fin mesurée : la durée va jusqu'à la clôture.
+            mesures.duree_operation_s = time.perf_counter() - mesures.debut
+        consignateur.clore(resultat)
+        resultat = replace(
+            resultat,
+            identifiant_resultat=consignateur.identifiant,
+            duree_operation_s=mesures.duree_operation_s,
+            duree_processus_s=mesures.duree_processus_s,
+        )
+        if consignateur.erreur is not None:
+            if consignateur.erreur != resultat.erreur:
+                travailleur.journaliser(
+                    f"Consignation des résultats en échec : {consignateur.erreur}"
+                )
+            if resultat.etat != ETAT_ECHOUEE:
+                resultat = replace(
+                    resultat, etat=ETAT_ECHOUEE, erreur=consignateur.erreur
+                )
+        if consignateur.erreur_journal is not None:
+            travailleur.journaliser(
+                f"Journal du moteur incomplet : {consignateur.erreur_journal}"
+            )
+        return resultat
+
     def _resultat(
         self,
         demande: DemandeExecution,
@@ -1117,6 +1401,24 @@ class ExecutionMoteur:
         return replace(resultat, arret_demande=self._arret_demande_actif())
 
 
+def _heure_creation_processus(pid: int) -> tuple[float | None, str | None]:
+    """Heure de création du processus moteur, brute, lue par le système.
+
+    `psutil.Process(pid).create_time()` renvoie un horodatage epoch en secondes,
+    conservé tel quel (flottant, sans troncature à la seconde) : c'est lui que la
+    tâche 6.5 pourra confronter au PID enregistré, avec une tolérance. L'horloge
+    du serveur, elle, donne `lance_a` ; les deux lectures peuvent différer de
+    quelques dixièmes de seconde. Le processus peut déjà être mort (moteur très
+    court, moteur factice) : la valeur et la source renvoyées valent alors `None`
+    et l'appelant consigne l'absence d'heure système, avec `lance_a` comme
+    référence (source `serveur`).
+    """
+    try:
+        return psutil.Process(pid).create_time(), SOURCE_HEURE_PSUTIL
+    except (psutil.Error, OSError, ValueError):
+        return None, None
+
+
 def _cle_evenement(evenement: Mapping[str, Any]) -> tuple[str, int | None]:
     """Clé d'unicité d'un événement : type normalisé et index d'audio éventuel.
 
@@ -1129,14 +1431,27 @@ def _cle_evenement(evenement: Mapping[str, Any]) -> tuple[str, int | None]:
     return (type_evenement, None)
 
 
-def _collecter_stderr(enfant: subprocess.Popen[str], journal: deque[str]) -> None:
-    """Remplit la file locale de sortie d'erreur du moteur, bornée à sa taille."""
+def _collecter_stderr(
+    enfant: subprocess.Popen[str],
+    journal: deque[str],
+    consignateur: ConsignateurExecution,
+) -> None:
+    """Lit la sortie d'erreur du moteur et l'écrit intégralement dans `run.log`.
+
+    Le résumé gardé en mémoire (`journal`, borné) sert aux messages et à la page
+    d'opération ; le fichier, lui, n'est pas borné : 2000 lignes de trace ne
+    suffisent pas à comprendre un échec d'installation de moteur. Une erreur
+    d'écriture est retenue par la consignation et n'interrompt pas la lecture, le
+    moteur ne devant jamais rester bloqué sur un tuyau plein.
+    """
     flux = enfant.stderr
     if flux is None:
         return
     try:
         for brut in flux:
-            journal.append(brut.rstrip("\r\n"))
+            ligne = brut.rstrip("\r\n")
+            journal.append(ligne)
+            consignateur.ecrire_journal(ligne)
     except (OSError, ValueError):
         # Tuyau fermé par le nettoyage : la collecte s'arrête sans erreur.
         return
@@ -1176,36 +1491,40 @@ def _audio_non_traite(
     )
 
 
-def _appliquer_evenements(
-    audios: Sequence[ResultatAudio],
-    evenements: Sequence[Mapping[str, Any]],
+def _consigner_evenement(
+    audios: list[ResultatAudio],
     indices_job: Sequence[int],
-) -> list[ResultatAudio]:
-    """Rattache à chaque audio son événement reçu, s'il y en a un.
+    evenement: Mapping[str, Any],
+    consignateur: ConsignateurExecution,
+) -> None:
+    """Met à jour le résultat de l'audio concerné et le consigne aussitôt.
 
     L'index d'un événement est sa position dans le job, qui exclut les audios
     dont le décodage a échoué : `indices_job` le ramène à la position dans la
-    demande, qui fixe l'ordre de traitement et de consignation.
+    demande, qui fixe l'ordre de traitement, de consignation et de lecture par
+    les pages de résultats. La consignation est faite ici, donc avant l'audio
+    suivant, sans mécanisme d'abonnement générique.
     """
-    par_index: dict[int, Mapping[str, Any]] = {}
-    for evenement in evenements:
-        if evenement.get("type") not in (TYPE_AUDIO, TYPE_AUDIO_ERREUR):
-            continue
-        position = evenement.get("index")
-        if _position_valide(position, len(indices_job)):
-            par_index[indices_job[position]] = evenement
-    resultats: list[ResultatAudio] = []
-    for audio in audios:
-        evenement = par_index.get(audio.index)
-        if evenement is None:
-            resultats.append(audio)
-        elif evenement.get("type") == TYPE_AUDIO_ERREUR:
-            resultats.append(
-                replace(audio, erreur=f"moteur : {evenement.get('erreur')}")
-            )
-        else:
-            resultats.append(replace(audio, evenement=evenement))
-    return resultats
+    if evenement.get("type") not in (TYPE_AUDIO, TYPE_AUDIO_ERREUR):
+        return
+    position = evenement.get("index")
+    if not _position_valide(position, len(indices_job)):
+        return
+    index = indices_job[position]
+    if not 0 <= index < len(audios):
+        return
+    audio = _avec_evenement(audios[index], evenement)
+    audios[index] = audio
+    consignateur.enregistrer_audio(audio)
+
+
+def _avec_evenement(
+    audio: ResultatAudio, evenement: Mapping[str, Any]
+) -> ResultatAudio:
+    """Résultat d'un audio complété par son événement (texte ou erreur moteur)."""
+    if evenement.get("type") == TYPE_AUDIO_ERREUR:
+        return replace(audio, erreur=f"moteur : {evenement.get('erreur')}")
+    return replace(audio, evenement=evenement)
 
 
 def _motif_ligne_ignoree(

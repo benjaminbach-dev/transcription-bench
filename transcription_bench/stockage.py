@@ -1,11 +1,11 @@
-"""Lectures et écritures JSON atomiques sous data/, protégées par un verrou commun.
+"""Lectures et écritures atomiques sous data/, protégées par un verrou commun.
 
-Un seul verrou (`VERROU_STOCKAGE`) protège les lectures et les remplacements de
-fichiers JSON écrits par les services : il évite de remplacer un fichier pendant
-qu'une page le lit, en particulier sous Windows où un remplacement concurrent
-d'une lecture peut échouer. Ce verrou est local au processus serveur ; il ne
-prétend pas protéger contre un autre programme qui modifierait les mêmes
-fichiers.
+Un seul verrou (`VERROU_STOCKAGE`) protège les lectures et les remplacements des
+fichiers JSON et texte écrits par les services (résultats d'exécution compris) :
+il évite de remplacer un fichier pendant qu'une page le lit, en particulier sous
+Windows où un remplacement concurrent d'une lecture peut échouer. Ce verrou est
+local au processus serveur ; il ne prétend pas protéger contre un autre
+programme qui modifierait les mêmes fichiers.
 
 Ordre des verrous : le verrou du créneau peut être tenu pendant un appel à
 `ecrire_json_atomique` (publication d'un marqueur prêt sous verrou), jamais
@@ -61,6 +61,30 @@ def ecrire_json_atomique(chemin: Path, contenu: Any) -> None:
     `os.replace`, et il est supprimé en cas d'échec. Les échecs d'écriture
     remontent à l'appelant, qui ne doit alors publier aucun état prêt.
     """
+
+    def ecrire(fichier: Any) -> None:
+        json.dump(contenu, fichier, ensure_ascii=False, indent=2, sort_keys=True)
+        fichier.write("\n")
+
+    _ecrire_atomique(chemin, ecrire)
+
+
+def ecrire_texte_atomique(chemin: Path, contenu: str) -> None:
+    """Écrit `contenu` en UTF-8 dans `chemin` par remplacement atomique.
+
+    Même garantie que pour les JSON (fichier temporaire du même dossier, fermé
+    puis `os.replace`), pour qu'une interruption ne laisse pas de transcription
+    partiellement écrite.
+    """
+
+    def ecrire(fichier: Any) -> None:
+        fichier.write(contenu)
+
+    _ecrire_atomique(chemin, ecrire)
+
+
+def _ecrire_atomique(chemin: Path, ecrire: Any) -> None:
+    """Écrit un fichier temporaire du même dossier, puis le remplace sous verrou."""
     chemin = Path(chemin)
     with VERROU_STOCKAGE:
         chemin.parent.mkdir(parents=True, exist_ok=True)
@@ -69,8 +93,7 @@ def ecrire_json_atomique(chemin: Path, contenu: Any) -> None:
         )
         try:
             with os.fdopen(descripteur, "w", encoding="utf-8", newline="\n") as fichier:
-                json.dump(contenu, fichier, ensure_ascii=False, indent=2, sort_keys=True)
-                fichier.write("\n")
+                ecrire(fichier)
                 fichier.flush()
                 os.fsync(fichier.fileno())
             os.replace(nom_temporaire, chemin)
