@@ -7,7 +7,10 @@ Répondre et documenter en français. Distinguer mesures locales, faits document
 et hypothèses ; ne jamais présenter une transcription fluide comme médicalement correcte.
 
 ## Sources de contexte
-- Mémoire projet Basic Memory : `transcription-bench`, dossier versionné `.basic-memory/`.
+- Mémoire projet Basic Memory : `transcription-bench`, dossier versionné `.basic-memory/`,
+  enregistrée sous ce même nom sur chaque hôte. Y accéder via le serveur MCP global
+  `basic-memory` en passant toujours `project: transcription-bench` ; la mémoire
+  globale `main` reste réservée au savoir transversal.
 - Lire d'abord `projet/decisions-du-prototype-de-benchmark`, puis les notes pertinentes.
   Les explorations anciennes ne remplacent pas les décisions ultérieures.
 - Vérifier via le MCP que le projet pointe vers `.basic-memory/` de ce clone.
