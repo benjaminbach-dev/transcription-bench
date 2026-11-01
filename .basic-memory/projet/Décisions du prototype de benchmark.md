@@ -407,3 +407,9 @@ Provenance : utilisateur a installé espeak-ng manuellement après refus sudo po
 - [correction] Écart réel de casse API : `model.backend` renvoie "CPU" ; le design D6 exige désormais la comparaison normalisée `casefold() == "cpu"`, sans modifier la valeur brute consignée. Aucun adaptateur produit ni qualification globale ajoutés ; tâches OpenSpec inchangées 25/39.
 - [validation] Retrait d'espeak-ng, pcaudiolib et libsonic vérifié, contrairement au blocage historique indiqué plus haut. Les deux WAV sont conservés.
 - [process] Séquence utilisateur : worker borné, contrôle/corrections du principal, commit/push puis advisor final. Aucun autre moteur ni modèle que le GGUF autorisé n'a été installé dans ce lot.
+
+
+## Première tâche Transformers CPU Linux — 2026-11-01
+- [validation] Environnement Transformers5.20.2/PyTorch2.14.1+cpu installé, CPU et imports Whisper/Parakeet contrôlés, sans poids ASR ni inférence. Revue advisor favorable avec réserves et preuves corrigées par principal ; détails dans [[Préparation Linux de Transformers et PyTorch CPU]].
+- [blocker] Le verrou candidat n'embarque pas l'index CPU ajouté par --torch-backend cpu ; sa synchronisation dépend encore de ce flag. Point à résoudre avant poursuite, tâche1.2 globale non terminée. Aucun code produit ni spec modifié, compteur25/39 inchangé.
+- [decision] Sur instruction utilisateur, arrêt après cette seule tâche ; commit/push du constat puis note de reprise mémoire séparée après publication. Pas de téléchargement des modèles Transformers dans cette session.
