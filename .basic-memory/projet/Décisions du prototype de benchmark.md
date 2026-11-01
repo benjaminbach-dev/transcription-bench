@@ -399,3 +399,11 @@ Provenance : utilisateur a installé espeak-ng manuellement après refus sudo po
 ### Clôture du worker des essais FR
 
 - [provenance] Rapport final collecté après notification différée : inférence exit0, durée du processus côté lanceur ~24,84s. Un bash auxiliaire de lecture/synthèse a ensuite été refusé par la politique (`<unparsed-bash-subtree>`, approbation indisponible) ; worker arrêté sans relance ni contournement. La comparaison manuelle des textes et la vérification des JSON/empreintes/bornes citées ci-dessus sont celles du principal, réalisées directement, pas une revue textuelle effectuée par le worker. Aucun nouvel essai ni modification consécutive au refus.
+
+
+## Faisabilité transcribe.cpp Linux — 2026-11-01
+
+- [validation] Lot transcribe.cpp 0.4.1 + Whisper large-v3-turbo GGUF Q5_K_M exécuté sur le PC Linux autorisé : modèle figé/intègre, deux WAV FR synthétiques traités nativement (10,67 s et 47,70 s), CPU relu, mmap observé, rechargement en processus frais. Constats, mesures, erreurs lexicales et limites dans [[Validation Linux de transcribe.cpp avec Whisper GGUF Q5_K_M]].
+- [correction] Écart réel de casse API : `model.backend` renvoie "CPU" ; le design D6 exige désormais la comparaison normalisée `casefold() == "cpu"`, sans modifier la valeur brute consignée. Aucun adaptateur produit ni qualification globale ajoutés ; tâches OpenSpec inchangées 25/39.
+- [validation] Retrait d'espeak-ng, pcaudiolib et libsonic vérifié, contrairement au blocage historique indiqué plus haut. Les deux WAV sont conservés.
+- [process] Séquence utilisateur : worker borné, contrôle/corrections du principal, commit/push puis advisor final. Aucun autre moteur ni modèle que le GGUF autorisé n'a été installé dans ce lot.

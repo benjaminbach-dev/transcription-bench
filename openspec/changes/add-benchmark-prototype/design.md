@@ -80,7 +80,7 @@ La source taggée Waitress 3.0.2 montre que sa boucle intercepte ces exceptions 
 | Moteur | CPU | Threads | Vérification |
 |---|---|---|---|
 | faster-whisper | `device="cpu"` | `cpu_threads=N` | implicite (périphérique imposé, aucun repli GPU) |
-| transcribe.cpp | `TRANSCRIBE_BACKENDS=cpu` + `backend="cpu"` | `model.session(n_threads=N)` | `model.backend == "cpu"`, sinon erreur |
+| transcribe.cpp | `TRANSCRIBE_BACKENDS=cpu` + `backend="cpu"` | `model.session(n_threads=N)` | `model.backend.casefold() == "cpu"`, sinon erreur ; la version 0.4.1 renvoie `"CPU"` sur le PC Linux validé, la valeur brute reste consignée |
 | Transformers | `CUDA_VISIBLE_DEVICES=""`, modèle sur `cpu` | `OMP_NUM_THREADS`, `MKL_NUM_THREADS`, `torch.set_num_threads(N)` avant tout calcul | `torch.get_num_threads()` consigné, si l'API est disponible |
 
 Le nombre de threads demandé et, lorsque l'API permet de le lire, le nombre appliqué sont consignés séparément ; sans API de lecture, seul le demandé est consigné et aucun appliqué n'est affirmé. Valeur par défaut : nombre de cœurs physiques (`psutil.cpu_count(logical=False)`), à défaut cœurs logiques.
