@@ -425,3 +425,13 @@ Provenance : PC de test Linux déclaré en session (Manjaro, Ryzen 7 PRO 6850U) 
 - [measurement] Essais CPU (fp32, 8 threads, un passage, voix synthétiques, non représentatifs) : Whisper court RTF 0,936 (gonflé par padding 30 s), long-form natif RTF 0,515, fenêtres 30 s dégradent le texte ; Parakeet court RTF 0,115, long natif en une passe RTF 0,102, moins fidèle que Whisper sur ce signal — aucun classement.
 - [validation] Hors ligne : coupure OS réelle par `unshare -rn` sur l'audio court pour les deux modèles ; listes de fichiers validées, avec un écart : `generation_config.json` requis pour parakeet-tdt.
 - [limit] Windows non validé (résolution simulée seulement), coupure OS faster-whisper/transcribe-cpp et sonde web PC restent à faire ; douze écarts recensés pour la tâche 1.8 (dont D9 Parakeet fenêtres vs natif, troncature silencieuse Whisper 30 s, `--no-build` du service). Détails, mesures et preuves dans [[Faisabilité Transformers Linux du jalon 0 — téléchargements, essais et hors ligne]].
+
+
+## Clôture Linux du jalon 0 — 2026-11-01 (lots 1–3)
+
+Provenance : PC de test Linux déclaré en session ; orientation par avis advisor, workers bornés, revue advisor finale, corrections appliquées avant commit.
+
+- [validation] Coupure réseau OS `unshare -rn` prouvée pour les trois moteurs sur court et long (textes identiques aux lots de référence) ; sonde web 1.7 Linux constatée déjà faite et code 6.6 déjà livré — seul le volet Windows reste.
+- [measurement] Durées natives : audio 5 min construit par concaténation, natif une passe pour Parakeet (RTF 0,186, RSS 4915 Mio croissant avec la durée) et long-form natif pour Whisper (RTF 0,494, RSS 5112 Mio au chargement) ; 10/10 blocs couverts, aucune boucle ; un seul passage, non extrapolable.
+- [decision] 1.8 partielle appliquée : D9 (durée native prouvée 5 min, troncature Whisper interdite, fenêtres au-delà de la preuve), D10 (generation_config.json requis Parakeet), D13 (contraintes adaptateur), D4 (`--no-build`, librosa, NUMBA_CACHE_DIR) ; aucune spec modifiée. Corrections de code : generation_config requis dans compatibilite_modeles.py, `--no-build` dans moteurs.py ; 632 tests OK.
+- [status] 26/39 inchangé ; 1.6 et 1.8 non cochées (volets Windows). Décisions en attente utilisateur : cocher 1.1 et 3.2 (avis advisor : cochables) ; avis défavorable à cocher 1.6. Next : volet Windows du collègue, mode opératoire à préparer. Détails dans [[Clôture Linux du jalon 0 — coupures OS, durées natives et ajustements 1.8]].

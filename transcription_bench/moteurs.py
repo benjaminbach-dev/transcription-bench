@@ -12,7 +12,10 @@ Contrat d'installation (design D4) :
 
 1. `uv venv --python 3.12 --clear data/engines/<moteur>` (sans `--force` :
    l'environnement du moteur est le seul dossier que l'installation peut vider) ;
-2. `uv pip sync --python <interpréteur-du-venv> requirements/<moteur>.txt` ;
+2. `uv pip sync --no-build --python <interpréteur-du-venv>
+   requirements/<moteur>.txt` : `--no-build` refuse la compilation des sdists,
+   donc l'exécution des scripts de build de code téléchargé ; le code des roues
+   installées, lui, reste exécuté (moteurs choisis et verrouillés pour cela) ;
 3. contrôle d'import dans le venv avec ses propres modules déclarés, par un
    interpréteur isolé (`-I` : ni `PYTHONPATH`, ni site utilisateur, ni dossier
    courant) comme pour la sonde de préfixe ;
@@ -489,6 +492,7 @@ class InstallationMoteurs:
                     "uv",
                     "pip",
                     "sync",
+                    "--no-build",
                     "--python",
                     str(interpreteur),
                     "--allow-empty-requirements",

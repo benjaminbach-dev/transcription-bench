@@ -458,6 +458,20 @@ class TransformersCompatibiliteTest(AssertionsCompatibilite):
         self.assertEqual(refus.fichiers_manquants, ("generation_config.json",))
         self.assertIn("generation_config.json", refus.message)
 
+    def test_parakeet_sans_generation_config_refuse(self) -> None:
+        # Constat du jalon 0 : sans generation_config.json, le chargement réussit
+        # mais generate() échoue avec decoder_start_token_id nul. Le fichier est
+        # donc requis, et son absence doit refuser le dépôt à la vérification.
+        fichiers = retire(FICHIERS_PARAKET, "generation_config.json")
+        contenus = dict(CONTENUS_PARAKET)
+        contenus.pop("generation_config.json")
+        resultat = verifier_compatibilite(
+            self.declaration, fichiers, configurations=contenus
+        )
+        refus = self.assertRefus(resultat, RAISON_FICHIERS_MANQUANTS)
+        self.assertIn("generation_config.json", refus.fichiers_manquants)
+        self.assertIn("generation_config.json", refus.message)
+
     def test_parakeet_ignore_les_auxiliaires_de_vocabulaire_whisper(self) -> None:
         fichiers = (
             *FICHIERS_PARAKET,

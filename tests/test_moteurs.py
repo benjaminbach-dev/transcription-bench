@@ -376,6 +376,31 @@ class ExecuteurBloqueSynchronisation(ExecuteurCommandes):
         self.liberer_synchronisation.set()
 
 
+class ExecuteurEnregistreur(ExecuteurCommandes):
+    """Exécuteur contrôlé : installation simulée réussie, commandes enregistrées."""
+
+    def __init__(self) -> None:
+        self.commandes: list[list[str]] = []
+
+    def executer(self, arguments, *, env, journaliser, delai=None):
+        self.commandes.append(list(arguments))
+        if "venv" in arguments:
+            dossier = Path(arguments[-1])
+            interpreteur = chemin_interpreteur(dossier)
+            interpreteur.parent.mkdir(parents=True, exist_ok=True)
+            interpreteur.write_text("", encoding="utf-8")
+            journaliser("environnement simulé créé")
+            return ResultatCommande(code=0, sortie="")
+        if "-c" in arguments:
+            if "sys.prefix" in arguments[-1]:
+                return ResultatCommande(
+                    code=0, sortie=str(Path(arguments[0]).parent.parent)
+                )
+            journaliser("contrôle d'import simulé")
+            return ResultatCommande(code=0, sortie='{"modules": {"sys": null}}')
+        return ResultatCommande(code=0, sortie="")
+
+
 class ExecuteurCibleServeur(ExecuteurCommandes):
     """Exécuteur contrôlé : venv simulé dont la sonde renvoie le préfixe serveur."""
 
@@ -635,6 +660,35 @@ class ArretEtCheminsTest(SocleMoteurs):
             "`--force` permettrait d'effacer un dossier qui n'est pas un venv",
         )
         self.assertEqual(commande_sonde[1:3], ["-I", "-c"])
+
+    def test_commande_sync_refuse_toute_compilation(self) -> None:
+        executeur = ExecuteurEnregistreur()
+        service = self.service(executeur=executeur)
+
+        instantane = self.lancer_installation(service)
+
+        self.assertEqual(instantane.etat, ETAT_TERMINEE, instantane.erreur)
+        synchronisations = [
+            commande
+            for commande in executeur.commandes
+            if commande[:3] == ["uv", "pip", "sync"]
+        ]
+        self.assertEqual(len(synchronisations), 1)
+        commande = synchronisations[0]
+        self.assertIn(
+            "--no-build",
+            commande,
+            "sans `--no-build`, uv pourrait compiler une sdist à l'installation",
+        )
+        self.assertIn("--python", commande)
+        self.assertEqual(
+            commande[commande.index("--python") + 1],
+            str(chemin_interpreteur(self.dossier_moteur()).absolute()),
+        )
+        self.assertEqual(
+            commande[-1],
+            str((self.racine / "requirements" / "engine-test.txt").resolve()),
+        )
 
 
 class PageMoteursWebTest(SocleMoteurs):

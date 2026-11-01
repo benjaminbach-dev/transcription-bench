@@ -36,11 +36,13 @@ Règles implémentées ici, appelées par `DeclarationAdaptateur.regle_compatibi
     génération pour les horodatages et pour `lang_to_id` en français. Restent
     facultatifs `vocab.json`, `merges.txt`, `normalizer.json`,
     `added_tokens.json` et `special_tokens_map.json`.
-  - Parakeet TDT requiert `config.json`, un prétraitement (`processor_config.json`
-    avec `feature_extractor`, ou `preprocessor_config.json`), `tokenizer.json` et
-    `tokenizer_config.json`. `generation_config.json` reste facultatif mais
-    retenu quand il existe, car il porte notamment les paramètres de suppression
-    de jetons ; `added_tokens.json` et `special_tokens_map.json` sont facultatifs.
+  - Parakeet TDT requiert `config.json`, `generation_config.json`, un
+    prétraitement (`processor_config.json` avec `feature_extractor`, ou
+    `preprocessor_config.json`), `tokenizer.json` et `tokenizer_config.json`.
+    `generation_config.json` est requis parce que le jalon 0 a constaté que, sans
+    lui, le chargement réussit mais que `generate()` échoue avec un
+    `decoder_start_token_id` nul ; `added_tokens.json` et
+    `special_tokens_map.json` restent facultatifs.
     Les auxiliaires de vocabulaire Whisper (`vocab.json`, `merges.txt`,
     `normalizer.json`) sont ignorés pour cette famille.
   - Seuls les poids safetensors sont retenus, pour les deux familles : soit
@@ -196,7 +198,12 @@ FICHIERS_REQUIS_TRANSFORMERS: dict[str, tuple[str, ...]] = {
         "tokenizer.json",
         "tokenizer_config.json",
     ),
-    "parakeet-tdt": ("config.json", "tokenizer.json", "tokenizer_config.json"),
+    "parakeet-tdt": (
+        "config.json",
+        "generation_config.json",
+        "tokenizer.json",
+        "tokenizer_config.json",
+    ),
 }
 FICHIERS_OPTIONNELS_TRANSFORMERS: dict[str, frozenset[str]] = {
     "whisper": frozenset(
@@ -208,9 +215,7 @@ FICHIERS_OPTIONNELS_TRANSFORMERS: dict[str, frozenset[str]] = {
             "special_tokens_map.json",
         }
     ),
-    "parakeet-tdt": frozenset(
-        {"generation_config.json", "added_tokens.json", "special_tokens_map.json"}
-    ),
+    "parakeet-tdt": frozenset({"added_tokens.json", "special_tokens_map.json"}),
 }
 # Fichiers de configuration et de tokenizer communs ; les poids, l'index et les
 # shards viennent exclusivement de `_selectionner_poids`, pour ne jamais retenir
