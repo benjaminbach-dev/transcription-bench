@@ -413,3 +413,15 @@ Provenance : utilisateur a installé espeak-ng manuellement après refus sudo po
 - [validation] Environnement Transformers5.20.2/PyTorch2.14.1+cpu installé, CPU et imports Whisper/Parakeet contrôlés, sans poids ASR ni inférence. Revue advisor favorable avec réserves et preuves corrigées par principal ; détails dans [[Préparation Linux de Transformers et PyTorch CPU]].
 - [blocker] Le verrou candidat n'embarque pas l'index CPU ajouté par --torch-backend cpu ; sa synchronisation dépend encore de ce flag. Point à résoudre avant poursuite, tâche1.2 globale non terminée. Aucun code produit ni spec modifié, compteur25/39 inchangé.
 - [decision] Sur instruction utilisateur, arrêt après cette seule tâche ; commit/push du constat puis note de reprise mémoire séparée après publication. Pas de téléchargement des modèles Transformers dans cette session.
+
+
+## Lot Transformers jalon 0 — téléchargements, essais CPU et hors ligne — 2026-11-01
+
+Provenance : PC de test Linux déclaré en session (Manjaro, Ryzen 7 PRO 6850U) ; lot annoncé puis confirmé par l'utilisateur (~3,9 Gio de poids, essais, hors ligne, revue advisor, commit/push). Workers bornés une par une, contrôle principal entre chaque, advisor consulté sur le blocage librosa puis en revue finale ; corrections appliquées.
+
+- [validation] Point d'index résolu : le verrou auto-porté par `--find-links https://download.pytorch.org/whl/cpu/torch/` (émis via `--emit-find-links`) rend `uv pip sync` fonctionnel sans flag ; `--extra-index-url` écarté (first-index). Tâche 1.2 cochée (26/39) ; écart consigné : trois compilations au lieu d'une.
+- [decision] Blocage Parakeet tranché par avis advisor appliqué avec consentement : `librosa==1.0.0` ajouté au candidat (verrou de référence `transformers-librosa.txt`, 59 pins, 0 dérive, +335,2 Mio). Extra `transformers[audio]` et monkeypatch écartés.
+- [validation] `openai/whisper-large-v3-turbo` @41f01f3f et `nvidia/parakeet-tdt-0.6b-v3` @541d1f99 téléchargés à révision figée, listes blanches respectées, sha256 = ETag LFS, clés `cle_stockage`.
+- [measurement] Essais CPU (fp32, 8 threads, un passage, voix synthétiques, non représentatifs) : Whisper court RTF 0,936 (gonflé par padding 30 s), long-form natif RTF 0,515, fenêtres 30 s dégradent le texte ; Parakeet court RTF 0,115, long natif en une passe RTF 0,102, moins fidèle que Whisper sur ce signal — aucun classement.
+- [validation] Hors ligne : coupure OS réelle par `unshare -rn` sur l'audio court pour les deux modèles ; listes de fichiers validées, avec un écart : `generation_config.json` requis pour parakeet-tdt.
+- [limit] Windows non validé (résolution simulée seulement), coupure OS faster-whisper/transcribe-cpp et sonde web PC restent à faire ; douze écarts recensés pour la tâche 1.8 (dont D9 Parakeet fenêtres vs natif, troncature silencieuse Whisper 30 s, `--no-build` du service). Détails, mesures et preuves dans [[Faisabilité Transformers Linux du jalon 0 — téléchargements, essais et hors ligne]].
