@@ -922,9 +922,10 @@ class MoteurReelArreteTest(ResultatsTemporairesTest):
         if hasattr(signal, "SIGKILL"):
             codes_arret.append(-signal.SIGKILL)
         if os.name == "nt":
-            # Un arrêt forcé Windows (TerminateProcess) se lit comme 1 et
-            # `signal.SIGKILL` n'existe pas sous Windows.
-            codes_arret.append(1)
+            # Sous Windows, `os.kill` ne porte pas de signal : il termine le
+            # processus avec la valeur donnée comme code de sortie (15 ici) ;
+            # un TerminateProcess brut se lit comme 1.
+            codes_arret.extend((15, 1))
         self.assertIn(resultat.code_sortie, codes_arret)
         run_json = (
             self.donnees / "results" / resultat.identifiant_resultat / "run.json"
