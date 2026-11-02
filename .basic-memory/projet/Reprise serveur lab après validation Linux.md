@@ -3,7 +3,7 @@ title: Reprise serveur lab après validation Linux
 type: note
 permalink: transcription-bench/projet/reprise-serveur-lab-apres-validation-linux
 date: '2026-11-02'
-status: reprise préparée ; clone lab non confirmé
+status: transmis sur main privé ; clone lab non confirmé
 tags:
 - reprise
 - lab
@@ -58,3 +58,10 @@ Compte rendu partageable : `docs/validation-linux.md`. Preuves brutes et emprein
 ## Relations
 - relates_to [[Décisions du prototype de benchmark]]
 - replaces [[Reprise après la clôture Linux du jalon 0]]
+
+## Transmission privée vérifiée
+
+- [publication] Code, specs, documentation, workflows et note initiale publiés sur `origin/main` le 2026-11-02 : **`0824d4c92c42e6c3f761f3f92c1034ea1c9581ad`**, « Valider les parcours Linux et préparer la reprise sur le lab ». Push normal, aucune réécriture d'historique ; dépôt confirmé PRIVATE.
+- [validation] Avant transmission : 698 tests complets réussis en 16,445 s, OpenSpec strict, verrou uv hors ligne et contrôle des espaces réussis. Journal local `data/feasibility/parcours-http/20261102-141608/tests-transmission-lab.log`, non transmis par Git. Contrôle heuristique sans correspondance aux formats de secrets recherchés sur 114 fichiers hors mémoire et 16 notes lues par MCP ; ce contrôle n'est pas une garantie exhaustive d'absence de secrets.
+- [ci] Le push privé a créé le run GitHub Actions `41461687022`, terminé **skipped** conformément au gate de visibilité. Aucune validation Linux/Windows en CI n'en est déduite.
+- [status] Le clone et le démarrage d'une session sur le lab ne sont toujours pas confirmés. Le présent complément mémoire accompagne un second commit de transmission ; `git log -1` identifie le dernier état reçu, tandis que `0824d4c` identifie le lot de code.
