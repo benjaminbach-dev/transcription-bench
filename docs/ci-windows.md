@@ -43,6 +43,27 @@ Les jobs sont conditionnés à la visibilité publique : sur dépôt privé ils 
 
 L'image contient notamment des composants Visual C++ et ne représente pas un PC Windows neuf. Les imports réussis ne prouvent donc pas l'absence de prérequis système. Les options hors ligne ne constituent pas une coupure réseau. Une annulation GitHub n'est pas un test de Ctrl+C interactif. Les performances CI ne sont pas représentatives du PC utilisateur.
 
+## Écarts constatés et corrections (8.4)
+
+Premier passage de la suite sous Windows (`41467927122`, 20 échecs) puis
+convergence en quatre commits (`c309448`, `13249ae`, `d9ee207`, `930d900`) :
+
+- Produit : `os.replace` du stockage atomique retenté sur `PermissionError`
+  (un lecteur Windows peut détenir le fichier un instant) — c'est la protection
+  des lectures/écritures visée par 10.3, exercée ensuite avec succès.
+- Tests : encodage UTF-8 explicite des sorties de sous-processus ; chemins
+  temporaires résolus (forme 8.3) ; `resource` réservé à Linux ; `CON.wav`
+  créé et supprimé par préfixe `\\?\` ; PID du trampoline uv (parent de
+  l'interpréteur réel) accepté ; codes de sortie Windows d'un arrêt (15, 1) ;
+  attendu d'échappement web calculé depuis le chemin joint ; cache numba
+  comparé par chemin.
+- Specs : exigences de `platform-verification` scindées pour la validation
+  OpenSpec stricte (11.6), sans changement de fond.
+
+Aucun écart fonctionnel n'a été constaté entre les exigences et le comportement
+observé sous Windows après ces corrections ; les limites ci-dessus restent
+les bornes assumées.
+
 ## Procédure de levée des limites hors CI (non exécutée)
 
 Si une console Windows interactive devient disponible, consigner OS, machine,
