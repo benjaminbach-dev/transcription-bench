@@ -883,6 +883,7 @@ class IsolementTest(unittest.TestCase):
         resultat = subprocess.run(
             [sys.executable, "-c", CODE_SANS_MODULE_SERVEUR],
             cwd=RACINE_PROJET,
+            env={**os.environ, "PYTHONIOENCODING": "utf-8"},
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -908,6 +909,8 @@ class IsolementTest(unittest.TestCase):
             for cle, valeur in os.environ.items()
             if cle != "PYTHONPATH"
         }
+        # L'enfant écrit en UTF-8 même sans variable héritée.
+        environ["PYTHONIOENCODING"] = "utf-8"
         resultat = subprocess.run(
             [
                 sys.executable,

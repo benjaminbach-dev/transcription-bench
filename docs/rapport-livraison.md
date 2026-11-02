@@ -13,7 +13,7 @@ correcte.
 |---|---|---|
 | Suite de tests sous Linux | serveur de développement (moteur factice) | 698 tests OK en local à chaque itération, suite `unittest`, hors ligne |
 | Suite de tests sous Windows CI | CI Windows | run `41472430238` (`d9ee207`), `ubuntu-24.04` + `windows-2022`, 698 tests chacun, succès |
-| Installation des trois moteurs depuis les verrous, imports, runner et adaptateurs exercés | CI Windows | run `41477235301` (`e5927d8`), trois jobs succès, rapports `installation-*.json` |
+| Installation des trois moteurs depuis les verrous, imports, runner et adaptateurs exercés | CI Windows | run `41477235301` (`c3f48ca`), trois jobs succès, rapports `installation-*.json` ; roues arrêtées par `uv.lock` versionné, téléchargements relevés dans le journal du run |
 | Sonde voix système avant inférence | CI Windows | job `parole` des runs `41478535615` à `41480997693` : voix `Microsoft David Desktop`, culture `en-US`, texte `en`, empreinte SHA-256 vérifiée |
 | Inférence courte des quatre combinaisons | CI Windows | runs `41478535615` (faster-whisper), `41479081739` (transcribe.cpp GGUF Whisper), `41480184141` (Transformers Whisper), `41480997693` (Transformers Parakeet TDT) : transcriptions non vides, CPU relu, 4 threads, timings natifs conservés pour transcribe.cpp |
 | Adaptateurs réels sous Linux (8.1, 8.3) | qualification Linux sur PC de test | parcours du jalon 0 consignés dans `docs/validation-linux.md` et la mémoire projet ; six exécutions réelles hors ligne, verrous et empreintes |
@@ -21,14 +21,18 @@ correcte.
 | Preuves CI consignées | CI Windows | tableau des runs et rapports JSON dans `docs/ci-windows.md`, artéfacts 14 jours, copies locales `data/ci/rapports/` hors Git |
 | Documentation de lancement | documentaire | `README.md` à jour, `AGENTS.md` adapté au contexte CI relu puis rechargé ; `openspec validate add-benchmark-prototype --strict` sans erreur |
 | Limites hors CI consignées avec procédure | documentaire | `docs/ci-windows.md`, sections « Limites » et « Procédure de levée » (10.8) |
-| Audit de publication et gate | décision utilisateur | `docs/audits/publication-2026-11-02.md`, décisions consignées dans la mémoire projet : publication de l'historique existant assumée, dépôt public depuis le 2026-11-02 |
+| Audit de publication et gate | décision utilisateur | `docs/audits/publication-2026-11-02.md` avec conclusion après publication (contrôles exécutés, risques assumés, contrôles non exécutés) ; décisions consignées dans la mémoire projet : publication de l'historique existant assumée, dépôt public depuis le 2026-11-02 |
 
 ## État : partiel, un reliquat ouvert
 
-Tous les critères de livraison vérifiables (11.1 à 11.6) sont satisfaits. Un
-point reste ouvert : **8.2**, en son seul reliquat identifié par la note de
-reprise : la seconde architecture GGUF de transcribe.cpp (Qwen3-ASR ou
-Parakeet) à choisir et qualifier sur le PC de test, ou à reporter explicitement.
+Tous les critères de livraison vérifiables sont satisfaits **sauf 11.4**, qui
+reste ouverte en même temps que 8.2 : le critère exige les adaptateurs réels
+« 8.1 à 8.3 » vérifiés sous Linux, or 8.2 exige en complément la qualification
+de la seconde architecture GGUF, non réalisée. Deux points restent donc
+ouverts, liés : **8.2** (en son seul reliquat identifié par la note de
+reprise : la seconde architecture GGUF de transcribe.cpp, Qwen3-ASR ou
+Parakeet, à choisir et qualifier sur le PC de test, ou à reporter
+explicitement) et **11.4** (décochée en attendant).
 L'adaptateur transcribe.cpp et la vérification GGUF Whisper sont déjà écrits et
 validés ; la CI a d'ailleurs exécuté cette combinaison avec succès. En
 conséquence :

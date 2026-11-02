@@ -229,6 +229,7 @@ def lancer_code(code: str, *arguments: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, "-c", code, *arguments],
         cwd=paths.RACINE_PROJET,
+        env={**os.environ, "PYTHONIOENCODING": "utf-8"},
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -518,6 +519,7 @@ class ProcessusReelsTest(unittest.TestCase):
         processus = subprocess.Popen(
             [sys.executable, "-c", CODE_TENIR_VERROU, str(self.base), str(self.marqueur)],
             cwd=paths.RACINE_PROJET,
+            env={**os.environ, "PYTHONIOENCODING": "utf-8"},
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
             text=True,

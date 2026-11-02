@@ -9,6 +9,7 @@ temporaire. Aucun moteur réel, aucun poids et aucun accès réseau.
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import tempfile
@@ -94,6 +95,7 @@ class ImportSansPaquetMoteurTest(unittest.TestCase):
         resultat = subprocess.run(
             [sys.executable, "-c", CODE_IMPORT_FRAIS.format(interdits=PAQUETS_INTERDITS)],
             cwd=RACINE_PROJET,
+            env={**os.environ, "PYTHONIOENCODING": "utf-8"},
             capture_output=True,
             text=True,
             encoding="utf-8",

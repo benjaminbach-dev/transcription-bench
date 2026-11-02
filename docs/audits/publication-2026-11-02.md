@@ -50,3 +50,35 @@ Recommandations non bloquantes : clarifier que les tests sans réseau externe au
 ## Suite
 
 Présenter les décisions au propriétaire, puis seulement autoriser les corrections de confidentialité et la publication du candidat assaini. Les tâches CI ne sont pas considérées réalisées par cet audit.
+
+## Conclusion après publication — 2026-11-02, soir
+
+Le propriétaire a tranché le 2026-11-02 : publier le dépôt existant tel quel,
+historique complet, en assumant l'exposition des éléments personnels
+(identités d'auteur, machine, notes de travail). Le candidat assaini est
+abandonné comme voie de publication (il reste une archive privée locale,
+jamais à publier ni à `push --mirror`). Cette conclusion distingue trois
+catégories :
+
+**Contrôles exécutés** : scan heuristique de l'historique complet avant
+publication (369 blobs, aucun format de secret, binaire, blob volumineux ni
+chemin `data/` reconnus — recherche non exhaustive, sans détecteur
+spécialisé) ; anonymisation de l'état courant des notes mémoire (vérifiée par
+relecture) ; licence MIT ajoutée ; API GitHub consultée avant le changement
+de visibilité (aucune fork, release, issue, PR, Pages) ; constat de
+visibilité publique après bascule.
+
+**Risques acceptés par décision explicite du propriétaire** : exposition des
+identités d'auteur et adresses, du contexte machine, du journal de travail
+versionné (`.basic-memory/`) ; présence du prénom d'une tierce personne dans
+les anciennes versions Git des notes (l'état courant est anonymisé) ;
+absence d'audit intégral des 59 versions historiques de notes.
+
+**Contrôles non exécutés** : audit exhaustif des contenus historiques de la
+mémoire, audit final du candidat (objet abandonné), purge coordonnée des
+objets distants (sans objet, aucune réécriture effectuée).
+
+Le verdict initial « ne pas rendre le dépôt public » est levé par cette
+décision assumée ; il reste la référence des constats. Les tâches CI
+(10.3–10.6) ont été exécutées après publication et consignées dans
+`docs/ci-windows.md`.

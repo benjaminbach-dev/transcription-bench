@@ -8,6 +8,7 @@ le verrou sans intervention. Ils ne valent pas qualification Windows.
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import tempfile
@@ -93,6 +94,7 @@ class VerrouInstanceTest(unittest.TestCase):
         processus = subprocess.Popen(
             [sys.executable, "-c", CODE_TENIR_VERROU, str(self.donnees), str(marqueur)],
             cwd=RACINE_PROJET,
+            env={**os.environ, "PYTHONIOENCODING": "utf-8"},
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
             text=True,

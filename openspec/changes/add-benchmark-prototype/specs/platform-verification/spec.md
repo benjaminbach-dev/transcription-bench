@@ -138,11 +138,11 @@ Les limites des vérifications interactives et la procédure permettant de les l
 - **THEN** les limites hors CI sont citées avec leur état non exécuté et la procédure de levée, à côté des preuves CI
 
 ### Requirement: Audit préalable de l'historique et des contenus
-Le dépôt MUST NOT devenir public avant un audit consigné de sa visibilité, de son historique Git (secrets, jetons, données personnelles, poids, audios, environnements), du contenu de sa mémoire projet et de son historique de notes, et des licences du code et des dépendances.
+Le dépôt MUST NOT devenir public avant un audit consigné de sa visibilité, de son historique Git (secrets, jetons, données personnelles, poids, audios, environnements), du contenu de sa mémoire projet et de son historique de notes, des licences du code et des dépendances, et des licences et conditions d'accès des modèles effectivement téléchargés par les jobs CI (contrôle ciblé, sans attribution globale imposée).
 
 #### Scenario: Points d'audit
 - **WHEN** l'audit est relu
-- **THEN** visibilité, historique Git, mémoire projet et licences du code et des dépendances sont couverts et consignés
+- **THEN** visibilité, historique Git, mémoire projet, licences du code et des dépendances et licences des modèles CI sont couverts et consignés
 
 ### Requirement: Licences et accès des modèles téléchargés en CI
 Les licences et conditions d'accès des modèles effectivement téléchargés par les jobs CI MUST être contrôlées de façon ciblée, sans attribution globale imposée.

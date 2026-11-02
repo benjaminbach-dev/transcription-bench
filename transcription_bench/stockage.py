@@ -116,7 +116,13 @@ def _ecrire_atomique(chemin: Path, ecrire: Any) -> None:
 
 
 def _remplacer_avec_reessais(nom_temporaire: str, chemin: Path) -> None:
-    """`os.replace` retenté : un lecteur Windows peut détenir le fichier un instant."""
+    """`os.replace` retenté : un lecteur Windows peut détenir le fichier un instant.
+
+    Le réessai s'applique sur tout système : sous verrou, une écriture
+    contentionnée peut ainsi attendre jusqu'à `NB_REMPLACEMENTS` ×
+    `DELAI_REMPLACEMENT_S` (190 ms nominaux) avant d'échouer ; seule
+    `PermissionError` est retentie, toute autre erreur est immédiate.
+    """
     for tentative in range(NB_REMPLACEMENTS):
         try:
             os.replace(nom_temporaire, chemin)

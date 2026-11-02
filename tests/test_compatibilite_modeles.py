@@ -13,6 +13,7 @@ Aucun paquet moteur, aucun fichier de modèle et aucun appel réseau.
 from __future__ import annotations
 
 import dataclasses
+import os
 import json
 import subprocess
 import sys
@@ -276,6 +277,7 @@ class ImportSansPaquetMoteurTest(unittest.TestCase):
                 CODE_IMPORT_FRAIS.format(interdits=PAQUETS_INTERDITS),
             ],
             cwd=RACINE_PROJET,
+            env={**os.environ, "PYTHONIOENCODING": "utf-8"},
             capture_output=True,
             text=True,
             encoding="utf-8",

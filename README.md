@@ -300,8 +300,9 @@ tests/                     tests unittest, sans réseau
 - Prototype non clinique, non destiné à un usage de soin.
 - CPU uniquement ; pas de GPU, de Vulkan ni de macOS.
 - Parcours HTTP réel vérifié sous Linux avec ressources existantes ; nouvelle
-  installation vierge et Windows encore non validés. Les tests factices ne
-  remplacent pas ces essais.
+  installation vierge non validée (l'installation CI Windows ne vaut pas essai
+  vierge interactif sur PC). Console Windows interactive et coupure réseau
+  réelle restent non couvertes. Les tests factices ne remplacent pas ces essais.
 - Durées natives conservatrices : 47,7 s pour faster-whisper/transcribe.cpp et
   300 s pour Transformers ; au-delà, fenêtres fixes de 30 s. Aucune performance
   ou qualité représentative n'est déduite des essais synthétiques.
@@ -317,11 +318,14 @@ tests/                     tests unittest, sans réseau
 ## Vérifications Windows et publication
 
 Une CI GitHub Actions remplace le préalable d'un PC Windows indisponible. La
-suite de tests sans moteur réel, l'installation des trois moteurs depuis leurs
-verrous et les quatre inférences courtes sur parole synthétique créée dans le
-job ont été exécutées avec succès sous `ubuntu-24.04` et `windows-2022` le
-2026-11-02. Les preuves, leur niveau et les limites restantes sont détaillés
-dans [le rapport de livraison](docs/rapport-livraison.md) et
+suite de tests sans moteur réel a été exécutée avec succès sous Linux et
+Windows (`ubuntu-24.04` et `windows-2022`) le 2026-11-02. L'installation des
+trois moteurs depuis leurs verrous et les quatre inférences courtes sur
+parole synthétique créée dans le job ont été exécutées avec succès sous
+`windows-2022` (moteurs CI : Windows uniquement ; la qualification des
+combinations sous Linux relève des essais sur le PC de test). Les preuves,
+leur niveau et les limites restantes sont détaillés dans
+[le rapport de livraison](docs/rapport-livraison.md) et
 [la procédure CI](docs/ci-windows.md).
 
 Le workflow de tests couvre Linux et Windows avec moteur factice ; le workflow

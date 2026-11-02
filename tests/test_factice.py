@@ -119,11 +119,15 @@ def ecrire_job(
 
 
 def environnement_sans_heritage() -> dict[str, str]:
-    return {
+    """Environnement sans héritage d'interpréteur, à sortie UTF-8 garantie."""
+    environnement = {
         cle: valeur
         for cle, valeur in os.environ.items()
         if cle not in ("PYTHONPATH", "PYTHONHOME")
     }
+    # L'enfant écrit en UTF-8 même sans PYTHONIOENCODING hérité.
+    environnement["PYTHONIOENCODING"] = "utf-8"
+    return environnement
 
 
 def evenements_de(sortie: str) -> list[dict[str, object]]:

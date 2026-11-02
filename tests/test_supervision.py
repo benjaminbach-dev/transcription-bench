@@ -976,6 +976,7 @@ class ServeurReelArreteTest(ResultatsTemporairesTest):
         processus = subprocess.Popen(
             [sys.executable, "-c", code, str(self.donnees), str(self.port)],
             cwd=paths.RACINE_PROJET,
+            env={**os.environ, "PYTHONIOENCODING": "utf-8"},
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,

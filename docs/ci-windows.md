@@ -9,22 +9,35 @@ conservées en artefacts pendant 14 jours et recopiées localement hors Git :
 | Run | Commit | Contenu | Résultat |
 |---|---|---|---|
 | `41472430238` | `d9ee207` | suite de tests factice, Linux + Windows (698 tests chacun) | succès |
-| `41477235301` | `e5927d8` | imports : installation des trois moteurs depuis les verrous, contrôle d'import, runner factice exercé dans chaque venv | succès |
+| `41477235301` | `c3f48ca` | imports : installation des trois moteurs depuis les verrous, contrôle d'import, runner factice exercé dans chaque venv | succès |
 | `41478535615` | `e5927d8` | parole (voix `Microsoft David Desktop`, culture `en-US`, texte en, langue imposée `fr`, empreinte SHA-256 vérifiée) puis inférence faster-whisper : transcription non vide (165 caractères), CPU relu, 4 threads | succès |
-| `41479081739` | `e5927d8` | inférence transcribe.cpp GGUF Whisper : transcription non vide, timings natifs consignés, mmap, architecture et variante relues | succès |
+| `41479081739` | `ab92616` | inférence transcribe.cpp GGUF Whisper : transcription non vide, timings natifs consignés, mmap, architecture et variante relues | succès |
 | `41480184141` | `930d900` | inférence Transformers Whisper : transcription non vide, CPU relu, 4 threads | succès |
-| `41480997693` | `930d900` | inférence Transformers Parakeet TDT : transcription non vide, sans langue forcée conformément au design | succès |
+| `41480997693` | `3982ec0` | inférence Transformers Parakeet TDT : transcription non vide, sans langue forcée conformément au design | succès |
 
 Les rapports JSON nettoyés de chaque run (commit, image `20261026.347.1`,
 Python 3.12.10, uv 0.11.8, versions des moteurs, empreinte audio, ressources
 mesurées vCPU/RAM/disque) sont conservés en artefacts 14 jours et recopiés
-sous `data/ci/rapports/` localement, hors Git. Aucun moteur ni poids n'a été
-installé sur le serveur de développement : toutes les installations et
-inférences ont eu lieu sur les runners éphémères.
+sous `data/ci/rapports/<run>/` localement, hors Git — y compris les contextes
+`ressources.json` du run de tests et les rapports d'installation du run
+d'imports. Roues retenues pour chaque moteur : arrêtées par `uv.lock` et
+`requirements/*.txt` versionnés dans le dépôt ; versions principales relues
+par l'adaptateur dans `installation-*.json` ; téléchargements observés dans le
+journal du run d'imports (extrait local `roues-journaux.txt`, journal complet
+sur GitHub pendant 14 jours). Aucun moteur ni poids n'a été installé sur le
+serveur de développement : toutes les installations et inférences ont eu lieu
+sur les runners éphémères.
 
 Le dépôt avait été privé avant le 2026-11-02 : un run privé (`41461687022`)
-s'était terminé « skipped » conformément au gate, sans valeur de preuve. Les
-instructions du dépôt ont été relues et rechargées avant les exécutions.
+s'était terminé « skipped » conformément au gate, sans valeur de preuve.
+
+Écart de procédure à arbitrer (10.9) : les instructions CI ont été relues et
+rechargées le 2026-11-02 à 16 h 48 (`c3f48ca`), **avant les jobs moteurs**
+conformément à l'intention du contexte, mais **après les premiers runs de la
+suite de tests** (16 h 04 et 16 h 31, sur `4905a9b` puis `d9ee207`). La
+tâche 10.9 exige la relecture avant la première exécution de tout job CI.
+La valeur technique des tests n'est pas annulée ; l'écart est consigné et
+soumis à l'arbitrage du propriétaire.
 
 - `.github/workflows/tests.yml` : tests avec moteur factice sous Ubuntu 24.04 et Windows Server 2022, après installation des seules dépendances serveur verrouillées.
 - `.github/workflows/moteurs-windows.yml` : déclenchement manuel. Les imports installent les trois moteurs isolément depuis les verrous. Les inférences sélectionnables téléchargent chacune un seul des quatre modèles d'essai.
@@ -55,7 +68,8 @@ L'image contient notamment des composants Visual C++ et ne représente pas un PC
 ## Écarts constatés et corrections (8.4)
 
 Premier passage de la suite sous Windows (`41467927122`, 20 échecs) puis
-convergence en quatre commits (`c309448`, `13249ae`, `d9ee207`, `930d900`) :
+convergence en trois commits de correction (`c309448`, `13249ae`, `d9ee207`,
+consignations ensuite) :
 
 - Produit : `os.replace` du stockage atomique retenté sur `PermissionError`
   (un lecteur Windows peut détenir le fichier un instant) — c'est la protection

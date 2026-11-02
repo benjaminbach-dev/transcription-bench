@@ -113,7 +113,7 @@ La livraison est constatée par des preuves rattachées à leur niveau — docum
 - [x] 11.1 Suite de tests passée sous Linux et sous Windows CI (10.3)
 - [x] 11.2 Installation par verrous et imports des trois moteurs réussis sous Windows CI, runner et adaptateur exercés (10.5)
 - [x] 11.3 Inférence courte réussie des quatre combinaisons sous Windows CI sur audio de parole synthétique créé par le job (10.4, 10.6), transcriptions non vides
-- [x] 11.4 Adaptateurs réels (8.1 à 8.3) vérifiés sous Linux sur les modèles d'essai
+- [ ] 11.4 Adaptateurs réels (8.1 à 8.3) vérifiés sous Linux sur les modèles d'essai — 8.1 et 8.3 vérifiés ; reste la seconde architecture GGUF de 8.2 sur PC (décochée après revue advisor du 2026-11-02 soir : la coche était prématurée tant que 8.2 n'est pas qualifié ou reporté explicitement)
 - [x] 11.5 Preuves CI consignées (10.7), limites hors CI consignées avec leur procédure (10.8) et audit de publication clos (10.1, 10.2), avec rapport de livraison indiquant le niveau de chaque preuve et l'absence de garantie de performance PC
 - [x] 11.6 README et `AGENTS.md` à jour (10.9) et `openspec validate add-benchmark-prototype --strict` sans erreur
 - [x] 11.7 Constater et consigner l'état final : complet si tous les critères sont satisfaits, sinon bloqué ou partiel avec les écarts et la décision explicite de l'utilisateur attendue ou obtenue sur une révision du périmètre ; cette consignation ne vaut pas réussite des critères manquants et n'autorise aucune clôture automatique ni présentation d'une livraison partielle comme complète
@@ -126,6 +126,7 @@ La livraison est constatée par des preuves rattachées à leur niveau — docum
 - 8.2 reste partielle : GGUF Whisper et timings natifs vérifiés réellement de l'adaptateur au JSON et au rendu HTML, en appel natif et en deux fenêtres, unités `ms` et aucune agrégation. Seul reliquat : seconde architecture non sélectionnée/qualifiée. Aucune réduction de périmètre n'est déduite.
 - CI et audit : licence MIT ajoutée, workflows/harnachement préparés mais non exécutés ; sauvegarde privée et base historique assainie dans une copie séparée, sans modification du dépôt actif ni du distant. Le choix de publication et l'audit final du candidat restent ouverts.
 - Limites hors CI et procédure consignées dans `docs/ci-windows.md` (10.8). Proposition de contexte CI dans `docs/proposition-contexte-ci.md`, à relire avant application dans `AGENTS.md` (10.9).
+- Ces trois points décrivent l'état au 2026-11-02 à la rédaction de la section ; la publication, les exécutions CI, l'application du contexte CI (10.9) et la conclusion d'audit ont eu lieu ensuite dans la journée — voir `docs/ci-windows.md`, `docs/rapport-livraison.md` et la conclusion de `docs/audits/publication-2026-11-02.md`.
 
 ## Workflow follow-up
 
