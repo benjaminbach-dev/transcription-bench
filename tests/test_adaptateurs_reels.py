@@ -451,7 +451,9 @@ class EnvironnementNumbaTest(unittest.TestCase):
     def test_cache_numba_remplaçable_par_l_appelant(self) -> None:
         env = environnement_moteur({}, dossier_cache_numba="/tmp/data-test/cache-numba")
 
-        self.assertEqual(env[CLE_CACHE_NUMBA], "/tmp/data-test/cache-numba")
+        # Comparaison par chemin : sous Windows, `str(Path(...))` rend le
+        # dossier en séparateurs natifs sans changer le dossier visé.
+        self.assertEqual(Path(env[CLE_CACHE_NUMBA]), Path("/tmp/data-test/cache-numba"))
 
 
 class FasterWhisperAdaptateurTest(unittest.TestCase):

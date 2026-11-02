@@ -165,10 +165,10 @@ class ListeAudiosTest(SocleAudiosTest):
         con = self.chemin("CON.wav")
         try:
             if os.name == "nt":
-                # Sans le préfixe étendu, Windows écrit dans le périphérique
-                # console et aucun fichier n'apparaît ; avec lui, un vrai
-                # fichier nommé CON.wav existe et le refus de nom est exercé.
-                Path(f"\\\\?\\{con}").write_bytes(b"contenu factice")
+                con_etendu = Path(f"\\\\?\\{con}")
+                con_etendu.write_bytes(b"contenu factice")
+                # La suppression d'un nom réservé exige aussi le préfixe.
+                self.addCleanup(lambda: con_etendu.unlink(missing_ok=True))
             else:
                 con.write_bytes(b"contenu factice")
         except OSError:
