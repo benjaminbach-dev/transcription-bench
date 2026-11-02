@@ -2,7 +2,20 @@
 
 ## État
 
-Workflows écrits et contrôlés statiquement, **aucun job de vérification Windows exécuté**. Un push privé peut créer un run aux jobs ignorés ; ce n'est pas une preuve de fonctionnement. La présence des workflows ne qualifie pas Windows. Le dépôt reste privé tant que l'audit de publication et son accord final ne sont pas levés. Les instructions du dépôt doivent être rechargées avant d'utiliser le nouveau contexte CI.
+Dépôt public depuis le 2026-11-02 (décision et audit consignés) ; les jobs
+sont exécutés. Preuves au niveau « CI Windows », image `windows-2022`,
+conservées en artefacts pendant 14 jours et recopiées localement hors Git :
+
+| Run | Commit | Contenu | Résultat |
+|---|---|---|---|
+| `41472430238` | `d9ee207` | suite de tests factice, Linux + Windows (698 tests chacun) | succès |
+| `41477235301` | `e5927d8` | imports : installation des trois moteurs depuis les verrous, contrôle d'import, runner factice exercé dans chaque venv | succès |
+| `41478535615` | `e5927d8` | parole (voix `Microsoft David Desktop`, culture `en-US`, texte en, langue imposée `fr`, empreinte SHA-256 vérifiée) puis inférence faster-whisper : transcription non vide (165 caractères), CPU relu, 4 threads | succès |
+
+Chaque inférence supplémentaire est ajoutée à ce tableau après son run. Le
+dépôt avait été privé avant le 2026-11-02 : un run privé (`41461687022`)
+s'était terminé « skipped » conformément au gate, sans valeur de preuve. Les
+instructions du dépôt ont été relues et rechargées avant les exécutions.
 
 - `.github/workflows/tests.yml` : tests avec moteur factice sous Ubuntu 24.04 et Windows Server 2022, après installation des seules dépendances serveur verrouillées.
 - `.github/workflows/moteurs-windows.yml` : déclenchement manuel. Les imports installent les trois moteurs isolément depuis les verrous. Les inférences sélectionnables téléchargent chacune un seul des quatre modèles d'essai.
