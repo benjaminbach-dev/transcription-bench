@@ -57,6 +57,7 @@ Compte rendu partageable : `docs/validation-linux.md`. Preuves brutes et emprein
 
 ## Relations
 - relates_to [[Décisions du prototype de benchmark]]
+- relates_to [[Décisions de publication 2026-11-02]]
 - replaces [[Reprise après la clôture Linux du jalon 0]]
 
 ## Transmission privée vérifiée
