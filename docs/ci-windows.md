@@ -11,9 +11,18 @@ conservées en artefacts pendant 14 jours et recopiées localement hors Git :
 | `41472430238` | `d9ee207` | suite de tests factice, Linux + Windows (698 tests chacun) | succès |
 | `41477235301` | `e5927d8` | imports : installation des trois moteurs depuis les verrous, contrôle d'import, runner factice exercé dans chaque venv | succès |
 | `41478535615` | `e5927d8` | parole (voix `Microsoft David Desktop`, culture `en-US`, texte en, langue imposée `fr`, empreinte SHA-256 vérifiée) puis inférence faster-whisper : transcription non vide (165 caractères), CPU relu, 4 threads | succès |
+| `41479081739` | `e5927d8` | inférence transcribe.cpp GGUF Whisper : transcription non vide, timings natifs consignés, mmap, architecture et variante relues | succès |
+| `41480184141` | `930d900` | inférence Transformers Whisper : transcription non vide, CPU relu, 4 threads | succès |
+| `41480997693` | `930d900` | inférence Transformers Parakeet TDT : transcription non vide, sans langue forcée conformément au design | succès |
 
-Chaque inférence supplémentaire est ajoutée à ce tableau après son run. Le
-dépôt avait été privé avant le 2026-11-02 : un run privé (`41461687022`)
+Les rapports JSON nettoyés de chaque run (commit, image `20261026.347.1`,
+Python 3.12.10, uv 0.11.8, versions des moteurs, empreinte audio, ressources
+mesurées vCPU/RAM/disque) sont conservés en artefacts 14 jours et recopiés
+sous `data/ci/rapports/` localement, hors Git. Aucun moteur ni poids n'a été
+installé sur le serveur de développement : toutes les installations et
+inférences ont eu lieu sur les runners éphémères.
+
+Le dépôt avait été privé avant le 2026-11-02 : un run privé (`41461687022`)
 s'était terminé « skipped » conformément au gate, sans valeur de preuve. Les
 instructions du dépôt ont été relues et rechargées avant les exécutions.
 
