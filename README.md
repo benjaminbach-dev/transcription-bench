@@ -16,7 +16,7 @@ une transcription médicalement correcte : aucun résultat produit ici ne doit
 | Modèles et poids | présents uniquement sous `data/` du PC Linux autorisé ; aucun poids distribué dans Git ou installé sur le serveur de développement |
 | Mesures, textes, RTF | simulés pour le moteur factice ; réels pour les moteurs réels, sans représentativité ni exactitude médicale garanties |
 | Validation Linux | exécutions, résultats, comparaison, refus de concurrence, arrêts et redémarrage vérifiés par HTTP local avec les moteurs existants ; aucune nouvelle installation vierge testée dans ce parcours |
-| Validation Windows | CI préparée, **aucune exécution Windows à ce jour** |
+| Validation Windows | suite de tests sans moteur réel passée sous Windows CI (`windows-2022`, 698 tests) ; moteurs réels et inférences non encore vérifiés sous Windows |
 
 Les familles exécutables sont Whisper pour les trois moteurs et Parakeet TDT
 pour Transformers. Les autres architectures GGUF restent non qualifiées dans
@@ -316,9 +316,10 @@ tests/                     tests unittest, sans réseau
 
 ## Vérifications Windows et publication
 
-Une CI GitHub Actions est préparée pour remplacer le préalable d'un PC Windows
-indisponible. **Aucun job de vérification Windows n'a encore été exécuté** : la
-présence des workflows ou un run privé ignoré ne prouve pas ce fonctionnement. Les jobs sont conditionnés à un
+Une CI GitHub Actions remplace le préalable d'un PC Windows indisponible. La
+suite de tests sans moteur réel a été exécutée avec succès sous Linux et
+Windows (`ubuntu-24.04` et `windows-2022`) le 2026-11-02 ; **les jobs moteurs
+et d'inférence n'ont pas encore été exécutés**. Les jobs sont conditionnés à un
 dépôt public, après audit et autorisation de publication.
 
 Le workflow de tests couvre Linux et Windows avec moteur factice ; le workflow
