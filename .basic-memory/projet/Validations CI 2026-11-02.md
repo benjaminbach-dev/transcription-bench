@@ -20,6 +20,12 @@ tags:
 - [limit] Diagnostics par journaux collés par le propriétaire (pas de `gh` ni jeton sur le lab à ce stade ; accord pour installer `gh` plus tard). Journal complet observable sur GitHub, dépôt public.
 - [status] OpenSpec : 10.3 et 11.1 cochées. Restent 10.4–10.9 (jobs moteurs manuels, preuves, AGENTS.md/README) et 8.2 (PC), 8.4 (renvois).
 
+## Jobs moteurs (10.5) — 2026-11-02, après relecture du contexte CI
+
+- [validation] Contexte CI appliqué dans `AGENTS.md` et README (tâche 10.9) après relecture utilisateur et `/reload` ; commit `c3f48ca`. Le lab reste sans moteur ni poids ; les opérations concernent les runners GitHub uniquement.
+- [validation] Job « imports » du workflow « Moteurs Windows (manuel) » : run `41477235301` sur `main` public, déclenché manuellement via `gh` (fine-grained, compte propriétaire). Les trois moteurs (faster-whisper, transcribe.cpp, Transformers) installés depuis leurs verrous sous `windows-2022`, déclarés prêts, runner factice exécuté dans chaque venv moteur et adaptateur réel importé dans le même interpréteur. Conclusion : **success** pour les trois jobs ; `parole` et `inference` ignorés conformément à `combinaison=aucune`. Tâches 10.5 et 11.2 cochées.
+- [fact] `gh` installé et authentifié sur le lab après accord utilisateur : déclenchement des jobs et lecture des journaux possibles sans copier-coller. Le jeton reste dans le magasin du client, jamais affiché ni journalisé.
+
 ## Conditions
 
 - [fact] Jobs conditionnés au dépôt public (`github.event.repository.private == false`) : levés par le passage en public du 2026-11-02. Avant, un run privé (`41461687022`) s'était terminé « skipped ».
