@@ -103,7 +103,9 @@ class SocleMoteurs(unittest.TestCase):
     def setUp(self) -> None:
         temporaire = tempfile.TemporaryDirectory()
         self.addCleanup(temporaire.cleanup)
-        self.base = Path(temporaire.name)
+        # Chemin résolu : sous Windows, le dossier temporaire peut être rendu
+        # en chemin court (8.3) alors que le produit résout les siens.
+        self.base = Path(temporaire.name).resolve()
         self.racine = self.base / "projet"
         self.donnees = self.racine / "data"
         (self.racine / "requirements").mkdir(parents=True)

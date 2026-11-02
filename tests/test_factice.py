@@ -170,6 +170,7 @@ class ExecutionCompleteTest(unittest.TestCase):
             env=environnement_sans_heritage(),
             capture_output=True,
             text=True,
+            encoding="utf-8",
             timeout=120,
             check=False,
         )
@@ -367,7 +368,9 @@ class BootstrapSansInstallationEditableTest(unittest.TestCase):
     def setUp(self) -> None:
         self._temporaire = tempfile.TemporaryDirectory()
         self.addCleanup(self._temporaire.cleanup)
-        self.racine = Path(self._temporaire.name)
+        # Chemin résolu : l'enfant résout les siens ; sous Windows, le dossier
+        # temporaire peut être rendu en chemin court (8.3).
+        self.racine = Path(self._temporaire.name).resolve()
         self.copie = self.racine / "copie"
         self.travail = self.racine / "travail"
         self.travail.mkdir()
@@ -390,6 +393,7 @@ class BootstrapSansInstallationEditableTest(unittest.TestCase):
             env=environnement_sans_heritage(),
             capture_output=True,
             text=True,
+            encoding="utf-8",
             timeout=120,
             check=False,
         )

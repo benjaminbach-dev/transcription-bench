@@ -259,7 +259,9 @@ class CreerDossierResultatTest(unittest.TestCase):
     def setUp(self) -> None:
         temporaire = tempfile.TemporaryDirectory()
         self.addCleanup(temporaire.cleanup)
-        self.donnees = Path(temporaire.name) / "data"
+        # Chemin résolu : le produit résout les siens ; sous Windows, le
+        # dossier temporaire peut être rendu en chemin court (8.3).
+        self.donnees = Path(temporaire.name).resolve() / "data"
 
     def test_identifiant_horodate_et_dossier_cree(self) -> None:
         identifiant, chemin = creer_dossier_resultat(self.donnees)

@@ -162,8 +162,15 @@ class ListeAudiosTest(SocleAudiosTest):
         self.assertIsNone(sortant.duree_indicative)
 
     def test_peripherique_reserve_windows_liste_avec_nom_refuse(self) -> None:
+        con = self.chemin("CON.wav")
         try:
-            self.chemin("CON.wav").write_bytes(b"contenu factice")
+            if os.name == "nt":
+                # Sans le préfixe étendu, Windows écrit dans le périphérique
+                # console et aucun fichier n'apparaît ; avec lui, un vrai
+                # fichier nommé CON.wav existe et le refus de nom est exercé.
+                Path(f"\\\\?\\{con}").write_bytes(b"contenu factice")
+            else:
+                con.write_bytes(b"contenu factice")
         except OSError:
             self.skipTest("ce système de fichiers refuse un nom de périphérique Windows")
         ecrire_wav(self.chemin("reel.wav"))

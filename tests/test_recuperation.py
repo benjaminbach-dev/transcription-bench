@@ -156,7 +156,9 @@ class RecuperationTest(unittest.TestCase):
     def setUp(self) -> None:
         temporaire = tempfile.TemporaryDirectory()
         self.addCleanup(temporaire.cleanup)
-        self.donnees = Path(temporaire.name) / "data-projet"
+        # Chemin résolu : le produit résout les siens ; sous Windows, le
+        # dossier temporaire peut être rendu en chemin court (8.3).
+        self.donnees = Path(temporaire.name).resolve() / "data-projet"
         self._essai = 0
 
     # -- outillage ---------------------------------------------------------

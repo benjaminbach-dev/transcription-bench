@@ -96,6 +96,7 @@ class VerrouInstanceTest(unittest.TestCase):
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
             text=True,
+            encoding="utf-8",
         )
         self.addCleanup(self._arreter, processus)
         attendre_fichier(marqueur)

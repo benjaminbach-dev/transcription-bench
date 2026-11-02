@@ -236,11 +236,18 @@ def commande_enveloppee(code: str):
 
 
 def attendre_condition(condition, description: str, delai: float = DELAI) -> None:
-    """Attend qu'une condition devienne vraie, sans supposer de durée."""
+    """Attend qu'une condition devienne vraie, sans supposer de durée.
+
+    Sous Windows, la lecture d'un JSON en cours de remplacement atomique peut
+    lever `PermissionError` un instant : c'est traité comme « pas encore ».
+    """
     echeance = time.monotonic() + delai
     while time.monotonic() < echeance:
-        if condition():
-            return
+        try:
+            if condition():
+                return
+        except PermissionError:
+            pass
         time.sleep(PAS_SONDAGE_TEST)
     raise AssertionError(description)
 

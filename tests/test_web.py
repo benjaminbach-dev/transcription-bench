@@ -121,7 +121,12 @@ class WebTest(SocleWebTest):
         corps = reponse.get_data(as_text=True)
 
         self.assertEqual(reponse.status_code, 200)
-        self.assertIn("&lt;script&gt;alert(1)&lt;/script&gt;", corps)
+        # Sous Windows, pathlib traite les « / » du nom piégé comme des
+        # séparateurs : l'attendu est calculé depuis le chemin effectivement
+        # joint, et le contenu dynamique ne doit jamais apparaître brut.
+        self.assertNotIn("<script>", corps)
+        for nom in DOSSIERS_DATA:
+            self.assertIn(html.escape(str(dossier_piege / nom)), corps)
         self.verifier_html_seul(corps)
 
     def test_action_acceptee_deleguee_au_service_injecte(self) -> None:

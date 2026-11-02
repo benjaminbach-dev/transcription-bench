@@ -882,7 +882,15 @@ class MoteurReelArreteTest(ResultatsTemporairesTest):
         attendre_fichier(self.paliers / "palier-1")
         pid_moteur = lire_pid(self.paliers / "moteur.pid")
         pid_descendant = lire_pid(self.paliers / "descendant.pid")
-        self.assertEqual(self.service.pid_actif(), pid_moteur)
+        supervise = self.service.pid_actif()
+        if os.name == "nt":
+            # Sous Windows, le python du venv uv est un trampoline : le PID
+            # supervisé (Popen) est le parent de l'interpréteur réel, qui
+            # s'auto-déclare dans moteur.pid ; le trampoline place l'enfant
+            # dans un Job Object, le tuer termine bien l'interpréteur.
+            self.assertEqual(psutil.Process(pid_moteur).ppid(), supervise)
+        else:
+            self.assertEqual(supervise, pid_moteur)
         heure_moteur, heure_descendant = identite(pid_moteur), identite(pid_descendant)
         self.assertIsNotNone(heure_moteur)
         self.assertIsNotNone(heure_descendant)
@@ -910,7 +918,11 @@ class MoteurReelArreteTest(ResultatsTemporairesTest):
         # L'audio était en cours de transcription : aucun événement reçu, il est
         # signalé non traité et les résultats déjà écrits restent valides.
         self.assertEqual(resultat.audios_non_traites, ("a.wav",))
-        self.assertIn(resultat.code_sortie, (-signal.SIGTERM, -signal.SIGKILL))
+        codes_arret = (-signal.SIGTERM, -signal.SIGKILL)
+        if os.name == "nt":
+            # Un arrêt forcé Windows (TerminateProcess) se lit comme 1.
+            codes_arret = (*codes_arret, 1)
+        self.assertIn(resultat.code_sortie, codes_arret)
         run_json = (
             self.donnees / "results" / resultat.identifiant_resultat / "run.json"
         )
@@ -963,6 +975,7 @@ class ServeurReelArreteTest(ResultatsTemporairesTest):
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            encoding="utf-8",
         )
         self.addCleanup(self._arreter, processus)
         attendre_serveur(self.port, processus)

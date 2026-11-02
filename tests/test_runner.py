@@ -785,6 +785,7 @@ class OptionsModeleEtHorsLigneTest(unittest.TestCase):
                 env=environnement_moteur(base),
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
                 timeout=120,
                 check=False,
             )
@@ -839,6 +840,7 @@ class MoteurRefuseTest(unittest.TestCase):
 
 
 class MesureMemoireTest(unittest.TestCase):
+    @unittest.skipIf(sys.platform != "linux", "module resource et sémantique ru_maxrss propres à Linux")
     def test_pic_linux_en_octets(self) -> None:
         import resource
 
@@ -883,6 +885,7 @@ class IsolementTest(unittest.TestCase):
             cwd=RACINE_PROJET,
             capture_output=True,
             text=True,
+            encoding="utf-8",
             timeout=60,
             check=False,
         )
@@ -915,6 +918,7 @@ class IsolementTest(unittest.TestCase):
             env=environ,
             capture_output=True,
             text=True,
+            encoding="utf-8",
             timeout=60,
             check=False,
         )

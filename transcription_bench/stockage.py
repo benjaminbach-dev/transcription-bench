@@ -23,10 +23,15 @@ import json
 import os
 import tempfile
 import threading
+import time
 from pathlib import Path
 from typing import Any
 
 VERROU_STOCKAGE = threading.Lock()
+
+#: Nombre de tentatives et délai entre elles pour `os.replace` sous Windows.
+NB_REMPLACEMENTS = 20
+DELAI_REMPLACEMENT_S = 0.01
 
 
 class JsonInvalide(ValueError):
@@ -84,7 +89,12 @@ def ecrire_texte_atomique(chemin: Path, contenu: str) -> None:
 
 
 def _ecrire_atomique(chemin: Path, ecrire: Any) -> None:
-    """Écrit un fichier temporaire du même dossier, puis le remplace sous verrou."""
+    """Écrit un fichier temporaire du même dossier, puis le remplace sous verrou.
+
+    Sous Windows, `os.replace` échoue par `PermissionError` si un lecteur
+    encore ouvert détient le fichier cible : le remplacement est retenté
+    brièvement avant d'abandonner, sans jamais écrire en place.
+    """
     chemin = Path(chemin)
     with VERROU_STOCKAGE:
         chemin.parent.mkdir(parents=True, exist_ok=True)
@@ -96,10 +106,22 @@ def _ecrire_atomique(chemin: Path, ecrire: Any) -> None:
                 ecrire(fichier)
                 fichier.flush()
                 os.fsync(fichier.fileno())
-            os.replace(nom_temporaire, chemin)
+            _remplacer_avec_reessais(nom_temporaire, chemin)
         except BaseException:
             try:
                 os.unlink(nom_temporaire)
             except OSError:
                 pass
             raise
+
+
+def _remplacer_avec_reessais(nom_temporaire: str, chemin: Path) -> None:
+    """`os.replace` retenté : un lecteur Windows peut détenir le fichier un instant."""
+    for tentative in range(NB_REMPLACEMENTS):
+        try:
+            os.replace(nom_temporaire, chemin)
+            return
+        except PermissionError:
+            if tentative == NB_REMPLACEMENTS - 1:
+                raise
+            time.sleep(DELAI_REMPLACEMENT_S)

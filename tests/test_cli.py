@@ -200,7 +200,7 @@ class CliTest(unittest.TestCase):
             "print(' '.join(charges))"
         )
         resultat = subprocess.run(
-            [sys.executable, "-c", code], capture_output=True, text=True, check=True
+            [sys.executable, "-c", code], capture_output=True, text=True, check=True, encoding="utf-8"
         )
         self.assertEqual(resultat.stdout.strip(), "")
         self.assertEqual(resultat.stderr, "")
@@ -231,6 +231,7 @@ def lancer_code(code: str, *arguments: str) -> subprocess.CompletedProcess[str]:
         cwd=paths.RACINE_PROJET,
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=DELAI_PROCESSUS,
     )
 
@@ -520,6 +521,7 @@ class ProcessusReelsTest(unittest.TestCase):
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
             text=True,
+            encoding="utf-8",
         )
         self.addCleanup(self._arreter, processus)
         attendre_fichier(self.marqueur)
