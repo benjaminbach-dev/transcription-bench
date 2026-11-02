@@ -117,6 +117,15 @@ def audio_transcrit(
             "nb_fenetres": 1,
             "pic_memoire_octets": pic,
             "reglages_effectifs": {"langue": "fr"},
+            "timings_natifs": [
+                {
+                    "unite": "ms",
+                    "load_ms": 12.5,
+                    "mel_ms": 3.25,
+                    "encode_ms": 40.0,
+                    "decode_ms": 60.5,
+                }
+            ],
             "langue_imposee": "fr",
             "threads_demandes": 2,
             "threads_appliques": None,
@@ -470,6 +479,19 @@ class ConsignateurExecutionTest(unittest.TestCase):
         self.assertEqual(resultat["fenetre"]["duree_s"], 30.0)
         self.assertEqual(resultat["fenetre"]["decoupage"], "fenetres-fixes")
         self.assertEqual(resultat["reglages_effectifs"], {"langue": "fr"})
+        # Timings natifs recopiés par appel, sans agrégation.
+        self.assertEqual(
+            resultat["timings_natifs"],
+            [
+                {
+                    "unite": "ms",
+                    "load_ms": 12.5,
+                    "mel_ms": 3.25,
+                    "encode_ms": 40.0,
+                    "decode_ms": 60.5,
+                }
+            ],
+        )
         self.assertEqual(resultat["transcription"]["texte"], "texte simulé")
         self.assertTrue(resultat["mesures_simulees"])
         self.assertEqual(
@@ -499,6 +521,7 @@ class ConsignateurExecutionTest(unittest.TestCase):
         self.assertIn("décodage impossible", resultat["erreur"])
         self.assertIsNone(resultat["transcription"])
         self.assertIsNone(resultat["fenetre"])
+        self.assertIsNone(resultat["timings_natifs"])
         self.assertIsNone(resultat["audio"]["empreinte_sha256"])
         for valeur in resultat["mesures"].values():
             self.assertIsNone(valeur)

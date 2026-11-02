@@ -186,6 +186,9 @@ FORMAT_AUDIO_BRUT = "float32le-16000-mono"
 TYPE_SIGNAL = "<f4"
 
 NOM_FICHIER_JOB = "job.json"
+#: Moteur dont le modèle exécutable est un **fichier** GGUF unique, choisi à
+#: l'ajout du modèle, et non le dossier `fichiers/`.
+MOTEUR_GGUF = "transcribe-cpp"
 PREFIXE_FICHIER_BRUT = "audio-"
 SUFFIXE_FICHIER_BRUT = ".f32"
 #: Préfixe des dossiers de travail créés sous `data/cache`, tenu égal à
@@ -811,7 +814,9 @@ class ExecutionMoteur:
         try:
             enfant = processus.lancer(
                 self._construire_commande(interpreteur, chemin_job),
-                environ=environnement_moteur(),
+                environ=environnement_moteur(
+                    dossier_cache_numba=self._donnees / "cache-numba"
+                ),
                 dossier=dossier,
             )
         except (OSError, ExecutionImpossible) as erreur:
@@ -1072,15 +1077,33 @@ class ExecutionMoteur:
         )
 
     def chemin_modele(self, demande: DemandeExecution) -> Path:
-        """Emplacement du modèle sous `data/models`, contrôlé ; repris du docstring
-        du module pour le modèle synthétique : il n'existe pas et n'est pas lu.
+        """Emplacement du modèle sous `data/models`, contrôlé.
+
+        Pour un moteur GGUF (`transcribe-cpp`), le chemin transmis au job est le
+        **fichier** retenu à l'ajout (`demande.fichier_gguf`), résolu sous
+        `data/models/<moteur>/<clé>/fichiers/` : un nom absent, absolu, remontant
+        ou sortant est refusé par `resoudre_dans_racine`, et un fichier
+        introuvable est refusé avant tout lancement. Les autres moteurs reçoivent
+        le dossier `fichiers/` (CTranslate2, Transformers). Le modèle synthétique
+        du factice n'existe pas et n'est pas lu.
         """
         dossier_moteur = resoudre_dans_racine(
             self._donnees / NOM_DOSSIER_MODELES, demande.moteur
         )
-        return resoudre_dans_racine(
+        dossier_fichiers = resoudre_dans_racine(
             dossier_moteur, f"{demande.cle}/{NOM_DOSSIER_FICHIERS}"
         )
+        if demande.moteur != MOTEUR_GGUF:
+            return dossier_fichiers
+        if not isinstance(demande.fichier_gguf, str) or not demande.fichier_gguf:
+            raise ValeurRefusee(
+                "fichier GGUF absent de la demande pour le moteur "
+                f"{demande.moteur!r}"
+            )
+        fichier = resoudre_dans_racine(dossier_fichiers, demande.fichier_gguf)
+        if not fichier.is_file():
+            raise ValeurRefusee(f"fichier GGUF introuvable : {demande.fichier_gguf!r}")
+        return fichier
 
     # -- collecte ------------------------------------------------------------
 

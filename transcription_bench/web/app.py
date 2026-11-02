@@ -133,9 +133,10 @@ MESSAGE_LANCEMENT = (
     "Le bouton « Lancer l'exécution » revalide la demande, décode les audios puis "
     "démarre le moteur dans le créneau global d'opération ; la page d'opération "
     "suit l'avancement et permet d'arrêter l'exécution. Une seule opération longue "
-    "à la fois : une exécution en cours refuse toute autre demande. Seul le moteur "
-    "factice est exécutable à ce stade, avec des textes et des mesures simulés ; "
-    "les moteurs réels restent non qualifiés sur PC."
+    "à la fois : une exécution en cours refuse toute autre demande. Les modèles "
+    "prêts des familles prises en charge sont exécutables après installation "
+    "explicite de leur moteur. Le moteur factice produit uniquement des textes "
+    "et des mesures simulés."
 )
 
 MESSAGE_DOSSIER_AUDIO_INACCESSIBLE = (

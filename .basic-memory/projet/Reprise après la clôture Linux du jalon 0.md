@@ -9,6 +9,14 @@ tags:
 - en-attente
 ---
 
+> Cette ancienne reprise est remplacée par [[Reprise serveur lab après validation Linux]] pour le passage de relais du 2026-11-02. Les sections historiques ci-dessous ne décrivent pas le travail restant actuel.
+
+> Point d'arrêt actualisé 2026-11-02 : parcours réel CLI/Waitress/HTTP Linux validé sur les quatre combinaisons, comparaison, refus409, arrêts réels et redémarrage sans réécriture des résultats. Timings transcribe.cpp ajoutés et vérifiés jusqu'au JSON/HTML en1appel natif et2fenêtres. Suite complète698testsOK ; voir docs/validation-linux.md et preuve sous data/feasibility/parcours-http/20261102-141608/. OpenSpec38/55, seul reliquat8.2 = seconde architectureGGUF. Aucun job Windows, commit ou publication ; instructionsCI encore proposées, pas appliquées.
+
+> Reprise après implémentation du 2026-11-02 : quatre parcours réels courts Linux réussis, 680 tests OK, OpenSpec38/55. CI et licence MIT préparées, sauvegarde et base historique assainie dans une copie privée séparée. Aucun job Windows ni publication. AGENTS.md inchangé : proposition CI à relire dans docs/proposition-contexte-ci.md. Points d'arrêt : voie de publication propre (nouveau dépôt indépendant ou purge coordonnée), revue des instructions, audit final et décisions8.2. Voir la dernière section de [[Décisions du prototype de benchmark]].
+
+> Actualisation 2026-11-02 : la priorité Windows sur PC décrite ci-dessous est remplacée par la décision de livraison via CI Windows sur dépôt public après audit. Aucun PC Windows ne sera disponible ; voir la section « Livraison Windows par CI publique » de [[Décisions du prototype de benchmark]]. Révision OpenSpec et audit en cours, aucune CI exécutée ni publication effectuée.
+
 # Reprise après la clôture Linux du jalon 0
 
 > Point d'arrêt du 2026-11-01, après les lots « Transformers jalon 0 » et « Clôture Linux du jalon 0 ». Remplace implicitement le point d'arrêt porté jusqu'ici par les sections « reprise » des notes de validation.

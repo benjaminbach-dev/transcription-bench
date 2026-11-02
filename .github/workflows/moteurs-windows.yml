@@ -1,0 +1,127 @@
+name: Moteurs Windows (manuel)
+
+on:
+  workflow_dispatch:
+    inputs:
+      imports:
+        description: Installer et vérifier les trois moteurs (sans poids)
+        type: boolean
+        default: true
+      combinaison:
+        description: Inférence réelle autorisée (un modèle par job)
+        type: choice
+        default: aucune
+        options:
+          - aucune
+          - toutes
+          - faster-whisper
+          - transcribe-gguf
+          - transformers-whisper
+          - transformers-parakeet
+
+permissions:
+  contents: read
+
+concurrency:
+  group: moteurs-windows-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHONIOENCODING: utf-8
+  HF_HUB_DISABLE_TELEMETRY: "1"
+  HF_HUB_DISABLE_IMPLICIT_TOKEN: "1"
+  HF_HOME: ${{ github.workspace }}/data/ci/hf
+  NUMBA_CACHE_DIR: ${{ github.workspace }}/data/ci/numba
+  TB_DEPOT_PUBLIC: ${{ github.event.repository.private == false && 'true' || 'false' }}
+
+jobs:
+  imports:
+    if: inputs.imports && github.event.repository.private == false
+    strategy:
+      fail-fast: false
+      matrix:
+        moteur: [faster-whisper, transcribe-cpp, transformers]
+    runs-on: windows-2022
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.11.8"
+          enable-cache: "false"
+      - run: uv sync --locked
+      - name: Installer par le service du programme et exercer son runner factice
+        env:
+          MOTEUR: ${{ matrix.moteur }}
+        run: uv run --locked --no-sync python scripts/ci/verifier.py installer "$env:MOTEUR"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: import-${{ matrix.moteur }}
+          path: data/ci/rapports/*.json
+          retention-days: 14
+          if-no-files-found: error
+
+  parole:
+    if: inputs.combinaison != 'aucune' && github.event.repository.private == false
+    runs-on: windows-2022
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Vérifier une voix système locale AVANT les téléchargements de modèles
+        shell: powershell
+        run: ./scripts/ci/generer-parole.ps1
+
+  inference:
+    needs: parole
+    if: inputs.combinaison != 'aucune'
+    strategy:
+      fail-fast: false
+      # Aucun audio partagé entre jobs : chacun le génère localement.
+      matrix:
+        cas: ${{ fromJSON(inputs.combinaison == 'toutes' && '["faster-whisper","transcribe-gguf","transformers-whisper","transformers-parakeet"]' || format('["{0}"]', inputs.combinaison)) }}
+    runs-on: windows-2022
+    timeout-minutes: 60
+    env:
+      CAS: ${{ matrix.cas }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.11.8"
+          enable-cache: "false"
+      - run: uv sync --locked
+      - name: Installer le moteur requis par la combinaison
+        run: |
+          $moteur = switch ($env:CAS) {
+            'faster-whisper' { 'faster-whisper' }
+            'transcribe-gguf' { 'transcribe-cpp' }
+            default { 'transformers' }
+          }
+          uv run --locked --no-sync python scripts/ci/verifier.py installer $moteur
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Télécharger explicitement le seul modèle de cette combinaison
+        env:
+          HF_HUB_OFFLINE: "0"
+        run: uv run --locked --no-sync python scripts/ci/verifier.py preparer "$env:CAS"
+      - name: Créer la parole synthétique dans ce job
+        shell: powershell
+        run: ./scripts/ci/generer-parole.ps1
+      - name: Transcrire via le programme (options hors ligne, pas une coupure réseau)
+        env:
+          HF_HUB_OFFLINE: "1"
+          UV_OFFLINE: "1"
+          UV_PYTHON_DOWNLOADS: never
+        run: uv run --locked --offline python scripts/ci/verifier.py inferer "$env:CAS"
+      - name: Conserver uniquement les preuves JSON nettoyées
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: inference-${{ matrix.cas }}
+          path: data/ci/rapports/*.json
+          retention-days: 14
+          if-no-files-found: error

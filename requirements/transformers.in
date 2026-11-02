@@ -1,0 +1,21 @@
+# Déclaration directe du moteur Transformers (Whisper et Parakeet TDT, CPU).
+# Reprise du verrou validé au jalon 0 Linux le 2026-11-01 :
+#   data/feasibility/transformers/transformers.in
+#   data/feasibility/transformers/transformers-librosa.txt (verrou auto-porté)
+#
+# torch : variante CPU uniquement, depuis l'index PyTorch CPU (design D4) ; le
+# pin "+cpu" explicite empêche toute roue CUDA/nvidia. L'index n'est pas
+# exprimable de façon portable ici : il est fourni à la compilation
+# (--torch-backend cpu) et consigné dans le verrou par --emit-find-links pour que
+# `uv pip sync` le relise. Les épingles doivent rester alignées sur
+# requirements/transformers.txt.
+#
+# librosa : requis par ParakeetFeatureExtractor de transformers 5.20.2 ; l'extra
+# "transformers[audio]" a été écarté (dépendances superflues). Le runner a
+# besoin de numpy et de psutil.
+
+transformers==5.20.2
+torch==2.14.1+cpu
+numpy==2.5.4
+psutil==7.2.2
+librosa==1.0.0

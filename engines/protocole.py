@@ -42,6 +42,11 @@ CHAMPS_PROVENANCE: tuple[str, ...] = ("factice", "mesures_simulees")
 
 # Champs dont la présence est exigée pour chaque type. Les valeurs peuvent être
 # `null` (mesure indisponible) : le contrat distingue « absente » de « zéro ».
+# Un événement `audio` peut porter en plus le champ facultatif `timings_natifs` :
+# liste d'objets, un par appel natif du moteur, chacun portant son unité (`ms` ou
+# `s`) et ses étapes. Il est laissé de côté par les moteurs qui n'en transmettent
+# aucun et n'est jamais obligatoire : l'absence signifie « non transmis », jamais
+# zéro. Le runner le recopie sans l'agréger, dans l'ordre des appels.
 CHAMPS_REQUIS: dict[str, tuple[str, ...]] = {
     TYPE_CHARGEMENT: (
         "duree_s",

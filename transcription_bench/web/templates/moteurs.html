@@ -35,6 +35,6 @@
 </li>
 {% endfor %}
 </ul>
-<p>Les trois moteurs réels restent inaccessibles à l'installation tant que leurs verrous de dépendances n'ont pas été validés sur PC (jalon 0). Le serveur de développement n'installe aucun moteur réel ni aucun poids. Le moteur factice ne charge aucun modèle et ne produit que des textes et mesures simulés.</p>
+<p>Un moteur réel est installable seulement si son verrou de dépendances est présent. Cette action crée son environnement isolé et contrôle ses imports ; le démarrage du serveur ne l'installe pas. Le serveur de développement reste réservé au moteur factice, sans moteur réel ni poids. Le moteur factice ne charge aucun modèle et ne produit que des textes et mesures simulés.</p>
 <p><a href="{{ url_for('accueil') }}">Retour à l'accueil</a></p>
 {% endblock %}

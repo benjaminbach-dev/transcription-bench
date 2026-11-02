@@ -2,9 +2,11 @@
 
 Les réponses Hugging Face sont simulées : soit par un petit client injecté,
 soit par le vrai client ``HuggingFace`` branché sur un transport ``httpx2``
-local. Aucun HTTP réel n'est émis, aucun poids n'est téléchargé et aucune
-déclaration fournie ne change de qualification. Les chemins de succès utilisent
-des déclarations synthétiques ``qualifiee=True``.
+local. Aucun HTTP réel n'est émis, aucun poids n'est téléchargé. Les familles de
+production sont qualifiées après la validation Linux des adaptateurs (tâches
+8.1 à 8.3) ; les cas du garde-fou « famille non qualifiée » passent par une
+copie non qualifiée explicite. Les chemins de succès utilisent des déclarations
+synthétiques ``qualifiee=True``.
 """
 
 from __future__ import annotations
@@ -29,7 +31,6 @@ from engines.declarations import (
     DECLARATION_TRANSCRIBE_CPP,
     DeclarationAdaptateur,
     Famille,
-    declarations_fournies,
 )
 from engines.registre import MoteurInconnu, RegistreMoteurs
 from transcription_bench.compatibilite_modeles import (
@@ -123,6 +124,19 @@ def declaration_synthetique(
         fichier_requirements=None,
         regle_compatibilite=regle,
         familles=tuple(Famille(nom, nom, qualifiee=qualifiee) for nom in familles),
+    )
+
+
+def declaration_non_qualifiee(
+    declaration: DeclarationAdaptateur,
+) -> DeclarationAdaptateur:
+    """Copie non qualifiée d'une déclaration fournie (garde-fou inchangé)."""
+    return dataclasses.replace(
+        declaration,
+        familles=tuple(
+            dataclasses.replace(famille, qualifiee=False, duree_native=None)
+            for famille in declaration.familles
+        ),
     )
 
 
@@ -593,7 +607,7 @@ class RefusEtErreursTest(BaseVerificationTest):
         self.assertEqual(faux.ouvertures, [])
 
     def test_declaration_reelle_non_qualifiee_reste_refusee(self) -> None:
-        self.enregistrer(DECLARATION_FASTER_WHISPER)
+        self.enregistrer(declaration_non_qualifiee(DECLARATION_FASTER_WHISPER))
         faux = FauxClient(infos_de(CONTENUS_CTRANSLATE2), CONTENUS_CTRANSLATE2)
         service = self.service(faux)
         self.lancer_et_attendre(
@@ -604,12 +618,6 @@ class RefusEtErreursTest(BaseVerificationTest):
         assert resultat is not None
         self.assertEqual(resultat.famille, "whisper")
         self.assertEqual(resultat.commit, COMMIT)
-        for declaration in declarations_fournies():
-            if declaration.factice:
-                continue
-            self.assertTrue(
-                all(not famille.qualifiee for famille in declaration.familles)
-            )
 
 
 class GgufTest(BaseVerificationTest):
@@ -715,7 +723,7 @@ class GgufTest(BaseVerificationTest):
         self.assertLess(octets_lus, len(contenu))
 
     def test_gguf_architecture_reconnue_mais_famille_non_qualifiee(self) -> None:
-        self.enregistrer(DECLARATION_TRANSCRIBE_CPP)
+        self.enregistrer(declaration_non_qualifiee(DECLARATION_TRANSCRIBE_CPP))
         entete = entete_gguf(("general.architecture", "string", "whisper"))
         infos = InfosModele(
             commit=COMMIT, fichiers=(FichierDistant("modele-q8_0.gguf", len(entete)),)

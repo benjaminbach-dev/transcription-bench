@@ -35,7 +35,10 @@ exécution `running` derrière elle ; si cette ultime écriture échoue aussi,
 par zéro. Les mesures serveur (durée de l'opération, durée du processus moteur,
 temps de décodage) sont réelles, y compris pour le moteur factice ; les mesures
 d'un audio provenant du moteur sont recopiées telles quelles et restent marquées
-`factice` / `mesures_simulees` lorsque le moteur les a simulées.
+`factice` / `mesures_simulees` lorsque le moteur les a simulées. Les timings
+natifs d'un moteur (`timings_natifs`) sont conservés à part, un par appel, avec
+leur unité ; ils varient d'un appel à l'autre et ne sont jamais agrégés ni
+confondus avec les réglages effectifs, qui restent stables pour un audio.
 
 **Format** : `schema` vaut `SCHEMA` dans `run.json` et dans chaque
 `result.json` ; les clés sont toujours présentes, avec `null` pour une valeur
@@ -791,6 +794,12 @@ class ConsignateurExecution:
             },
             "reglages_effectifs": (
                 None if evenement is None else _valeur(evenement, "reglages_effectifs")
+            ),
+            # Timings natifs facultatifs, par appel : recopiés tels quels, sans
+            # agrégation. Absents d'un moteur qui n'en transmet pas, et d'un
+            # résultat antérieur à ce champ, où ils valent `None`, jamais zéro.
+            "timings_natifs": (
+                None if evenement is None else _valeur(evenement, "timings_natifs")
             ),
             "langue_imposee": (
                 None if evenement is None else _valeur(evenement, "langue_imposee")

@@ -115,14 +115,25 @@ class DeclarationsFourniesTest(unittest.TestCase):
         )
         self.assertIs(declarations_fournies(), DECLARATIONS_FOURNIES)
 
-    def test_aucune_famille_ni_duree_native_qualifiee(self) -> None:
+    def test_familles_reelles_qualifiees_sur_linux_et_factice_non(self) -> None:
         for declaration in declarations_fournies():
             with self.subTest(moteur=declaration.identifiant):
                 self.assertTrue(declaration.familles)
-                self.assertEqual(declaration.familles_qualifiees, ())
+                if declaration.factice:
+                    self.assertEqual(declaration.familles_qualifiees, ())
+                    for famille in declaration.familles:
+                        self.assertFalse(famille.qualifiee)
+                        self.assertIsNone(famille.duree_native)
+                    continue
+                # Validation Linux consignée (jalon 0 et tâches 8.1 à 8.3) :
+                # les familles réelles sont qualifiées et déclarent la durée
+                # native prouvée. La qualification Windows reste due à la CI.
+                self.assertEqual(
+                    declaration.familles_qualifiees, declaration.familles
+                )
                 for famille in declaration.familles:
-                    self.assertFalse(famille.qualifiee)
-                    self.assertIsNone(famille.duree_native)
+                    self.assertTrue(famille.qualifiee)
+                    self.assertIsNotNone(famille.duree_native)
 
     def test_seule_la_declaration_factice_porte_le_drapeau(self) -> None:
         drapeaux = {
@@ -167,9 +178,9 @@ class DeclarationsFourniesTest(unittest.TestCase):
 
     def test_modules_de_verification_declares_sans_version(self) -> None:
         attendus = {
-            "faster-whisper": ("faster_whisper",),
-            "transcribe-cpp": ("transcribe_cpp",),
-            "transformers": ("transformers",),
+            "faster-whisper": ("faster_whisper", "numpy"),
+            "transcribe-cpp": ("transcribe_cpp", "numpy"),
+            "transformers": ("transformers", "numpy"),
             "factice": (),
         }
         for declaration in declarations_fournies():
@@ -195,11 +206,26 @@ class DeclarationsFourniesTest(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     declaration_de_test(modules_verification=(module,))
 
-    def test_aucun_reglage_reel_fourni(self) -> None:
-        for declaration in declarations_fournies():
-            with self.subTest(moteur=declaration.identifiant):
-                for famille in declaration.familles:
-                    self.assertEqual(famille.reglages, ())
+    def test_reglages_reels_exposes_par_famille(self) -> None:
+        factice = creer_registre_fourni().obtenir("factice")
+        self.assertEqual(factice.familles[0].reglages, ())
+        noms = {
+            (declaration.identifiant, famille.identifiant): tuple(
+                reglage.nom for reglage in famille.reglages
+            )
+            for declaration in declarations_fournies()
+            for famille in declaration.familles
+        }
+        self.assertEqual(
+            noms[("faster-whisper", "whisper")],
+            ("compute_type", "beam_size"),
+        )
+        self.assertEqual(
+            noms[("transcribe-cpp", "whisper")],
+            ("no_mmap", "condition_on_prev_tokens"),
+        )
+        self.assertEqual(noms[("transformers", "whisper")], ("do_normalize",))
+        self.assertEqual(noms[("transformers", "parakeet-tdt")], ())
 
     def test_declarations_immuables(self) -> None:
         declaration = declarations_fournies()[0]

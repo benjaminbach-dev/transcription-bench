@@ -13,8 +13,12 @@ qui pourraient dérouter l'interpréteur du moteur. `PATH` n'est pas réorganis�
 Il force aussi `PYTHONIOENCODING=utf-8` : le serveur décode la sortie du moteur
 en UTF-8, et sous Windows la console n'utilise pas cet encodage par défaut, ce
 qui ferait échouer l'écriture d'un message accentué sur la sortie d'erreur du
-runner. Le mapping source et `os.environ` du serveur ne sont jamais modifiés :
-les téléchargements explicites du serveur (tâche 5.4) restent donc possibles.
+runner. Enfin, il fixe `NUMBA_CACHE_DIR` (design D4) : librosa/numba, requis par
+la famille Parakeet, écrit sinon son cache JIT dans le profil utilisateur ou
+dans le paquet installé. La valeur par défaut est `data/cache-numba` à la racine
+du dépôt ; `dossier_cache_numba` permet à un appelant d'utiliser son propre
+dossier de données. Le mapping source et `os.environ` du serveur ne sont jamais
+modifiés.
 
 `mode_hors_ligne()` est le garde-fou du runner lorsqu'il est appelé directement
 (`python engines/runner.py job.json`). Il force `HF_HUB_OFFLINE=1` dans le
@@ -25,9 +29,9 @@ environnement.
 
 `options_modele(modele)` copie les options remises à `adaptateur.charger` et y
 impose `local_files_only=True` et `trust_remote_code=False`. Un job ne peut donc
-pas les désactiver. Les adaptateurs réels des tâches 8.x consommeront ces
-options aux API concernées ; aucun adaptateur réel n'est écrit ni qualifié CPU
-ici, et le moteur factice reste le seul exécutable sans validation PC.
+pas les désactiver. Les adaptateurs réels consomment ces options aux API
+concernées et relisent le périphérique effectif ; le moteur factice reste le
+seul exécutable sans modèle ni qualification PC.
 """
 
 from __future__ import annotations
@@ -41,17 +45,25 @@ from typing import Any
 CLE_HORS_LIGNE = "HF_HUB_OFFLINE"
 CLE_ENCODAGE_STDIO = "PYTHONIOENCODING"
 ENCODAGE_STDIO = "utf-8"
+CLE_CACHE_NUMBA = "NUMBA_CACHE_DIR"
+#: Cache JIT sous `data/`, hors du profil utilisateur (design D4).
+DOSSIER_CACHE_NUMBA = Path(__file__).resolve().parent.parent / "data" / "cache-numba"
 VARIABLES_PYTHON_RETIREES = ("PYTHONHOME", "PYTHONPATH", "VIRTUAL_ENV")
 
 
-def environnement_moteur(base: Mapping[str, str] | None = None) -> dict[str, str]:
+def environnement_moteur(
+    base: Mapping[str, str] | None = None,
+    dossier_cache_numba: str | Path | None = None,
+) -> dict[str, str]:
     """Prépare un nouvel environnement de sous-processus moteur, hors ligne.
 
     `base` est copié ; sa valeur par défaut est `os.environ` du processus
     appelant. Le dictionnaire renvoyé force `HF_HUB_OFFLINE=1`, force l'encodage
-    UTF-8 des entrées/sorties de l'interpréteur enfant et retire les variables
-    d'interpréteur du serveur. Aucune autre variable, notamment `PATH`, n'est
-    modifiée.
+    UTF-8 des entrées/sorties de l'interpréteur enfant, fixe
+    `NUMBA_CACHE_DIR` et retire les variables d'interpréteur du serveur. Aucune
+    autre variable, notamment `PATH`, n'est modifiée. `dossier_cache_numba`
+    remplace le dossier `data/cache-numba` par défaut ; le dossier lui-même est
+    créé par numba au premier besoin, jamais ici.
     """
     source = os.environ if base is None else base
     environnement = {
@@ -61,6 +73,12 @@ def environnement_moteur(base: Mapping[str, str] | None = None) -> dict[str, str
     }
     environnement[CLE_HORS_LIGNE] = "1"
     environnement[CLE_ENCODAGE_STDIO] = ENCODAGE_STDIO
+    cache_numba = (
+        DOSSIER_CACHE_NUMBA
+        if dossier_cache_numba is None
+        else Path(dossier_cache_numba)
+    )
+    environnement[CLE_CACHE_NUMBA] = str(cache_numba)
     return environnement
 
 

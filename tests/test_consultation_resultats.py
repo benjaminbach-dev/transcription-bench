@@ -204,6 +204,15 @@ def result_json(
         "programme": {"nom": "transcription-bench"},
         "reglages": {"langue": "fr"},
         "reglages_effectifs": {"langue": "fr"},
+        "timings_natifs": [
+            {
+                "unite": "ms",
+                "load_ms": 12.5,
+                "mel_ms": 3.25,
+                "encode_ms": 40.0,
+                "decode_ms": 60.5,
+            }
+        ],
         "langue_imposee": "fr",
         "threads": {"demandes": 2, "appliques": None},
         "fenetre": {"duree_s": 30.0, "decoupage": "fenetres-fixes", "nb_fenetres": 1},
@@ -418,11 +427,66 @@ class DetailExecutionTest(SocleConsultationTest):
         self.assertAlmostEqual(transcription.mesures.rtf, 0.5)
         self.assertIn(("Durée décodée (s)", 4.0), transcription.audio)
         self.assertEqual(transcription.langue_imposee, "fr")
+        self.assertEqual(len(transcription.timings_natifs), 1)
+        self.assertEqual(transcription.timings_natifs[0].unite, "ms")
+        self.assertEqual(transcription.timings_natifs[0].chargement, 12.5)
+        self.assertEqual(transcription.timings_natifs[0].decodage, 60.5)
         self.assertIn(("Threads demandés", 2), transcription.threads)
         self.assertIn(("Nombre de fenêtres", 1), transcription.fenetre)
         self.assertIn("FACTICE", transcription.marques)
 
-    def test_rtf_absent_sur_duree_nulle_et_conserve_au_dessus_du_repere(self) -> None:
+    def test_timings_natifs_par_appel_sans_valeur_inventee(self) -> None:
+        run = run_json(audios=(("a.wav", STATUT_OK),))
+        resultat = result_json(
+            run["audios"][0],
+            timings_natifs=[
+                {
+                    "unite": "ms",
+                    "load_ms": 12.5,
+                    "mel_ms": None,
+                    "encode_ms": 40.0,
+                    "decode_ms": 60.5,
+                },
+                {
+                    "unite": "ms",
+                    "load_ms": 1.0,
+                    "mel_ms": 2.0,
+                    "encode_ms": 3.0,
+                    "decode_ms": None,
+                },
+            ],
+        )
+        ecrire_execution(self.donnees, run, (resultat,))
+
+        detail = self.service.detail(IDENTIFIANT)
+
+        timings = detail.audios[0].transcription.timings_natifs
+        self.assertEqual([timing.chargement for timing in timings], [12.5, 1.0])
+        self.assertIsNone(timings[0].mel)
+        self.assertIsNone(timings[1].decodage)
+
+    def test_resultat_anterieur_sans_timings_natifs_reste_lisible(self) -> None:
+        run = run_json(audios=(("a.wav", STATUT_OK),))
+        resultat = result_json(run["audios"][0])
+        # Résultat antérieur au champ, et entrées illisibles écartées.
+        resultat["timings_natifs"] = ["pas un objet", {"load_ms": 1.0}]
+        ecrire_execution(self.donnees, run, (resultat,))
+
+        detail = self.service.detail(IDENTIFIANT)
+
+        self.assertEqual(detail.audios[0].transcription.timings_natifs, ())
+        del resultat["timings_natifs"]
+        ecrire_execution(self.donnees, run, (resultat,))
+        self.assertEqual(
+            self.service.detail(IDENTIFIANT)
+            .audios[0]
+            .transcription.timings_natifs,
+            (),
+        )
+
+    def test_rtf_absent_sur_duree_nulle_et_conserve_au_dessus_du_repere(
+        self,
+    ) -> None:
         run = run_json(
             audios=(("nul.wav", STATUT_OK), ("lent.wav", STATUT_OK)),
         )

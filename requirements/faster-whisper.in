@@ -1,0 +1,11 @@
+# Déclaration directe du moteur faster-whisper (CPU uniquement).
+# Reprise du verrou validé au jalon 0 Linux le 2026-11-01 :
+#   data/feasibility/faster-whisper/faster-whisper.in
+# Versions inchangées ; le runner du moteur a besoin de numpy (calculs) et de
+# psutil (pic mémoire Windows). Ne pas élargir sans mesure : les épingles
+# doivent rester alignées sur requirements/faster-whisper.txt.
+
+faster-whisper==1.2.1
+ctranslate2==4.8.3
+numpy==2.5.4
+psutil==7.2.2

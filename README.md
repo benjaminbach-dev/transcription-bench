@@ -12,15 +12,23 @@ une transcription médicalement correcte : aucun résultat produit ici ne doit
 | Élément | État |
 |---|---|
 | Serveur web local, interface HTML, moteur factice | développés et testés sur le serveur de développement Linux |
-| Moteurs réels (faster-whisper, transcribe.cpp, Transformers) | déclarés mais **non qualifiés** : adaptateurs absents (tâches 8.x), aucun verrou de dépendances validé, installation indisponible |
-| Modèles et poids | **aucun** sur le serveur de développement, aucun téléchargement effectué |
-| Mesures, textes, RTF | textes et mesures du moteur **simulés** (chargement, transcription, RTF, CPU, mémoire) ; les durées mesurées par le serveur et le décodage restent réelles |
-| Validation Linux / Windows sur PC de test | pas encore faite |
+| Moteurs réels (faster-whisper, transcribe.cpp, Transformers) | quatre parcours réels vérifiés sous Linux via les formulaires HTTP et les services du programme |
+| Modèles et poids | présents uniquement sous `data/` du PC Linux autorisé ; aucun poids distribué dans Git ou installé sur le serveur de développement |
+| Mesures, textes, RTF | simulés pour le moteur factice ; réels pour les moteurs réels, sans représentativité ni exactitude médicale garanties |
+| Validation Linux | exécutions, résultats, comparaison, refus de concurrence, arrêts et redémarrage vérifiés par HTTP local avec les moteurs existants ; aucune nouvelle installation vierge testée dans ce parcours |
+| Validation Windows | CI préparée, **aucune exécution Windows à ce jour** |
 
-Autrement dit : aujourd'hui, seule l'utilisation du **moteur factice** est
-possible. Les étapes qui installent un moteur ou téléchargent un modèle
-supposent une qualification préalable sur un PC de test (jalon 0 du changement
-OpenSpec `add-benchmark-prototype`), puis les adaptateurs réels.
+Les familles exécutables sont Whisper pour les trois moteurs et Parakeet TDT
+pour Transformers. Les autres architectures GGUF restent non qualifiées dans
+cette version. Les timings natifs transcribe.cpp sont conservés et affichés par
+appel, avec leur unité, sans addition ni confusion avec les mesures du runner.
+Le parcours HTTP Linux a été vérifié avec les environnements déjà présents,
+resynchronisés hors ligne sans changement de paquet, et les modèles locaux
+revérifiés ; cela ne vaut pas essai d'installation vierge par le bouton web.
+Un environnement ou modèle utilisé par les sondes ne devient pas
+systématiquement prêt dans l'application : les marqueurs et inventaires du
+programme restent nécessaires. Voir [le compte rendu de validation Linux](docs/validation-linux.md)
+pour les scénarios, les preuves et les limites exactes.
 
 **Règle du serveur de développement** : aucun moteur réel, aucun poids de
 modèle et aucune inférence réelle n'y sont installés ni exécutés ; ces
@@ -143,12 +151,10 @@ en fenêtres fixes de 30 s. **Aucune qualité de transcription n'est garantie ni
 
 ## Moteurs et modèles réels
 
-Ils ne sont pas utilisables sur le serveur de développement : la page
-`Moteurs` les affiche comme non installés et leur installation est aujourd'hui
-indisponible, faute de fichiers de dépendances validés
-(`requirements/<moteur>.txt`, absents du dépôt à ce stade). La procédure
-prévue, une fois les moteurs qualifiés sur PC de test, est explicite à chaque
-étape :
+Leur utilisation reste interdite sur le serveur de développement. Sur un PC
+autorisé, les verrous `requirements/<moteur>.txt` et les adaptateurs sont présents.
+Les dépendances du moteur restent séparées de celles du serveur. La procédure
+est explicite à chaque étape :
 
 - installation d'un moteur depuis la page `Moteurs` (environnement isolé créé
   par `uv`, contrôle d'import, marqueur d'installation) ;
@@ -172,8 +178,11 @@ Le mode hors ligne s'applique au **processus du moteur**, pas au serveur : la
 variable d'environnement `HF_HUB_OFFLINE=1` lui est transmise. `local_files_only`
 et `trust_remote_code` ne sont pas des variables d'environnement mais des
 **options de chargement** à passer aux API du moteur (`True` et `False`). Les
-adaptateurs réels restent à écrire et à éprouver (tâches 8.x) : leur application
-effective sera vérifiée sur PC.
+adaptateurs réels appliquent ces options aux API concernées. Les quatre parcours
+courts ont été exécutés sous Linux dans un namespace réseau isolé, avec les
+modèles déjà présents. Cela ne prouve aucun comportement Windows ; les jobs CI
+n'exerceront que les options hors ligne tant qu'aucune isolation dédiée n'est
+vérifiée.
 
 Le serveur, lui, n'accède au réseau que sur action explicite de l'utilisateur
 (installation d'un moteur, vérification ou téléchargement d'un modèle). Aucune
@@ -261,7 +270,7 @@ engines/
   protocole.py             contrat d'événements runner ↔ serveur (lignes préfixées)
   runner.py                exécution dans le processus du moteur, événements préfixés
   hors_ligne.py            environnement hors ligne du moteur
-  adaptateurs/factice.py   moteur factice
+  adaptateurs/            moteur factice, faster-whisper, transcribe.cpp, Transformers
 tests/                     tests unittest, sans réseau
 ```
 
@@ -290,13 +299,44 @@ tests/                     tests unittest, sans réseau
 
 - Prototype non clinique, non destiné à un usage de soin.
 - CPU uniquement ; pas de GPU, de Vulkan ni de macOS.
-- Validation Linux et Windows sur PC de test non effectuée ; les tests du
-  serveur de développement ne valent pas validation.
-- Moteurs réels non installables pour l'instant (adaptateurs 8.x et verrous
-  absents) ; aucune mesure réelle disponible.
+- Parcours HTTP réel vérifié sous Linux avec ressources existantes ; nouvelle
+  installation vierge et Windows encore non validés. Les tests factices ne
+  remplacent pas ces essais.
+- Durées natives conservatrices : 47,7 s pour faster-whisper/transcribe.cpp et
+  300 s pour Transformers ; au-delà, fenêtres fixes de 30 s. Aucune performance
+  ou qualité représentative n'est déduite des essais synthétiques.
+- Parakeet TDT est multilingue et ne reçoit pas d'option de langue forcée par
+  cette API : `langue_imposee` vaut `null`, contrairement aux parcours Whisper.
 - Un seul utilisateur, aucune authentification, aucune file d'attente : une
   seule opération longue à la fois.
 - Pas d'évaluation automatique de la qualité (score, texte de référence,
   diarisation, correction par LLM), pas de streaming.
 - Les contrôles de chemins et de formulaires sont des garde-fous, pas une
   isolation technique.
+
+## Vérifications Windows et publication
+
+Une CI GitHub Actions est préparée pour remplacer le préalable d'un PC Windows
+indisponible. **Aucun job de vérification Windows n'a encore été exécuté** : la
+présence des workflows ou un run privé ignoré ne prouve pas ce fonctionnement. Les jobs sont conditionnés à un
+dépôt public, après audit et autorisation de publication.
+
+Le workflow de tests couvre Linux et Windows avec moteur factice ; le workflow
+manuel vérifie les installations et les quatre combinaisons réelles sur parole
+synthétique créée dans le job avec une voix locale disponible, sans exigence
+de français. Sa culture et la langue du texte sont consignées séparément des
+réglages du moteur. Il s'agit de tester le logiciel, pas d'évaluer les modèles. Aucun
+poids, audio, environnement ou texte transcrit n'est publié en artefact : seuls
+les rapports JSON nettoyés sont conservés.
+
+Voir [la procédure et ses limites](docs/ci-windows.md) et
+[le rapport d'audit préalable](docs/audits/publication-2026-11-02.md).
+La CI ne remplace pas une qualification du PC utilisateur et ses temps ne sont
+pas des performances attendues sur ce PC.
+
+## Licence
+
+Le code du prototype est distribué sous [licence MIT](LICENSE).
+Les dépendances et les modèles conservent leurs propres licences ; aucun poids
+ni environnement moteur n'est redistribué dans ce dépôt. Voir
+[les licences et provenances des modèles d'essai](docs/licences-modeles.md).

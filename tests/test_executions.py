@@ -227,7 +227,7 @@ class ModelesProposesTest(SocleExecutionsTest):
         self.assertEqual(propose.fenetre_fixe_secondes, FENETRE_FIXE_SECONDES)
         self.assertEqual(FENETRE_FIXE_SECONDES, FENETRE_SECONDES)
 
-    def test_mecanisme_natif_declare_sans_fenetre_fixe(self) -> None:
+    def test_mecanisme_natif_declare_sans_fenetre_fixe_et_executable(self) -> None:
         registre = RegistreMoteurs()
         registre.enregistrer(
             declaration_avec_reglages(
@@ -238,9 +238,11 @@ class ModelesProposesTest(SocleExecutionsTest):
 
         propose = service.modeles_proposables()[0]
 
+        # Le runner applique la durée native jusqu'à sa borne, puis découpe en
+        # fenêtres fixes : ce n'est plus un motif de non-exécutabilité.
         self.assertIsNone(propose.fenetre_fixe_secondes)
-        self.assertFalse(propose.executable)
-        self.assertIn("mécanisme natif", propose.motif_non_executable or "")
+        self.assertTrue(propose.executable)
+        self.assertIsNone(propose.motif_non_executable)
 
     def test_famille_non_qualifiee_proposee_non_executable_et_refusee(self) -> None:
         registre = RegistreMoteurs()
@@ -621,6 +623,31 @@ class PageExecutionsTest(SocleWebTest):
         self.assertIn("<dd>factice</dd>", corps_valide)
         self.assertEqual(self.creneau.instantane().etat, "libre")
         self.assertFalse(self.dossier_data.exists())
+
+    def test_page_et_validation_modele_natif_sans_formatage_none(self) -> None:
+        registre = RegistreMoteurs()
+        registre.enregistrer(declaration_avec_reglages(
+            duree_native=DureeNative(300.0, "mécanisme natif de test")))
+        service = ConfigurationExecutions(
+            self.dossier_data, registre, lambda: self.modeles,
+            lister=lambda dossier: AUDIOS,
+        )
+        app = self.construire_app(self.services(executions=service))
+        reponse = app.test_client().get("/executions", base_url=self.base_url())
+        self.assertEqual(reponse.status_code, 200)
+        corps = reponse.get_data(as_text=True)
+        self.assertIn("Mécanisme natif d'audio long", corps)
+        self.assertIn("repli en fenêtres fixes de 30 s", corps)
+        self.assertNotIn("Seul le moteur factice est exécutable", corps)
+        self.verifier_html_seul(corps)
+        validation = self.post_autorise(
+            "/executions/verifier", app=app,
+            donnees={"modele": service.modeles_proposables()[0].reference,
+                     "audios": ["a.wav"], "threads": "2"},
+        )
+        self.assertEqual(validation.status_code, 200)
+        self.assertIn("Demande validée", validation.get_data(as_text=True))
+        self.assertEqual(self.creneau.instantane().etat, "libre")
 
     def test_page_affiche_non_executable_sans_formulaire(self) -> None:
         registre = RegistreMoteurs()

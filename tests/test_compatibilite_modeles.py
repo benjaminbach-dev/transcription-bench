@@ -4,13 +4,15 @@ Les dépôts sont simulés par des listes de noms de fichiers et de petits JSON
 repris des arborescences publiques documentées (faster-whisper v1.2.1,
 `openai/whisper-large-v3-turbo`, `nvidia/parakeet-tdt-0.6b-v3`, source
 `transformers` v5.20.2). Les chemins de succès utilisent des déclarations
-synthétiques `qualifiee=True` : aucune déclaration fournie ne change de
-qualification, et les familles de production restent refusées à l'ajout.
+synthétiques `qualifiee=True`. Les familles de production sont qualifiées après
+la validation Linux des adaptateurs (tâches 8.1 à 8.3) ; les cas du garde-fou
+« famille non qualifiée » passent par une copie non qualifiée explicite.
 Aucun paquet moteur, aucun fichier de modèle et aucun appel réseau.
 """
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import subprocess
 import sys
@@ -223,6 +225,24 @@ def retire(fichiers: tuple[str, ...], *noms: str) -> tuple[str, ...]:
     return tuple(nom for nom in fichiers if nom not in noms)
 
 
+def declaration_non_qualifiee(
+    declaration: DeclarationAdaptateur,
+) -> DeclarationAdaptateur:
+    """Copie d'une déclaration fournie dont les familles sont non qualifiées.
+
+    Les adaptateurs réels sont qualifiés après validation Linux ; ce cas
+    conserve l'éprouvette du garde-fou « famille non qualifiée » sans dépendre
+    de l'état de qualification des déclarations de production.
+    """
+    return dataclasses.replace(
+        declaration,
+        familles=tuple(
+            dataclasses.replace(famille, qualifiee=False, duree_native=None)
+            for famille in declaration.familles
+        ),
+    )
+
+
 def remplace(fichiers: tuple[str, ...], ancien: str, nouveau: str) -> tuple[str, ...]:
     return tuple(nouveau if nom == ancien else nom for nom in fichiers)
 
@@ -353,7 +373,7 @@ class FasterWhisperCompatibiliteTest(AssertionsCompatibilite):
 
     def test_production_refuse_la_famille_non_qualifiee(self) -> None:
         resultat = verifier_compatibilite(
-            DECLARATION_FASTER_WHISPER,
+            declaration_non_qualifiee(DECLARATION_FASTER_WHISPER),
             FICHIERS_CTRANSLATE2,
             configurations=CONTENUS_CTRANSLATE2,
         )
@@ -540,8 +560,9 @@ class TransformersCompatibiliteTest(AssertionsCompatibilite):
         self.assertEqual(refus.moteur_suggere, "transformers")
 
     def test_production_refuse_la_famille_non_qualifiee(self) -> None:
+        declaration = declaration_non_qualifiee(DECLARATION_TRANSFORMERS)
         resultat = verifier_compatibilite(
-            DECLARATION_TRANSFORMERS,
+            declaration,
             FICHIERS_WHISPER_TRANSFORMERS,
             configurations=CONTENUS_WHISPER_TRANSFORMERS,
         )
@@ -549,7 +570,7 @@ class TransformersCompatibiliteTest(AssertionsCompatibilite):
         self.assertEqual(refus.famille, "whisper")
 
         resultat = verifier_compatibilite(
-            DECLARATION_TRANSFORMERS,
+            declaration,
             FICHIERS_PARAKET,
             configurations=CONTENUS_PARAKET,
         )
@@ -995,9 +1016,9 @@ class TranscribeCppCompatibiliteTest(AssertionsCompatibilite):
                 self.assertEqual(refus.famille, architecture)
                 self.assertIn("non vérifiées", refus.message)
 
-    def test_production_transcribe_whisper_reste_refusee(self) -> None:
+    def test_production_transcribe_whisper_non_qualifiee_refusee(self) -> None:
         resultat = verifier_compatibilite(
-            DECLARATION_TRANSCRIBE_CPP,
+            declaration_non_qualifiee(DECLARATION_TRANSCRIBE_CPP),
             FICHIERS_GGUF,
             fichier_gguf="modele-q8_0.gguf",
             lecteur_entete_gguf=lecteur_gguf_de(octets_gguf()),
@@ -1100,14 +1121,21 @@ class EntreesRefuseesTest(AssertionsCompatibilite):
 
 
 class QualificationProductionTest(AssertionsCompatibilite):
-    def test_familles_de_production_restent_non_qualifiees(self) -> None:
+    def test_familles_de_production_qualifiees_apres_validation_linux(self) -> None:
+        # Les familles de production sont qualifiées sur le PC Linux de test
+        # (jalon 0 et tâches 8.x) ; la qualification Windows reste due à la CI.
         for declaration in declarations_fournies():
+            if declaration.factice:
+                continue
             for famille in declaration.familles:
                 with self.subTest(
                     moteur=declaration.identifiant, famille=famille.identifiant
                 ):
-                    self.assertFalse(famille.qualifiee)
-                    self.assertIsNone(famille.duree_native)
+                    self.assertTrue(famille.qualifiee)
+                    self.assertIsNotNone(famille.duree_native)
+        self.assertTrue(DECLARATION_FASTER_WHISPER.familles_qualifiees)
+        self.assertTrue(DECLARATION_TRANSCRIBE_CPP.familles_qualifiees)
+        self.assertTrue(DECLARATION_TRANSFORMERS.familles_qualifiees)
 
 
 class ResultatCompatibiliteTest(unittest.TestCase):

@@ -250,6 +250,22 @@ class MesuresAudioVue:
 
 
 @dataclass(frozen=True)
+class TimingsNatifVue:
+    """Timings d'un appel natif, tels que transmis par le moteur.
+
+    `unite` vient du moteur (`ms` ou `s`) et n'est jamais supposée. Une étape
+    absente ou non finie reste `None` : aucune valeur n'est déduite d'une autre
+    ni remplacée par zéro.
+    """
+
+    unite: str
+    chargement: float | int | None
+    mel: float | int | None
+    encodage: float | int | None
+    decodage: float | int | None
+
+
+@dataclass(frozen=True)
 class SegmentVue:
     """Segment horodaté fourni par le moteur.
 
@@ -276,6 +292,10 @@ class TranscriptionVue:
     compact), tandis que `reglages_bruts` et `reglages_effectifs_bruts` gardent
     la valeur JSON telle qu'elle a été lue. La comparaison utilise les valeurs
     brutes : elle ne dépend donc jamais du formatage d'affichage.
+
+    `timings_natifs` conserve les timings transmis par le moteur, un par appel
+    natif et dans l'ordre des appels : ils varient par appel et ne sont jamais
+    agrégés. Une transcription antérieure au champ n'en a aucun.
     """
 
     statut: str
@@ -288,6 +308,7 @@ class TranscriptionVue:
     duree_indicative_s: float | int | None
     duree_decodee_s: float | int | None
     mesures: MesuresAudioVue
+    timings_natifs: tuple[TimingsNatifVue, ...]
     reglages: tuple[Paire, ...]
     reglages_bruts: Mapping[str, Any]
     reglages_effectifs: tuple[Paire, ...]
@@ -1225,6 +1246,7 @@ def _vue_transcription(
             rtf=calculer_rtf(duree_transcription, duree_decodee),
             pic_memoire_octets=_entier(mesures.get("pic_memoire_octets")),
         ),
+        timings_natifs=_timings_natifs(contenu.get("timings_natifs")),
         reglages=_paires_reglages(contenu.get("reglages")),
         reglages_bruts=_mapping(contenu.get("reglages")),
         reglages_effectifs=_paires_reglages(contenu.get("reglages_effectifs")),
@@ -1247,6 +1269,35 @@ def _vue_transcription(
         famille=_texte(modele.get("famille")),
         erreur=_texte(contenu.get("erreur")),
     )
+
+
+def _timings_natifs(valeur: Any) -> tuple[TimingsNatifVue, ...]:
+    """Timings natifs par appel ; une entrée illisible est écartée.
+
+    Cette information est facultative : un `result.json` antérieur au champ n'a
+    aucune entrée et reste interprétable. Une entrée sans unité ou mal formée
+    est ignorée plutôt que de rendre toute la transcription indisponible ; une
+    étape absente ou non finie reste `None`, jamais zéro.
+    """
+    if not isinstance(valeur, list):
+        return ()
+    timings: list[TimingsNatifVue] = []
+    for entree in valeur:
+        if not isinstance(entree, Mapping):
+            continue
+        unite = entree.get("unite")
+        if not isinstance(unite, str) or not unite:
+            continue
+        timings.append(
+            TimingsNatifVue(
+                unite=unite,
+                chargement=_nombre(entree.get("load_ms")),
+                mel=_nombre(entree.get("mel_ms")),
+                encodage=_nombre(entree.get("encode_ms")),
+                decodage=_nombre(entree.get("decode_ms")),
+            )
+        )
+    return tuple(timings)
 
 
 def _segments(valeur: Any) -> tuple[SegmentVue, ...]:

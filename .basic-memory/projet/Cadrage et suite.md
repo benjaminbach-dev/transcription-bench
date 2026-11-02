@@ -15,7 +15,7 @@ tags:
 ## Provenance et état
 Historique de l'exploration du 2026-10-23, conservé pour comprendre le besoin produit. Depuis, le prototype a été cadré dans [[Décisions du prototype de benchmark]] et dans le change OpenSpec `add-benchmark-prototype`, consolidé le 2026-10-24 (repo `transcription-bench`, branche `main`, base `b3f126c`). Aucun essai réel ni code applicatif à cette étape.
 
-Le besoin initial comparait des modèles open weight français en local, en privilégiant la fidélité à la vitesse : dictée bruitée de 1 à 3 minutes et entretien de 20 à 40 minutes avec plusieurs voix. L'application de consultations médicales envisagée pour David est un objectif produit distinct du prototype de benchmark. Diarisation et streaming ne font pas partie de ce premier jalon.
+Le besoin initial comparait des modèles open weight français en local, en privilégiant la fidélité à la vitesse : dictée bruitée de 1 à 3 minutes et entretien de 20 à 40 minutes avec plusieurs voix. Une application métier de transcription a été envisagée comme prolongement distinct du prototype de benchmark, sans engagement dans ce premier jalon. Diarisation et streaming ne font pas partie de ce premier jalon.
 ## Observations
 - [requirement] La transcription française et la fidélité du texte priment sur la rapidité ; aucun seuil acceptable de latence ou d’erreur n’est fixé.
 - [requirement] Pour les consultations, distinguer au minimum deux intervenants, sans présumer leurs rôles ou connaître leur identité.

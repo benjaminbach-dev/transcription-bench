@@ -21,6 +21,8 @@ ETAT: dict[str, Any] = {
     "parasite": False,
     "resultat_invalide": False,
     "divergence": None,
+    "timings_natifs": False,
+    "timings_invalides": False,
 }
 
 compteur_chargements = 0
@@ -34,6 +36,8 @@ def reinitialiser(
     parasite: bool = False,
     resultat_invalide: bool = False,
     divergence: str | None = None,
+    timings_natifs: bool = False,
+    timings_invalides: bool = False,
 ) -> None:
     """Remet le module dans un état connu avant chaque test."""
     global compteur_chargements, derniere_consigne
@@ -41,6 +45,8 @@ def reinitialiser(
     ETAT["parasite"] = parasite
     ETAT["resultat_invalide"] = resultat_invalide
     ETAT["divergence"] = divergence
+    ETAT["timings_natifs"] = timings_natifs
+    ETAT["timings_invalides"] = timings_invalides
     compteur_chargements = 0
     derniere_consigne = None
     appels.clear()
@@ -93,10 +99,43 @@ def transcrire(
             langue_imposee = "en"
         elif ETAT["divergence"] == "threads":
             threads_appliques = 8
-    return {
+    resultat = {
         "texte": texte,
         "segments": [{"debut_s": 0.0, "fin_s": duree, "texte": texte}],
         "reglages_effectifs": reglages_effectifs,
         "langue_imposee": langue_imposee,
         "threads_appliques": threads_appliques,
     }
+    timings = _timings()
+    if timings is not None:
+        resultat["timings_natifs"] = timings
+    return resultat
+
+
+def _timings() -> list[dict[str, Any]] | None:
+    """Timings natifs simulés par appel, ou `None` quand le moteur n'en a pas.
+
+    La valeur de `load_ms` suit le numéro d'appel pour que les tests vérifient
+    l'ordre des fenêtres ; `timings_invalides` produit une unité refusée.
+    """
+    if ETAT["timings_invalides"]:
+        return [
+            {
+                "unite": "min",
+                "load_ms": 1.0,
+                "mel_ms": 0.5,
+                "encode_ms": 2.0,
+                "decode_ms": 3.0,
+            }
+        ]
+    if not ETAT["timings_natifs"]:
+        return None
+    return [
+        {
+            "unite": "ms",
+            "load_ms": float(len(appels)),
+            "mel_ms": 0.5,
+            "encode_ms": 2.0,
+            "decode_ms": 3.0,
+        }
+    ]

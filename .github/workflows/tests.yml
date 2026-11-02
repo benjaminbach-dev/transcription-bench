@@ -1,0 +1,55 @@
+name: Tests Linux et Windows
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHONIOENCODING: utf-8
+  HF_HUB_DISABLE_TELEMETRY: "1"
+  HF_HUB_DISABLE_IMPLICIT_TOKEN: "1"
+
+jobs:
+  tests:
+    # Gate de publication : un job ignoré n'est jamais une preuve Windows.
+    if: github.event.repository.private == false
+    name: Tests sans moteur réel (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2022]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.11.8"
+          enable-cache: "false"
+      - name: Installer seulement les dépendances serveur verrouillées
+        run: uv sync --locked
+      - name: Consigner le contexte du runner
+        run: uv run --locked --offline python scripts/ci/verifier.py ressources
+      - name: Tests sans réseau externe (loopback autorisé)
+        env:
+          UV_OFFLINE: "1"
+          UV_PYTHON_DOWNLOADS: never
+          HF_HUB_OFFLINE: "1"
+        run: uv run --locked --offline python -m unittest discover -s tests -t .
+      - name: Conserver uniquement le rapport nettoyé
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: contexte-${{ matrix.os }}
+          path: data/ci/rapports/*.json
+          retention-days: 14
+          if-no-files-found: error

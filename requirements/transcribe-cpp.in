@@ -1,0 +1,10 @@
+# Déclaration directe du moteur transcribe.cpp (GGUF, CPU uniquement).
+# Reprise du verrou validé au jalon 0 Linux le 2026-11-01 :
+#   data/feasibility/transcribe-cpp/transcribe-cpp.in
+# Versions inchangées : transcribe-cpp et transcribe-cpp-native restent
+# épinglés ensemble (API pré-1.0). Le runner a besoin de numpy et de psutil.
+
+transcribe-cpp==0.4.1
+transcribe-cpp-native==0.4.1
+numpy==2.5.4
+psutil==7.2.2

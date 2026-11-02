@@ -186,6 +186,21 @@
 {% endfor %}
 </dl>
 <p>La durée décodée est la référence du RTF ; la durée indicative vient de l'en-tête du fichier et ne sert qu'à l'affichage et à la comparaison.</p>
+{% if transcription.timings_natifs %}
+<p>Timings natifs transmis par le moteur, un par appel, sans agrégation ni conversion (unité telle que rapportée) :</p>
+<table>
+<thead>
+<tr><th>Appel</th><th>Unité</th><th>Chargement</th><th>Mel</th><th>Encodage</th><th>Décodage</th></tr>
+</thead>
+<tbody>
+{% for timing in transcription.timings_natifs %}
+<tr><td>{{ loop.index }}</td><td>{{ timing.unite }}</td><td>{{ formats.nombre(timing.chargement) }}</td><td>{{ formats.nombre(timing.mel) }}</td><td>{{ formats.nombre(timing.encodage) }}</td><td>{{ formats.nombre(timing.decodage) }}</td></tr>
+{% endfor %}
+</tbody>
+</table>
+{% else %}
+<p>Aucun timing natif n'a été transmis pour cet audio : information facultative, absente d'un moteur qui ne la rapporte pas et des résultats antérieurs à ce champ.</p>
+{% endif %}
 {% if transcription.reglages_effectifs %}
 <p>Réglages effectifs relus du moteur :</p>
 <ul>

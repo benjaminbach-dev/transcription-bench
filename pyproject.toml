@@ -7,6 +7,8 @@ name = "transcription-bench"
 version = "0.1.0"
 description = "Prototype local de comparaison de modèles de transcription française sur CPU"
 requires-python = ">=3.12"
+readme = "README.md"
+license = "MIT"
 dependencies = [
     "av",
     "flask==3.1.3",

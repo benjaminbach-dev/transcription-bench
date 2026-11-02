@@ -7,25 +7,26 @@ leurs réglages. Elle ne fait que des imports de la bibliothèque standard et ne
 charge aucun paquet moteur : c'est le serveur qui l'importe, pas le processus du
 moteur.
 
-Aucune capacité réelle n'est qualifiée ici. Les familles restent
-`qualifiee=False` et aucune durée native n'est annoncée tant que le jalon 0 sur
-PC n'a pas prouvé le mécanisme correspondant ; sans durée native déclarée, le
-runner appliquera les fenêtres fixes de 30 s. Aucun réglage réel n'est fourni :
-les réglages réellement exposés par famille seront fixés par le jalon PC et les
-tâches 8.x. Les fichiers `requirements/*.txt` sont déclarés par leur chemin
-conventionnel mais ne sont pas créés ici : les verrous ne sont pas encore
-validés.
+L'état de qualification reflète les preuves disponibles, sans les dépasser :
+les familles validées sur le PC Linux de test (jalon 0 du 2026-11-01, puis
+adaptateurs des tâches 8.1 à 8.3) portent `qualifiee=True` et déclarent la durée
+native réellement prouvée. La qualification Windows reste due à la CI (tâches
+10.5 et 10.6) : elle n'est ni annoncée ni déduite d'une mesure Linux. Sans durée
+native déclarée, le runner applique les fenêtres fixes de 30 s ; avec une durée
+native, il traite l'audio en un appel jusqu'à cette durée et découpe au-delà
+(D9). Les réglages exposés sont ceux que l'adaptateur applique réellement, avec
+les défauts mesurés. Les fichiers `requirements/*.txt` sont les verrous validés
+au jalon 0 et repris à l'identique sous `requirements/`.
 
 Le moteur factice est le seul dont la déclaration porte `factice=True` (tâche
 4.3). Ce drapeau, fixé par le code du dépôt et jamais par un job, autorise le
 runner à exécuter ses familles non qualifiées et à marquer ses textes et
 mesures comme simulés. Il ne vaut pas qualification PC : aucune inférence
-réelle n'est effectuée et les trois moteurs réels restent refusés tant que le
-jalon PC et les tâches 8.x ne les ont pas prouvés.
+réelle n'est effectuée. Les trois moteurs réels sont qualifiés séparément, après
+validation sur le PC Linux de test ; cette qualification ne vaut pas Windows.
 
 La référence `module_adaptateur` pointe vers du code de ce dépôt uniquement
-(`engines.adaptateurs.*`) ; elle est importée à la demande par le registre, et
-les modules correspondants n'existent pas encore à ce stade.
+(`engines.adaptateurs.*`) ; elle est importée à la demande par le registre.
 """
 
 from __future__ import annotations
@@ -77,9 +78,10 @@ class DureeNative:
     """Mécanisme natif d'audio long, déclaré seulement s'il est prouvé.
 
     `secondes_max` est la durée maximale traitée en un appel natif et `methode`
-    l'API ou la stratégie employée. Aucune déclaration fournie n'en contient :
-    laisser `Famille.duree_native` à `None` signifie que le mécanisme reste non
-    prouvé et que le runner découpera en fenêtres fixes de 30 s.
+    l'API ou la stratégie employée. Elle ne dépasse jamais la durée réellement
+    prouvée sur PC. Laisser `Famille.duree_native` à `None` signifie que le
+    mécanisme reste non prouvé et que le runner découpera en fenêtres fixes de
+    30 s ; au-delà de `secondes_max`, le runner découpe aussi en fenêtres fixes.
     """
 
     secondes_max: float
@@ -101,7 +103,8 @@ class Famille:
 
     `qualifiee=False` signifie que la famille n'a pas été validée sur PC (jalon
     0 puis tâches 8.x) : elle est déclarée pour la structure et l'interface,
-    jamais annoncée comme opérationnelle. Les réglages appartiennent à la famille
+    jamais annoncée comme opérationnelle. `qualifiee=True` s'appuie sur une
+    validation Linux consignée ; elle ne vaut pas validation Windows. Les réglages appartiennent à la famille
     qui les expose ; leurs noms y sont uniques.
 
     Cette valeur reste `False` pour la famille factice : exécuter le moteur
@@ -129,8 +132,9 @@ class Reglage:
     """Réglage proposé pour une exécution avec une famille de modèles.
 
     `type_valeur` appartient à `TYPES_REGLAGE` ; `valeurs` n'est renseigné que
-    pour `choix`. Aucun réglage réel n'est fourni par les déclarations : les
-    tâches 8.x fixent ceux qui seront effectivement exposés.
+    pour `choix`. Les réglages fournis sont exactement ceux que l'adaptateur du
+    moteur applique ; le défaut est la valeur mesurée au jalon 0, ou la valeur
+    documentée quand aucune mesure n'existe.
     """
 
     nom: str
@@ -254,11 +258,10 @@ def motif_famille_non_executable(
     Règle unique, partagée par `engines.runner` et par le service des demandes
     d'exécution : une famille n'est exécutable que si la déclaration est
     factice (`factice=True`, sans qualification PC) ou si la famille est
-    qualifiée, **et** si aucun mécanisme natif d'audio long n'est déclaré. Ce
-    dernier point est un refus du runner, pas une capacité : un mécanisme natif
-    déclaré rend la famille non exécutable jusqu'à la tâche 8.x qui la
-    prendrait en charge. Le motif renvoyé est un texte prêt à afficher ; il ne
-    contient ni chemin ni donnée d'exécution.
+    qualifiée sur PC. Une durée native déclarée n'est pas un refus : le runner
+    l'applique tant que la durée décodée ne la dépasse pas, et découpe sinon en
+    fenêtres fixes de 30 s (D9). Le motif renvoyé est un texte prêt à afficher ;
+    il ne contient ni chemin ni donnée d'exécution.
     """
     if not famille.qualifiee and not declaration.factice:
         return (
@@ -266,22 +269,56 @@ def motif_famille_non_executable(
             f"{declaration.identifiant!r} non qualifiée sur PC "
             "(jalon 0 et tâches 8.x)"
         )
-    if famille.duree_native is not None:
-        return (
-            "mécanisme natif d'audio long non pris en charge par ce runner "
-            f"({famille.duree_native.methode}) : tâche 8.x attendue"
-        )
     return None
 
+
+#: Durée native prouvée des deux moteurs GGUF/CT2 (audio long du jalon 0 :
+#: 47,703 688 s décodées, transcrites en un seul appel). Volontairement arrondie
+#: vers le bas à 47,7 s : un audio de 47,703 688 s bascule donc sur les fenêtres
+#: fixes de 30 s, choix conservateur qui ne dépasse jamais la durée prouvée.
+DUREE_NATIVE_AUDIO_LONG_S = 47.7
+#: Durée native prouvée des deux familles Transformers : 300,884 813 s
+#: décodées, sous le plafond de 12 Gio (5 min), arrondie vers le bas par le
+#: même choix conservateur.
+DUREE_NATIVE_TRANSFORMERS_S = 300.0
 
 DECLARATION_FASTER_WHISPER = DeclarationAdaptateur(
     identifiant="faster-whisper",
     nom="faster-whisper (CTranslate2)",
     fichier_requirements="requirements/faster-whisper.txt",
     regle_compatibilite="ctranslate2-whisper",
-    familles=(Famille("whisper", "Whisper", qualifiee=False),),
+    familles=(
+        Famille(
+            "whisper",
+            "Whisper",
+            qualifiee=True,
+            duree_native=DureeNative(
+                DUREE_NATIVE_AUDIO_LONG_S,
+                "transcription en un appel faster-whisper (audio long de "
+                "47,7 s prouvé au jalon 0 Linux)",
+            ),
+            reglages=(
+                Reglage(
+                    "compute_type",
+                    "Type de calcul",
+                    TYPE_CHOIX,
+                    "int8",
+                    "Type de calcul CTranslate2 ; int8 est la seule valeur "
+                    "mesurée au jalon 0 (relue int8_float32).",
+                    valeurs=("int8", "float32"),
+                ),
+                Reglage(
+                    "beam_size",
+                    "Faisceau de décodage",
+                    TYPE_ENTIER,
+                    5,
+                    "Taille du faisceau ; 5 au jalon 0.",
+                ),
+            ),
+        ),
+    ),
     module_adaptateur="engines.adaptateurs.faster_whisper",
-    modules_verification=("faster_whisper",),
+    modules_verification=("faster_whisper", "numpy"),
 )
 
 DECLARATION_TRANSCRIBE_CPP = DeclarationAdaptateur(
@@ -289,9 +326,38 @@ DECLARATION_TRANSCRIBE_CPP = DeclarationAdaptateur(
     nom="transcribe.cpp (GGUF)",
     fichier_requirements="requirements/transcribe-cpp.txt",
     regle_compatibilite="transcribe-cpp-gguf",
-    familles=(Famille("whisper", "Whisper", qualifiee=False),),
+    familles=(
+        Famille(
+            "whisper",
+            "Whisper",
+            qualifiee=True,
+            duree_native=DureeNative(
+                DUREE_NATIVE_AUDIO_LONG_S,
+                "session.run en un appel transcribe.cpp (audio long de "
+                "47,7 s prouvé au jalon 0 Linux)",
+            ),
+            reglages=(
+                Reglage(
+                    "no_mmap",
+                    "Sans mmap",
+                    TYPE_BOOLEEN,
+                    False,
+                    "Copier les poids en mémoire au lieu de les mmapser ; "
+                    "le mode effectif est consigné.",
+                ),
+                Reglage(
+                    "condition_on_prev_tokens",
+                    "Contexte des jetons précédents",
+                    TYPE_BOOLEEN,
+                    False,
+                    "Conditionner sur les jetons précédents ; désactivé au "
+                    "jalon 0.",
+                ),
+            ),
+        ),
+    ),
     module_adaptateur="engines.adaptateurs.transcribe_cpp",
-    modules_verification=("transcribe_cpp",),
+    modules_verification=("transcribe_cpp", "numpy"),
 )
 
 DECLARATION_TRANSFORMERS = DeclarationAdaptateur(
@@ -300,11 +366,39 @@ DECLARATION_TRANSFORMERS = DeclarationAdaptateur(
     fichier_requirements="requirements/transformers.txt",
     regle_compatibilite="transformers-safetensors",
     familles=(
-        Famille("whisper", "Whisper", qualifiee=False),
-        Famille("parakeet-tdt", "Parakeet TDT", qualifiee=False),
+        Famille(
+            "whisper",
+            "Whisper",
+            qualifiee=True,
+            duree_native=DureeNative(
+                DUREE_NATIVE_TRANSFORMERS_S,
+                "long-form natif Transformers (truncation=False, "
+                "attention_mask), 5 min prouvées au jalon 0 Linux",
+            ),
+            reglages=(
+                Reglage(
+                    "do_normalize",
+                    "Normalisation audio",
+                    TYPE_BOOLEEN,
+                    False,
+                    "Normaliser le signal avant l'extraction mel ; désactivée "
+                    "au jalon 0 (aucun effet observé sur l'audio de synthèse).",
+                ),
+            ),
+        ),
+        Famille(
+            "parakeet-tdt",
+            "Parakeet TDT",
+            qualifiee=True,
+            duree_native=DureeNative(
+                DUREE_NATIVE_TRANSFORMERS_S,
+                "une passe native TDT, 5 min prouvées au jalon 0 Linux "
+                "(attention non fenêtrée)",
+            ),
+        ),
     ),
     module_adaptateur="engines.adaptateurs.transformers",
-    modules_verification=("transformers",),
+    modules_verification=("transformers", "numpy"),
 )
 
 DECLARATION_FACTICE = DeclarationAdaptateur(
@@ -329,8 +423,8 @@ def declarations_fournies() -> tuple[DeclarationAdaptateur, ...]:
     """Renvoie les quatre déclarations fournies, dans un ordre stable.
 
     Les trois moteurs réels sont déclarés même si leurs environnements ne sont
-    pas installés : le lot 4.4 affichera leur état, et leurs adaptateurs seront
-    ajoutés aux tâches 8.x. Le moteur factice est exécutable sans modèle ni
-    qualification PC ; son adaptateur est ajouté en 4.3.
+    pas installés : le lot 4.4 affiche leur état, et leurs adaptateurs sont
+    fournis par les tâches 8.x. Le moteur factice reste exécutable sans modèle ni
+    qualification PC.
     """
     return DECLARATIONS_FOURNIES

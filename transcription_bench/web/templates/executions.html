@@ -63,7 +63,11 @@ aucun réglage déclaré par cette famille : aucun réglage n'est proposé.
 {% elif not audios %}
 <p>Aucun audio lisible dans le dossier d'entrée : la page des audios liste les fichiers présents et les erreurs de lecture, et aucun formulaire n'est proposé pour ce modèle.</p>
 {% else %}
+{% if modele.fenetre_fixe_secondes is none %}
+<p>Mécanisme natif d'audio long pris en charge jusqu'à la durée déclarée par la famille ; au-delà, repli en fenêtres fixes de 30 s sans recouvrement. La méthode effectivement utilisée est consignée pour chaque audio.</p>
+{% else %}
 <p>Famille sans mécanisme natif d'audio long pris en charge par le runner : les audios seront découpés en fenêtres fixes de {{ "%.0f"|format(modele.fenetre_fixe_secondes) }} s sans recouvrement, et la durée de fenêtre sera consignée pour chaque audio.</p>
+{% endif %}
 <form method="post" action="{{ url_for('verifier_demande_execution') }}">
 <input type="hidden" name="jeton_csrf" value="{{ jeton_csrf }}">
 <input type="hidden" name="modele" value="{{ modele.reference }}">

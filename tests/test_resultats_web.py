@@ -101,6 +101,48 @@ class ResultatsWebTest(SocleWebTest):
         self.assertIn("FACTICE", corps)
         self.assertIn("indisponible", corps)  # threads appliqués non affirmés
 
+    def test_detail_timings_natifs_affiches_par_appel(self) -> None:
+        run = run_json(audios=(("a.wav", STATUT_OK),))
+        resultat = result_json(
+            run["audios"][0],
+            timings_natifs=[
+                {
+                    "unite": "ms",
+                    "load_ms": 12.5,
+                    "mel_ms": 3.25,
+                    "encode_ms": 40.0,
+                    "decode_ms": 60.5,
+                },
+                {
+                    "unite": "ms",
+                    "load_ms": 1.0,
+                    "mel_ms": 2.0,
+                    "encode_ms": 3.0,
+                    "decode_ms": None,
+                },
+            ],
+        )
+        ecrire_execution(self.dossier_data, run, (resultat,))
+
+        corps = self.page(f"/resultats/{IDENTIFIANT}")
+
+        self.assertIn("Timings natifs transmis par le moteur", corps)
+        self.assertEqual(corps.count("<td>ms</td>"), 2)
+        self.assertIn("12.500", corps)
+        self.assertIn("60.500", corps)
+        # Une étape absente reste « indisponible », jamais zéro.
+        self.assertIn("indisponible", corps)
+
+    def test_detail_sans_timings_natifs_signale_l_absence(self) -> None:
+        run = run_json(audios=(("a.wav", STATUT_OK),))
+        resultat = result_json(run["audios"][0])
+        del resultat["timings_natifs"]
+        ecrire_execution(self.dossier_data, run, (resultat,))
+
+        corps = self.page(f"/resultats/{IDENTIFIANT}")
+
+        self.assertIn("Aucun timing natif n'a été transmis", corps)
+
     def test_detail_rtf_au_dessus_du_repere_reste_non_bloquant(self) -> None:
         run = run_json(audios=(("a.wav", STATUT_OK),))
         resultat = result_json(

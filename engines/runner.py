@@ -11,8 +11,8 @@ serveur seul écrit `run.json` et les résultats d'audios (tâches 6.3 et 6.4).
 
 Le runner n'importe ni Flask ni aucun module du serveur. Il importe `numpy`
 et, sous Windows seulement, `psutil` à l'exécution : les environnements de
-moteur devront donc fournir leurs propres dépendances, numpy compris (tâches
-4.4 et 8.x), et ne pas s'appuyer sur celui du serveur.
+moteur fournissent donc leurs propres dépendances, numpy compris, contrôlées à
+l'installation (tâche 4.4).
 
 Job (JSON UTF-8). Les chemins sont absolus ou relatifs au dossier du job :
 
@@ -28,9 +28,13 @@ Job (JSON UTF-8). Les chemins sont absolus ou relatifs au dossier du job :
     }
 
 Chaque audio est un signal brut `float32` little-endian, 16 kHz, mono, déjà
-décodé par le serveur (tâche 6.1) : le runner ne décode rien. Sans mécanisme
-natif déclaré et vérifié, il découpe l'audio en fenêtres fixes de 30 s sans
-recouvrement, concatène les textes et décale les horodatages.
+décodé par le serveur (tâche 6.1) : le runner ne décode rien. Le traitement
+dépend de la durée native déclarée par la famille (D9) : si l'audio ne dépasse
+pas `Famille.duree_native.secondes_max`, il est transmis en un seul appel au
+moteur et l'événement porte `decoupage="natif"` ; sinon — ou sans durée native
+déclarée — il est découpé en fenêtres fixes de 30 s sans recouvrement, les
+textes sont concaténés et les horodatages décalés (`decoupage="fenetres-fixes"`).
+La méthode et la durée de fenêtre effectives sont consignées pour chaque audio.
 
 Options de chargement forcées (tâche 5.5) : avant d'appeler `charger`, le runner
 copie le dictionnaire `modele` et y impose `local_files_only=True` et
@@ -50,12 +54,15 @@ Contrat d'adaptateur, volontairement minimal (aucun framework) :
 modification lève) et `reglages` un dictionnaire en lecture seule. Le résultat
 est un dict avec `texte` (obligatoire) et, en option, `segments` (liste de dicts
 avec `debut_s`, `fin_s`, `texte`),
+`timings_natifs` (liste d'objets par appel natif, chacun portant `unite` et les
+étapes `load_ms`, `mel_ms`, `encode_ms`, `decode_ms`),
 `reglages_effectifs` (dict), `langue_imposee` (texte ou `None`) et
 `threads_appliques` (entier ou `None`, seulement si l'API du moteur permet de le
 relire). Aucune clé inconnue n'est acceptée : le contrat est explicite. Ces
-trois métadonnées doivent être **identiques pour toutes les fenêtres d'un même
-audio** : la première valeur est conservée et toute divergence met l'audio en
-erreur.
+trois dernières métadonnées doivent être **identiques pour toutes les fenêtres
+d'un même audio** : la première valeur est conservée et toute divergence met
+l'audio en erreur. Les `timings_natifs` en sont exclus : ils varient par appel
+et sont conservés dans l'ordre des appels, sans agrégation ni valeur inventée.
 
 Mesures : durées en secondes, mémoire en octets. Le pic de mémoire est le pic
 résident du processus depuis son démarrage (cumulatif), relevé après le
@@ -81,6 +88,7 @@ Codes de sortie : 0 exécution terminée (même avec des audios en erreur),
 from __future__ import annotations
 
 import json
+import math
 import os
 import sys
 import time
@@ -101,6 +109,7 @@ if __name__ == "__main__" and not __package__:
 
 from engines.declarations import (
     DeclarationAdaptateur,
+    DureeNative,
     Famille,
     motif_famille_non_executable,
 )
@@ -128,10 +137,17 @@ ECHANTILLONS_PAR_FENETRE = FENETRE_SECONDES * TAUX_ECHANTILLONNAGE
 CHAMPS_RESULTAT_OBLIGATOIRES = ("texte",)
 CHAMPS_RESULTAT_FACULTATIFS = (
     "segments",
+    "timings_natifs",
     "reglages_effectifs",
     "langue_imposee",
     "threads_appliques",
 )
+
+#: Étapes d'un timing natif et unités admises. L'unité vient du moteur :
+#: transcribe.cpp 0.4.1 rapporte des millisecondes (`*_ms`) ; le runner recopie
+#: l'unité annoncée au lieu de la supposer, sans convertir ni agréger.
+CHAMPS_TIMING_NATIF = ("load_ms", "mel_ms", "encode_ms", "decode_ms")
+UNITES_TIMING_NATIF = ("ms", "s")
 
 # Mesures simulées du moteur factice : valeurs arbitraires, constantes et
 # cohérentes entre elles (rtf = transcription / durée réelle). Elles n'ont
@@ -229,7 +245,7 @@ def executer(
 
 def _executer_job(job: Job, registre: RegistreMoteurs) -> None:
     """Corps de l'exécution, sous le mode hors ligne forcé par `executer`."""
-    adaptateur, declaration = _charger_adaptateur(job, registre)
+    adaptateur, declaration, famille = _charger_adaptateur(job, registre)
     factice = declaration.factice
     provenance = {"factice": factice, "mesures_simulees": factice}
     reglages = MappingProxyType(job.reglages)
@@ -270,6 +286,7 @@ def _executer_job(job: Job, registre: RegistreMoteurs) -> None:
                 job.threads_demandes,
                 reglages,
                 factice,
+                famille.duree_native,
             )
         except Exception as exception:  # un audio en erreur ne bloque pas le lot
             audios_erreur += 1
@@ -358,7 +375,7 @@ def _configurer_stdout() -> None:
 
 def _charger_adaptateur(
     job: Job, registre: RegistreMoteurs
-) -> tuple[ModuleType, DeclarationAdaptateur]:
+) -> tuple[ModuleType, DeclarationAdaptateur, Famille]:
     """Résout la déclaration, vérifie la qualification, puis importe l'adaptateur."""
     try:
         declaration = registre.obtenir(job.moteur)
@@ -386,23 +403,22 @@ def _charger_adaptateur(
             raise ErreurMoteur(
                 f"adaptateur incomplet pour {job.moteur!r} : {nom}() manquant"
             )
-    return adaptateur, declaration
+    return adaptateur, declaration, famille
 
 
 def _verifier_famille(
     job: Job, famille: Famille, declaration: DeclarationAdaptateur
 ) -> None:
-    """Refuse une famille non qualifiée et un mécanisme natif non pris en charge.
+    """Refuse une famille non qualifiée.
 
     La règle elle-même vit dans `motif_famille_non_executable`, seule source
     partagée avec le service des demandes d'exécution : l'interface n'annonce
-    donc jamais comme exécutable une famille que ce runner refuse. Aucune
-    famille fournie n'est qualifiée sur PC : les trois moteurs réels sont donc
-    refusés tant que le jalon PC et les tâches 8.x ne l'ont pas prouvé. Seul le
-    moteur factice, marqué `factice=True` dans sa déclaration, est exécuté sans
-    qualification PC : il ne charge aucun modèle et n'effectue aucune inférence,
-    ce qui n'est pas une qualification PC. Ce contrôle ne remplace jamais une
-    validation sur un PC de test.
+    donc jamais comme exécutable une famille que ce runner refuse. Les familles
+    qualifiées sur le PC Linux de test sont exécutables ; la qualification
+    Windows reste due à la CI. Une durée native déclarée n'est pas un refus :
+    elle est appliquée par `_traiter_audio` jusqu'à sa borne, avec repli sur les
+    fenêtres fixes de 30 s au-delà. Seul le moteur factice est exécuté sans
+    qualification PC : il ne charge aucun modèle et n'effectue aucune inférence.
     """
     motif = motif_famille_non_executable(declaration, famille)
     if motif is not None:
@@ -417,8 +433,15 @@ def _traiter_audio(
     threads_demandes: int,
     reglages: Mapping[str, Any],
     factice: bool,
+    duree_native: DureeNative | None,
 ) -> dict[str, Any]:
-    """Transcrit un audio en fenêtres fixes et renvoie son événement `audio`."""
+    """Transcrit un audio en un appel natif ou en fenêtres fixes de 30 s.
+
+    Une durée native déclarée et couvrante donne un seul appel (`decoupage`
+    valant `natif`) ; sinon l'audio est découpé en fenêtres de 30 s sans
+    recouvrement. Le factice n'a aucune durée native : il reste découpé, ce qui
+    préserve son comportement de test.
+    """
     # Un fichier brut float32 doit contenir un nombre entier d'échantillons :
     # on refuse avant lecture plutôt que de laisser numpy interpréter un
     # reliquat d'octets.
@@ -434,8 +457,24 @@ def _traiter_audio(
         if signal.size == 0:
             raise ErreurAudio("durée décodée nulle : aucun échantillon")
         duree_audio = signal.size / TAUX_ECHANTILLONNAGE
+        natif = (
+            duree_native is not None
+            and duree_audio <= duree_native.secondes_max
+        )
+        if natif:
+            bornes = ((0, signal.size),)
+            decoupage = "natif"
+            fenetre_s = duree_audio
+        else:
+            bornes = tuple(
+                (position, min(position + ECHANTILLONS_PAR_FENETRE, signal.size))
+                for position in range(0, signal.size, ECHANTILLONS_PAR_FENETRE)
+            )
+            decoupage = "fenetres-fixes"
+            fenetre_s = float(FENETRE_SECONDES)
         textes: list[str] = []
         segments: list[dict[str, Any]] = []
+        timings_natifs: list[dict[str, Any]] = []
         reglages_effectifs: dict[str, Any] = {}
         langue_imposee: str | None = None
         threads_appliques: int | None = None
@@ -443,8 +482,8 @@ def _traiter_audio(
         nb_fenetres = 0
         debut = time.perf_counter()
         cpu_debut = time.process_time()
-        for position in range(0, signal.size, ECHANTILLONS_PAR_FENETRE):
-            fenetre = signal[position : position + ECHANTILLONS_PAR_FENETRE]
+        for position, fin in bornes:
+            fenetre = signal[position:fin]
             # Le signal est en lecture seule : l'adaptateur ne peut pas le modifier.
             fenetre.setflags(write=False)
             resultat = _valider_resultat(
@@ -455,6 +494,7 @@ def _traiter_audio(
             decalage = position / TAUX_ECHANTILLONNAGE
             textes.append(resultat["texte"].strip())
             segments.extend(_decaller_segments(resultat["segments"], decalage))
+            timings_natifs.extend(resultat["timings_natifs"] or [])
             if premiere_fenetre:
                 reglages_effectifs = resultat["reglages_effectifs"]
                 langue_imposee = resultat["langue_imposee"]
@@ -482,12 +522,15 @@ def _traiter_audio(
             "nom": audio.nom,
             "texte": " ".join(texte for texte in textes if texte),
             "segments": segments,
+            # Timings natifs par appel, dans l'ordre des fenêtres : aucune
+            # agrégation, et `None` quand le moteur n'en transmet aucun.
+            "timings_natifs": timings_natifs or None,
             "duree_audio_s": duree_audio,
             "duree_transcription_s": duree_transcription,
             "temps_cpu_s": temps_cpu,
             "rtf": duree_transcription / duree_audio,
-            "fenetre_s": float(FENETRE_SECONDES),
-            "decoupage": "fenetres-fixes",
+            "fenetre_s": fenetre_s,
+            "decoupage": decoupage,
             "nb_fenetres": nb_fenetres,
             "pic_memoire_octets": pic_audio,
             "reglages_effectifs": reglages_effectifs,
@@ -553,10 +596,58 @@ def _valider_resultat(valeur: Any) -> dict[str, Any]:
     return {
         "texte": valeur["texte"],
         "segments": _valider_segments(segments),
+        "timings_natifs": _valider_timings_natifs(valeur.get("timings_natifs")),
         "reglages_effectifs": dict(reglages),
         "langue_imposee": langue,
         "threads_appliques": threads,
     }
+
+
+def _valider_timings_natifs(valeur: Any) -> list[dict[str, Any]] | None:
+    """Timings natifs d'un appel, recopiés sans agrégation ni valeur inventée.
+
+    `None` (moteur qui n'en transmet pas) reste `None` : aucune durée simulée ou
+    nulle n'est fabriquée. Chaque entrée déclare son unité (`ms` ou `s`) ; une
+    étape absente reste `None`, jamais zéro.
+    """
+    if valeur is None:
+        return None
+    if not isinstance(valeur, (list, tuple)):
+        raise ErreurAudio("'timings_natifs' doit être une liste ou null")
+    entrees: list[dict[str, Any]] = []
+    for entree in valeur:
+        if not isinstance(entree, dict):
+            raise ErreurAudio("entrée de 'timings_natifs' attendue sous forme de dict")
+        inconnus = set(entree) - {"unite"} - set(CHAMPS_TIMING_NATIF)
+        if inconnus:
+            raise ErreurAudio(
+                "timing natif avec des clés inconnues : " + repr(sorted(inconnus))
+            )
+        unite = entree.get("unite")
+        if unite not in UNITES_TIMING_NATIF:
+            raise ErreurAudio(
+                f"timing natif d'unité inconnue : {unite!r} "
+                f"(attendu : {', '.join(UNITES_TIMING_NATIF)})"
+            )
+        valide = {"unite": unite}
+        for champ in CHAMPS_TIMING_NATIF:
+            mesure = entree.get(champ)
+            if mesure is not None and not _est_nombre(mesure):
+                raise ErreurAudio(
+                    f"timing natif '{champ}' non numérique : {mesure!r}"
+                )
+            # Une valeur non finie (NaN, infini, entier démesuré) est une mesure
+            # indisponible : elle devient `None`, jamais zéro ni une valeur
+            # conservée telle quelle.
+            if mesure is not None:
+                try:
+                    if not math.isfinite(mesure):
+                        mesure = None
+                except OverflowError:
+                    mesure = None
+            valide[champ] = mesure
+        entrees.append(valide)
+    return entrees
 
 
 def _valider_segments(segments: list[Any] | tuple[Any, ...]) -> list[dict[str, Any]]:

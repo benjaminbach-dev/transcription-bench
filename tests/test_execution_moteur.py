@@ -71,6 +71,7 @@ from transcription_bench.executions import (
     DemandeExecution,
 )
 from transcription_bench.moteurs import InstallationMoteurs
+from transcription_bench.paths import ValeurRefusee
 from transcription_bench.operations import (
     ETAT_ECHOUEE as ETAT_CRENEAU_ECHOUEE,
     ETAT_EN_COURS,
@@ -389,6 +390,7 @@ class SocleExecutionTest(unittest.TestCase):
         identifiant: str = LIBELLE_MODELE_FACTICE,
         famille: str = "factice",
         synthetique: bool = True,
+        fichier_gguf: str | None = None,
     ) -> DemandeExecution:
         return DemandeExecution(
             moteur=moteur,
@@ -397,7 +399,7 @@ class SocleExecutionTest(unittest.TestCase):
             id_resolu=identifiant,
             commit="aucun",
             famille=famille,
-            fichier_gguf=None,
+            fichier_gguf=fichier_gguf,
             audios=audios,
             threads=threads,
             reglages=(),
@@ -420,6 +422,79 @@ class SocleExecutionTest(unittest.TestCase):
         fil.join(DELAI)
         self.assertFalse(fil.is_alive(), "l'exécution n'est pas close dans le délai")
         return service.derniere_execution()
+
+
+class CheminModeleGgufTest(SocleExecutionTest):
+    """Chemin de modèle du job : fichier GGUF pour transcribe.cpp, dossier sinon."""
+
+    CLE = "a" * 64
+
+    def preparer(self, fichier: str = "modele-q5_k_m.gguf") -> Path:
+        dossier = (
+            self.dossier_data
+            / "models"
+            / "transcribe-cpp"
+            / self.CLE
+            / "fichiers"
+        )
+        dossier.mkdir(parents=True, exist_ok=True)
+        chemin = dossier / fichier
+        chemin.write_bytes(b"GGUF")
+        return chemin
+
+    def demande_gguf(self, fichier_gguf: str | None = "modele-q5_k_m.gguf"):
+        return self.demande(
+            (),
+            moteur="transcribe-cpp",
+            cle=self.CLE,
+            identifiant="handy-computer/whisper-large-v3-turbo-gguf",
+            famille="whisper",
+            synthetique=False,
+            fichier_gguf=fichier_gguf,
+        )
+
+    def test_chemin_et_job_pointent_le_fichier_gguf(self) -> None:
+        fichier = self.preparer()
+        demande = self.demande_gguf()
+
+        chemin = self.service.chemin_modele(demande)
+
+        self.assertEqual(chemin, fichier.resolve())
+        self.assertTrue(chemin.is_file())
+        chemin_job = self.racine / "job-gguf.json"
+        self.service._ecrire_job(demande, (), chemin_job)
+        contenu = json.loads(chemin_job.read_text(encoding="utf-8"))
+        self.assertEqual(contenu["modele"]["chemin"], str(fichier.resolve()))
+
+    def test_fichier_gguf_absent_refuse(self) -> None:
+        demande = self.demande_gguf("absent.gguf")
+
+        with self.assertRaises(ValeurRefusee):
+            self.service.chemin_modele(demande)
+        with self.assertRaises(ValeurRefusee):
+            self.service._ecrire_job(demande, (), self.racine / "job.json")
+
+    def test_fichier_gguf_sans_nom_refuse(self) -> None:
+        self.preparer()
+
+        for valeur in (None, "", "  "):
+            with self.subTest(valeur=valeur):
+                with self.assertRaises(ValeurRefusee):
+                    self.service.chemin_modele(self.demande_gguf(valeur))
+
+    def test_fichier_gguf_hors_racine_refuse(self) -> None:
+        self.preparer()
+
+        for valeur in ("../evil.gguf", "/tmp/evil.gguf", "sous/../../evil.gguf"):
+            with self.subTest(valeur=valeur):
+                with self.assertRaises(ValeurRefusee):
+                    self.service.chemin_modele(self.demande_gguf(valeur))
+
+    def test_autre_moteur_recoit_le_dossier_fichiers(self) -> None:
+        chemin = self.service.chemin_modele(self.demande(()))
+
+        self.assertEqual(chemin.name, "fichiers")
+        self.assertFalse(chemin.exists())
 
 
 class ExecutionCompleteTest(SocleExecutionTest):

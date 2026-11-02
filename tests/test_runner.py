@@ -8,6 +8,7 @@ aucun poids, aucun accès réseau : les validations PC restent dues.
 
 from __future__ import annotations
 
+import dataclasses
 import io
 import json
 import os
@@ -22,7 +23,11 @@ from unittest import mock
 
 import numpy as np
 
-from engines.declarations import DeclarationAdaptateur, Famille
+from engines.declarations import (
+    DeclarationAdaptateur,
+    Famille,
+    declarations_fournies,
+)
 from engines.hors_ligne import environnement_moteur
 from engines.protocole import (
     PREFIXE_EVENEMENT,
@@ -37,10 +42,12 @@ from engines.protocole import (
 from engines.registre import RegistreMoteurs, creer_registre_fourni
 from engines.runner import (
     FORMAT_AUDIO,
+    ErreurAudio,
     ErreurJob,
     ErreurMoteur,
     _pic_memoire_unix,
     _pic_memoire_windows,
+    _valider_resultat,
     charger_job,
     executer,
     pic_memoire,
@@ -100,6 +107,28 @@ print("##SONDE## " + json.dumps({
 }))
 raise SystemExit(code)
 """
+
+
+def registre_non_qualifie(identifiant: str) -> RegistreMoteurs:
+    """Registre d'un seul moteur fourni, copié avec ses familles non qualifiées.
+
+    Les adaptateurs réels sont qualifiés après validation Linux ; ce registre
+    conserve l'éprouvette du refus d'une famille non qualifiée.
+    """
+    registre = RegistreMoteurs()
+    for declaration in declarations_fournies():
+        if declaration.identifiant != identifiant:
+            continue
+        registre.enregistrer(
+            dataclasses.replace(
+                declaration,
+                familles=tuple(
+                    dataclasses.replace(famille, qualifiee=False, duree_native=None)
+                    for famille in declaration.familles
+                ),
+            )
+        )
+    return registre
 
 
 def registre_de_test() -> RegistreMoteurs:
@@ -202,6 +231,15 @@ class ProtocoleTest(unittest.TestCase):
                 "nb_fenetres": 1,
                 "pic_memoire_octets": 1024,
                 "reglages_effectifs": {},
+                "timings_natifs": [
+                    {
+                        "unite": "ms",
+                        "load_ms": 1.0,
+                        "mel_ms": 2.0,
+                        "encode_ms": 3.0,
+                        "decode_ms": 4.0,
+                    }
+                ],
                 "langue_imposee": "fr",
                 "threads_demandes": 4,
                 "threads_appliques": None,
@@ -304,6 +342,41 @@ class ProtocoleTest(unittest.TestCase):
         )
         self.assertEqual(sortie.getvalue().count("\n"), 1)
         self.assertIsNone(analyser_ligne("parasite"))
+
+
+class ValidationTimingsNatifsTest(unittest.TestCase):
+    def test_mesures_non_finies_deviennent_absentes(self) -> None:
+        resultat = _valider_resultat(
+            {
+                "texte": "x",
+                "timings_natifs": [
+                    {
+                        "unite": "ms",
+                        "load_ms": float("nan"),
+                        "mel_ms": float("inf"),
+                        "encode_ms": 1.0,
+                        "decode_ms": None,
+                    }
+                ],
+            }
+        )
+
+        timing = resultat["timings_natifs"][0]
+        self.assertIsNone(timing["load_ms"])
+        self.assertIsNone(timing["mel_ms"])
+        self.assertEqual(timing["encode_ms"], 1.0)
+        self.assertIsNone(timing["decode_ms"])
+
+    def test_cle_inconnue_dans_un_timing_refusee(self) -> None:
+        with self.assertRaises(ErreurAudio):
+            _valider_resultat(
+                {
+                    "texte": "x",
+                    "timings_natifs": [
+                        {"unite": "ms", "load_ms": 1.0, "inventee": 2.0}
+                    ],
+                }
+            )
 
 
 class LectureJobTest(unittest.TestCase):
@@ -438,6 +511,48 @@ class ExecutionTest(unittest.TestCase):
         self.assertEqual(audio["segments"][0]["fin_s"], 30.0)
         self.assertEqual(audio["segments"][1]["debut_s"], 30.0)
         self.assertEqual(audio["segments"][1]["fin_s"], 31.0)
+
+    def test_timings_natifs_conserves_par_appel(self) -> None:
+        adaptateur.reinitialiser(timings_natifs=True)
+        chemin = ecrire_job(
+            self.dossier,
+            [("long.wav", ecrire_signal(self.dossier, "long.f32", 31.0, 7.0))],
+        )
+        _, evenements = executer_et_lire(chemin, self.registre)
+        audio = evenements[1]
+
+        # Une entrée par appel, dans l'ordre des fenêtres : aucune agrégation.
+        self.assertEqual(len(audio["timings_natifs"]), 2)
+        self.assertEqual(
+            [timing["load_ms"] for timing in audio["timings_natifs"]], [1.0, 2.0]
+        )
+        for timing in audio["timings_natifs"]:
+            self.assertEqual(
+                set(timing),
+                {"unite", "load_ms", "mel_ms", "encode_ms", "decode_ms"},
+            )
+            self.assertEqual(timing["unite"], "ms")
+
+    def test_timings_natifs_absents_valent_none(self) -> None:
+        chemin = ecrire_job(
+            self.dossier,
+            [("court.wav", ecrire_signal(self.dossier, "court.f32", 10.0, 4.0))],
+        )
+        _, evenements = executer_et_lire(chemin, self.registre)
+
+        self.assertIsNone(evenements[1]["timings_natifs"])
+
+    def test_timings_natifs_invalides_sont_une_erreur_audio(self) -> None:
+        adaptateur.reinitialiser(timings_invalides=True)
+        chemin = ecrire_job(
+            self.dossier,
+            [("un.wav", ecrire_signal(self.dossier, "un.f32", 1.0, 1.0))],
+        )
+        _, evenements = executer_et_lire(chemin, self.registre)
+
+        erreur = evenements[1]
+        self.assertEqual(erreur["type"], TYPE_AUDIO_ERREUR)
+        self.assertIn("timing natif d'unité inconnue", erreur["erreur"])
 
     def test_audio_court_une_seule_fenetre(self) -> None:
         chemin = ecrire_job(
@@ -705,7 +820,9 @@ class MoteurRefuseTest(unittest.TestCase):
             famille="whisper",
         )
         with self.assertRaises(ErreurMoteur) as contexte:
-            executer(charger_job(chemin), creer_registre_fourni())
+            executer(
+                charger_job(chemin), registre_non_qualifie("faster-whisper")
+            )
         self.assertIn("non qualifiée", str(contexte.exception))
 
     def test_moteur_ou_famille_inconnus(self) -> None:
@@ -803,7 +920,10 @@ class IsolementTest(unittest.TestCase):
         )
         self.assertEqual(resultat.returncode, 3, resultat.stderr)
         self.assertEqual(resultat.stdout, "")
-        self.assertIn("non qualifiée", resultat.stderr)
+        # La famille réelle est qualifiée : depuis un dossier courant
+        # quelconque, le runner importe son adaptateur puis échoue proprement
+        # faute de modèle local, sans importer de module serveur.
+        self.assertIn("chargement du modèle impossible", resultat.stderr)
 
 
 if __name__ == "__main__":

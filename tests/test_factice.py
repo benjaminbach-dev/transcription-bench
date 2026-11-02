@@ -17,6 +17,7 @@ importer `engines` depuis sa seule racine calculée par `__file__`.
 
 from __future__ import annotations
 
+import dataclasses
 import io
 import json
 import os
@@ -32,7 +33,11 @@ from unittest import mock
 
 import numpy as np
 
-from engines.declarations import DeclarationAdaptateur, Famille
+from engines.declarations import (
+    DeclarationAdaptateur,
+    Famille,
+    declarations_fournies,
+)
 from engines.protocole import (
     PREFIXE_EVENEMENT,
     TYPE_AUDIO,
@@ -261,7 +266,26 @@ class DeclarationFacticeTest(unittest.TestCase):
         self.addCleanup(self._temporaire.cleanup)
         self.dossier = Path(self._temporaire.name)
 
-    def test_les_trois_moteurs_reels_restent_non_qualifies(self) -> None:
+    def test_garde_fou_non_qualifiee_et_familles_reelles_qualifiees(self) -> None:
+        # Les familles réelles sont qualifiées après validation Linux : le
+        # moteur factice n'est plus le seul exécutable, mais il reste le seul
+        # à ne demander aucune qualification ni aucun modèle.
+        registre = RegistreMoteurs()
+        for declaration in declarations_fournies():
+            if declaration.factice:
+                continue
+            self.assertTrue(declaration.familles_qualifiees)
+            registre.enregistrer(
+                dataclasses.replace(
+                    declaration,
+                    familles=tuple(
+                        dataclasses.replace(
+                            famille, qualifiee=False, duree_native=None
+                        )
+                        for famille in declaration.familles
+                    ),
+                )
+            )
         for moteur, famille in (
             ("faster-whisper", "whisper"),
             ("transcribe-cpp", "whisper"),
@@ -276,7 +300,7 @@ class DeclarationFacticeTest(unittest.TestCase):
                     famille=famille,
                 )
                 with self.assertRaises(ErreurMoteur) as contexte:
-                    executer(charger_job(chemin), creer_registre_fourni())
+                    executer(charger_job(chemin), registre)
                 self.assertIn("non qualifiée", str(contexte.exception))
 
     def test_le_job_ne_peut_pas_injecter_le_drapeau_factice(self) -> None:
