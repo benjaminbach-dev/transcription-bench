@@ -333,6 +333,7 @@ class ReglagesEtVerrousTest(unittest.TestCase):
         attendus = {
             ("faster-whisper", "whisper"),
             ("transcribe-cpp", "whisper"),
+            ("transcribe-cpp", "qwen3-asr"),
             ("transformers", "whisper"),
             ("transformers", "parakeet-tdt"),
         }
@@ -346,10 +347,17 @@ class ReglagesEtVerrousTest(unittest.TestCase):
                 continue
             for famille in declaration.familles:
                 self.assertTrue(famille.qualifiee)
+                obtenus.add((declaration.identifiant, famille.identifiant))
+                if (declaration.identifiant, famille.identifiant) == (
+                    "transcribe-cpp",
+                    "qwen3-asr",
+                ):
+                    # Aucune durée native prouvée (tâche 8.2) : fenêtres de 30 s.
+                    self.assertIsNone(famille.duree_native)
+                    continue
                 self.assertIsNotNone(famille.duree_native)
                 assert famille.duree_native is not None
                 self.assertGreater(famille.duree_native.secondes_max, 0)
-                obtenus.add((declaration.identifiant, famille.identifiant))
         self.assertEqual(obtenus, attendus)
 
     def test_reglages_reels_exposes(self) -> None:
@@ -368,6 +376,7 @@ class ReglagesEtVerrousTest(unittest.TestCase):
             reglages[("transcribe-cpp", "whisper")],
             ("no_mmap", "condition_on_prev_tokens"),
         )
+        self.assertEqual(reglages[("transcribe-cpp", "qwen3-asr")], ("no_mmap",))
         self.assertEqual(reglages[("transformers", "whisper")], ("do_normalize",))
         self.assertEqual(reglages[("transformers", "parakeet-tdt")], ())
 
@@ -594,9 +603,42 @@ class TranscribeCppAdaptateurTest(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             self._charger(backend="CUDA")
 
-    def test_architecture_non_whisper_refusee(self) -> None:
-        with self.assertRaises(RuntimeError):
-            self._charger(architecture="qwen3-asr")
+    def test_architecture_non_prise_en_charge_refusee(self) -> None:
+        for architecture in ("parakeet", "qwen3-asr", "llama"):
+            with self.subTest(architecture=architecture):
+                with self.assertRaises(RuntimeError):
+                    self._charger(architecture=architecture)
+
+    def test_qwen3_asr_charge_sans_reglages_whisper(self) -> None:
+        contexte, _observateur = self._charger(architecture="qwen3_asr")
+
+        effectifs = contexte["reglages_effectifs"]
+        self.assertEqual(effectifs["architecture_relue"], "qwen3_asr")
+        self.assertEqual(effectifs["timestamps"], "none")
+        self.assertEqual(effectifs["langue_imposee"], "fr")
+        self.assertEqual(effectifs["decodage"], "défauts du moteur, non réglés")
+        for cle in ("condition_on_prev_tokens", "temperature", "temperature_inc"):
+            self.assertNotIn(cle, effectifs)
+
+    def test_qwen3_asr_transcrit_sans_segments_ni_options_whisper(self) -> None:
+        contexte, _observateur = self._charger(architecture="qwen3_asr")
+        appels: list[dict[str, object]] = []
+        executer = contexte["session"].run
+
+        def espion(signal, **options):
+            appels.append(options)
+            return executer(signal, **options)
+
+        contexte["session"].run = espion
+        resultat = transcribe_cpp.transcrire(
+            contexte, np.zeros(TAUX, dtype="<f4"), TAUX, {}
+        )
+
+        self.assertEqual(appels, [{"language": "fr", "timestamps": "none"}])
+        self.assertEqual(resultat["texte"], "bonjour")
+        self.assertEqual(resultat["segments"], [])
+        self.assertEqual(resultat["langue_imposee"], "fr")
+        self.assertEqual(resultat["timings_natifs"][0]["unite"], "ms")
 
     def test_reglage_no_mmap_transmis(self) -> None:
         module = _module_transcribe_cpp()

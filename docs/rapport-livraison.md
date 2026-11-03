@@ -1,6 +1,6 @@
 # Rapport de livraison — prototype transcription-bench
 
-Date : 2026-11-02. Ce rapport constate l'état de livraison au niveau de chaque
+Date : 2026-11-02, mis à jour le 2026-11-03 (8.2, revue advisor). Ce rapport constate l'état de livraison au niveau de chaque
 preuve, conformément aux critères vérifiables du change OpenSpec
 `add-benchmark-prototype`. Le prototype reste un outil de comparaison locale de
 modèles de transcription sur CPU ; **ce n'est pas un produit clinique validé**
@@ -16,31 +16,33 @@ correcte.
 | Installation des trois moteurs depuis les verrous, imports, runner et adaptateurs exercés | CI Windows | run `41477235301` (`c3f48ca`), trois jobs succès, rapports `installation-*.json` ; roues arrêtées par `uv.lock` versionné, téléchargements relevés dans le journal du run |
 | Sonde voix système avant inférence | CI Windows | job `parole` des runs `41478535615` à `41480997693` : voix `Microsoft David Desktop`, culture `en-US`, texte `en`, empreinte SHA-256 vérifiée |
 | Inférence courte des quatre combinaisons | CI Windows | runs `41478535615` (faster-whisper), `41479081739` (transcribe.cpp GGUF Whisper), `41480184141` (Transformers Whisper), `41480997693` (Transformers Parakeet TDT) : transcriptions non vides, CPU relu, 4 threads, timings natifs conservés pour transcribe.cpp |
-| Adaptateurs réels sous Linux (8.1, 8.3) | qualification Linux sur PC de test | parcours du jalon 0 consignés dans `docs/validation-linux.md` et la mémoire projet ; six exécutions réelles hors ligne, verrous et empreintes |
+| Adaptateurs réels sous Linux (8.1 à 8.3) | qualification Linux sur PC de test | parcours du jalon 0 consignés dans `docs/validation-linux.md` et la mémoire projet ; six exécutions réelles hors ligne, verrous et empreintes ; seconde architecture GGUF Qwen3-ASR-0.6B qualifiée le 2026-11-03 (`docs/validation-linux.md`) |
 | Qualification Linux du serveur, arrêts, refus de concurrence | qualification Linux sur PC de test | `docs/validation-linux.md` (PC, 2026-11-02) ; limites : PTY automatisé, pas de console humaine |
 | Preuves CI consignées | CI Windows | tableau des runs et rapports JSON dans `docs/ci-windows.md`, artéfacts 14 jours, copies locales `data/ci/rapports/` hors Git |
 | Documentation de lancement | documentaire | `README.md` à jour, `AGENTS.md` adapté au contexte CI relu puis rechargé ; `openspec validate add-benchmark-prototype --strict` sans erreur |
 | Limites hors CI consignées avec procédure | documentaire | `docs/ci-windows.md`, sections « Limites » et « Procédure de levée » (10.8) |
 | Audit de publication et gate | décision utilisateur | `docs/audits/publication-2026-11-02.md` avec conclusion après publication (contrôles exécutés, risques assumés, contrôles non exécutés) ; décisions consignées dans la mémoire projet : publication de l'historique existant assumée, dépôt public depuis le 2026-11-02 |
 
-## État : partiel, un reliquat ouvert
+## État : critères satisfaits, clôture en attente de décision
 
-Tous les critères de livraison vérifiables sont satisfaits **sauf 11.4**, qui
-reste ouverte en même temps que 8.2 : le critère exige les adaptateurs réels
-« 8.1 à 8.3 » vérifiés sous Linux, or 8.2 exige en complément la qualification
-de la seconde architecture GGUF, non réalisée. Deux points restent donc
-ouverts, liés : **8.2** (en son seul reliquat identifié par la note de
-reprise : la seconde architecture GGUF de transcribe.cpp, Qwen3-ASR ou
-Parakeet, à choisir et qualifier sur le PC de test, ou à reporter
-explicitement) et **11.4** (décochée en attendant).
-L'adaptateur transcribe.cpp et la vérification GGUF Whisper sont déjà écrits et
-validés ; la CI a d'ailleurs exécuté cette combinaison avec succès. En
-conséquence :
+Mise à jour du 2026-11-03. Le reliquat 8.2 est levé : la seconde architecture
+GGUF de transcribe.cpp, **Qwen3-ASR-0.6B (Q8_0)**, choisie par l'utilisateur, a
+été téléchargée et qualifiée sur le PC Linux de test (vérification,
+téléchargement et deux exécutions par les formulaires HTTP, dont une dans un
+namespace réseau isolé ; voir `docs/validation-linux.md`). 11.4 est recochée
+et les 55 tâches sont cochées. Tous les critères de la section 11 sont donc
+satisfaits **à leur niveau de preuve**, ce qui n'est pas une validation
+clinique ni une qualification du PC Windows de l'utilisateur.
 
-- la livraison est **partielle**, aucun critère manquant n'est présenté comme
-  couvert, aucune clôture automatique n'a lieu ;
-- la décision de réviser le périmètre (report de 8.2 ou exécution sur PC)
-  appartient à l'utilisateur.
+Limites propres à cette qualification : Qwen3-ASR n'est vérifiée que sous
+Linux (aucun job CI Windows, le périmètre CI de 10.6 restant les quatre
+combinaisons d'origine) ; aucune durée native n'est déclarée (un appel unique
+de 45 s a été arrêté par le moteur pour répétition) et l'audio est découpé en
+fenêtres de 30 s ; elle n'a ni horodatage ni segment ; la langue est imposée à
+`fr` ; la qualité n'est pas évaluée. La coche de 11.4 est maintenue après la
+revue advisor du 2026-11-03 ; seuls restent en attente la relecture de
+l'utilisateur et la clôture du change (archivage OpenSpec), qui n'a lieu que sur
+sa décision explicite.
 
 ## Garanties non fournies
 

@@ -136,7 +136,14 @@ class DeclarationsFourniesTest(unittest.TestCase):
                 )
                 for famille in declaration.familles:
                     self.assertTrue(famille.qualifiee)
-                    self.assertIsNotNone(famille.duree_native)
+                    if (declaration.identifiant, famille.identifiant) == (
+                        "transcribe-cpp",
+                        "qwen3-asr",
+                    ):
+                        # Aucune durée native prouvée (tâche 8.2).
+                        self.assertIsNone(famille.duree_native)
+                    else:
+                        self.assertIsNotNone(famille.duree_native)
 
     def test_seule_la_declaration_factice_porte_le_drapeau(self) -> None:
         drapeaux = {

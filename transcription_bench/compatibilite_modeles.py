@@ -130,6 +130,16 @@ REGLE_CTRANSLATE2_WHISPER = "ctranslate2-whisper"
 REGLE_TRANSFORMERS_SAFETENSORS = "transformers-safetensors"
 REGLE_TRANSCRIBE_CPP_GGUF = "transcribe-cpp-gguf"
 
+#: Architectures GGUF transcribe.cpp (`general.architecture`) connues du
+#: programme, avec l'identifiant de famille déclaré par le moteur. Le GGUF réel
+#: de Qwen3-ASR porte `qwen3_asr` (soulignés), alors qu'un identifiant de
+#: famille n'admet que des tirets : la correspondance est donc explicite et
+#: jamais déduite du nom de fichier.
+FAMILLES_PAR_ARCHITECTURE_GGUF = {
+    "whisper": "whisper",
+    "qwen3_asr": "qwen3-asr",
+}
+
 RAISON_FICHIERS_MANQUANTS = "fichiers-manquants"
 RAISON_FAMILLE_HORS_PERIMETRE = "famille-hors-perimetre"
 RAISON_FAMILLE_NON_QUALIFIEE = "famille-non-qualifiee"
@@ -848,18 +858,23 @@ def _regle_transcribe_cpp(
             f"en-tête de {choisi!r} sans {CLE_ARCHITECTURE} : la famille ne peut "
             "pas être vérifiée et le nom de fichier ne la prouve pas",
         )
-    if not any(famille.identifiant == architecture for famille in declaration.familles):
+    famille_id = FAMILLES_PAR_ARCHITECTURE_GGUF.get(architecture)
+    if famille_id is None or not any(
+        famille.identifiant == famille_id for famille in declaration.familles
+    ):
         raise _Refus(
             RAISON_FAMILLE_HORS_PERIMETRE,
             f"architecture {architecture!r} extraite de l'en-tête de {choisi!r} "
             f"non déclarée par le moteur {declaration.identifiant!r} : seules les "
-            "architectures vérifiées sont acceptées (Whisper au premier jalon ; "
-            "les autres architectures transcribe.cpp, notamment Qwen3-ASR et "
-            "Parakeet, restent non vérifiées et ne sont pas activées)",
-            famille=architecture,
-            moteur_suggere=_suggerer_moteur(architecture, declaration, connues),
+            "architectures vérifiées sont acceptées (Whisper et Qwen3-ASR ; "
+            "les autres architectures transcribe.cpp, notamment Parakeet, "
+            "restent non vérifiées et ne sont pas activées)",
+            famille=famille_id or architecture,
+            moteur_suggere=_suggerer_moteur(
+                famille_id or architecture, declaration, connues
+            ),
         )
-    return architecture, (choisi,)
+    return famille_id, (choisi,)
 
 
 def _choisir_fichier_gguf(

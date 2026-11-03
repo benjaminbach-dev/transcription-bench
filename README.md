@@ -18,8 +18,9 @@ une transcription médicalement correcte : aucun résultat produit ici ne doit
 | Validation Linux | exécutions, résultats, comparaison, refus de concurrence, arrêts et redémarrage vérifiés par HTTP local avec les moteurs existants ; aucune nouvelle installation vierge testée dans ce parcours |
 | Validation Windows | CI exécutée : suite de tests, installation des trois moteurs et inférences courtes des quatre combinaisons passées sous `windows-2022` ; console interactive et coupure réseau non couvertes |
 
-Les familles exécutables sont Whisper pour les trois moteurs et Parakeet TDT
-pour Transformers. Les autres architectures GGUF restent non qualifiées dans
+Les familles exécutables sont Whisper pour les trois moteurs, Parakeet TDT
+pour Transformers et Qwen3-ASR (sans horodatage) pour transcribe.cpp ; Qwen3-ASR
+n'est qualifiée que sous Linux (aucun job CI). Les autres architectures GGUF restent non qualifiées dans
 cette version. Les timings natifs transcribe.cpp sont conservés et affichés par
 appel, avec leur unité, sans addition ni confusion avec les mesures du runner.
 Le parcours HTTP Linux a été vérifié avec les environnements déjà présents,

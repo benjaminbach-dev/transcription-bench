@@ -994,10 +994,10 @@ class TranscribeCppCompatibiliteTest(AssertionsCompatibilite):
         resultat = verifier_compatibilite(
             self.declaration,
             ("whisper-large-v3.q8_0.gguf",),
-            lecteur_entete_gguf=lecteur_gguf_de(octets_gguf("qwen3-asr")),
+            lecteur_entete_gguf=lecteur_gguf_de(octets_gguf("parakeet")),
         )
         refus = self.assertRefus(resultat, RAISON_FAMILLE_HORS_PERIMETRE)
-        self.assertEqual(refus.famille, "qwen3-asr")
+        self.assertEqual(refus.famille, "parakeet")
 
         resultat = verifier_compatibilite(
             self.declaration,
@@ -1007,8 +1007,62 @@ class TranscribeCppCompatibiliteTest(AssertionsCompatibilite):
         self.assertAccepte(resultat, "whisper")
         self.assertEqual(resultat.fichiers, ("qwen3-asr.q8_0.gguf",))
 
+    def test_qwen3_asr_architecture_reelle_donne_la_famille_qwen3_asr(self) -> None:
+        declaration = declaration_synthetique(
+            identifiant="transcribe-cpp",
+            regle=REGLE_TRANSCRIBE_CPP_GGUF,
+            familles=("whisper", "qwen3-asr"),
+        )
+        resultat = verifier_compatibilite(
+            declaration,
+            ("Qwen3-ASR-0.6B-Q8_0.gguf",),
+            lecteur_entete_gguf=lecteur_gguf_de(octets_gguf("qwen3_asr")),
+        )
+        self.assertAccepte(resultat, "qwen3-asr")
+        self.assertEqual(resultat.fichiers, ("Qwen3-ASR-0.6B-Q8_0.gguf",))
+        # Un moteur qui ne déclare pas la famille la refuse, avec son identifiant.
+        resultat = verifier_compatibilite(
+            self.declaration,
+            ("Qwen3-ASR-0.6B-Q8_0.gguf",),
+            lecteur_entete_gguf=lecteur_gguf_de(octets_gguf("qwen3_asr")),
+        )
+        refus = self.assertRefus(resultat, RAISON_FAMILLE_HORS_PERIMETRE)
+        self.assertEqual(refus.famille, "qwen3-asr")
+
+    def test_qwen3_asr_avec_la_declaration_de_production(self) -> None:
+        resultat = verifier_compatibilite(
+            DECLARATION_TRANSCRIBE_CPP,
+            ("Qwen3-ASR-0.6B-Q8_0.gguf",),
+            lecteur_entete_gguf=lecteur_gguf_de(octets_gguf("qwen3_asr")),
+        )
+        self.assertAccepte(resultat, "qwen3-asr")
+        resultat = verifier_compatibilite(
+            declaration_non_qualifiee(DECLARATION_TRANSCRIBE_CPP),
+            ("Qwen3-ASR-0.6B-Q8_0.gguf",),
+            lecteur_entete_gguf=lecteur_gguf_de(octets_gguf("qwen3_asr")),
+        )
+        self.assertRefus(resultat, RAISON_FAMILLE_NON_QUALIFIEE)
+
+    def test_architecture_a_tiret_refusee_meme_si_la_famille_est_declaree(self) -> None:
+        # Seule la correspondance explicite compte : `qwen3-asr` (tiret) n'est
+        # pas l'architecture réelle, même si la famille du même nom est déclarée.
+        declaration = declaration_synthetique(
+            identifiant="transcribe-cpp",
+            regle=REGLE_TRANSCRIBE_CPP_GGUF,
+            familles=("whisper", "qwen3-asr"),
+        )
+        resultat = verifier_compatibilite(
+            declaration,
+            ("modele.gguf",),
+            lecteur_entete_gguf=lecteur_gguf_de(octets_gguf("qwen3-asr")),
+        )
+        refus = self.assertRefus(resultat, RAISON_FAMILLE_HORS_PERIMETRE)
+        self.assertEqual(refus.famille, "qwen3-asr")
+
     def test_architectures_non_verifiees_refusees(self) -> None:
-        for architecture in ("qwen3-asr", "parakeet-tdt", "llama"):
+        # « qwen3-asr » (tiret) n'est pas l'architecture réelle `qwen3_asr` :
+        # seule la correspondance explicite est acceptée.
+        for architecture in ("qwen3-asr", "parakeet-tdt", "parakeet", "llama"):
             with self.subTest(architecture=architecture):
                 resultat = verifier_compatibilite(
                     self.declaration,
@@ -1135,7 +1189,14 @@ class QualificationProductionTest(AssertionsCompatibilite):
                     moteur=declaration.identifiant, famille=famille.identifiant
                 ):
                     self.assertTrue(famille.qualifiee)
-                    self.assertIsNotNone(famille.duree_native)
+                    if (declaration.identifiant, famille.identifiant) == (
+                        "transcribe-cpp",
+                        "qwen3-asr",
+                    ):
+                        # Aucune durée native prouvée (tâche 8.2).
+                        self.assertIsNone(famille.duree_native)
+                    else:
+                        self.assertIsNotNone(famille.duree_native)
         self.assertTrue(DECLARATION_FASTER_WHISPER.familles_qualifiees)
         self.assertTrue(DECLARATION_TRANSCRIBE_CPP.familles_qualifiees)
         self.assertTrue(DECLARATION_TRANSFORMERS.familles_qualifiees)

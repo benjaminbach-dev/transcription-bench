@@ -13,15 +13,24 @@ Décisions appliquées, issues du jalon 0 Linux (2026-11-01) et du design :
   relue et consignée telle quelle (`backend_relu`, `device_type_relu`) ; la
   version 0.4.1 renvoie `"CPU"` sur le PC Linux validé. Un backend ou un
   périphérique non CPU est une erreur, pas un repli (D6).
-- Architecture vérifiée : `Model.arch` doit valoir `whisper` pour la famille
-  Whisper, seule famille qualifiée ici (D9). Toute autre architecture est
-  refusée au chargement, sans tentative d'exécution.
+- Architecture vérifiée : `Model.arch` doit valoir `whisper` ou `qwen3_asr`
+  (familles qualifiées, D9) ; la bibliothèque relit l'architecture du GGUF et le
+  job ne transmet pas la famille. Toute autre architecture est refusée au
+  chargement, sans tentative d'exécution.
+- Qwen3-ASR (`qwen3_asr`, tâche 8.2) : `language="fr"` est imposé comme pour
+  Whisper (la bibliothèque sait aussi détecter la langue, mais l'auto-détection
+  est écartée pour comparer des transcriptions françaises). Aucun horodatage :
+  `timestamps="none"` (capacité `max_timestamp_kind='none'`) et aucun segment
+  n'est retourné, car le segment unique 0 → durée que renvoie la bibliothèque
+  n'est pas une frontière mesurée. Aucune option de famille (`family`) :
+  l'extension Whisper n'existe pas pour cette architecture et le décodage reste
+  celui du moteur, non réglé ici.
 - `n_threads` reçoit le nombre demandé par le job. Aucune API publique ne permet
   de relire le nombre appliqué en 0.4.1 : `threads_appliques` reste `None` et le
   demandé est consigné.
 - mmap : le mode par défaut (`no_mmap=False`, poids mmapés) est consigné ; le
   réglage `no_mmap` permet de le désactiver (D8).
-- Décodage fixé : `language="fr"`, `timestamps="segment"`,
+- Décodage fixé pour Whisper : `language="fr"`, `timestamps="segment"`,
   `WhisperRunOptions(condition_on_prev_tokens=…, temperature=0.0,
   temperature_inc=0.0)`. Le réglage `condition_on_prev_tokens` est exposé,
   défaut `False` (valeur mesurée au jalon 0).
@@ -56,6 +65,8 @@ ENVIRONNEMENT_CPU = {
     CLE_CUDA_VISIBLE_DEVICES: "",
 }
 ARCHITECTURE_WHISPER = "whisper"
+ARCHITECTURE_QWEN3_ASR = "qwen3_asr"
+ARCHITECTURES_PRISES_EN_CHARGE = (ARCHITECTURE_WHISPER, ARCHITECTURE_QWEN3_ASR)
 NO_MMAP_DEFAUT = False
 CONDITION_ON_PREV_TOKENS_DEFAUT = False
 
@@ -97,16 +108,19 @@ def charger(
                 f"{device_type_relu!r}"
             )
         architecture_relue = str(instance.arch)
-        if architecture_relue.casefold() != ARCHITECTURE_WHISPER:
+        if architecture_relue.casefold() not in ARCHITECTURES_PRISES_EN_CHARGE:
             raise RuntimeError(
                 "architecture GGUF non prise en charge par cet adaptateur : "
-                f"{architecture_relue!r} (famille Whisper attendue)"
+                f"{architecture_relue!r} (attendues : "
+                f"{', '.join(ARCHITECTURES_PRISES_EN_CHARGE)})"
             )
         session = instance.session(n_threads=threads_demandes)
     except Exception:
         instance.close()
         raise
 
+    architecture_relue = architecture_relue.casefold()
+    whisper = architecture_relue == ARCHITECTURE_WHISPER
     reglages_effectifs = {
         "backend_relu": backend_relu,
         "device_type_relu": device_type_relu,
@@ -114,17 +128,25 @@ def charger(
         "variante_relue": str(instance.variant),
         "no_mmap": no_mmap,
         "n_threads_demandes": threads_demandes,
-        "condition_on_prev_tokens": condition_on_prev_tokens,
-        "temperature": 0.0,
-        "temperature_inc": 0.0,
-        "timestamps": "segment",
+        "timestamps": "segment" if whisper else "none",
         "langue_imposee": LANGUE_IMPOSEE,
         "local_files_only": True,
     }
+    if whisper:
+        reglages_effectifs.update(
+            {
+                "condition_on_prev_tokens": condition_on_prev_tokens,
+                "temperature": 0.0,
+                "temperature_inc": 0.0,
+            }
+        )
+    else:
+        reglages_effectifs["decodage"] = "défauts du moteur, non réglés"
     return {
         "modele": instance,
         "session": session,
         "module": tc,
+        "architecture": architecture_relue,
         "condition_on_prev_tokens": condition_on_prev_tokens,
         "reglages_effectifs": reglages_effectifs,
         # Aucune API publique ne relit le nombre appliqué en 0.4.1.
@@ -144,24 +166,30 @@ def transcrire(
             f"fréquence attendue 16000 Hz, reçue {taux_echantillonnage!r}"
         )
     tc = moteur["module"]
-    resultat = moteur["session"].run(
-        signal,
-        language=LANGUE_IMPOSEE,
-        timestamps="segment",
-        family=tc.WhisperRunOptions(
-            condition_on_prev_tokens=moteur["condition_on_prev_tokens"],
-            temperature=0.0,
-            temperature_inc=0.0,
-        ),
-    )
-    segments = [
-        {
-            "debut_s": round(float(segment.t0_ms) / 1000.0, 3),
-            "fin_s": round(float(segment.t1_ms) / 1000.0, 3),
-            "texte": segment.text.strip(),
-        }
-        for segment in resultat.segments
-    ]
+    if moteur["architecture"] == ARCHITECTURE_WHISPER:
+        resultat = moteur["session"].run(
+            signal,
+            language=LANGUE_IMPOSEE,
+            timestamps="segment",
+            family=tc.WhisperRunOptions(
+                condition_on_prev_tokens=moteur["condition_on_prev_tokens"],
+                temperature=0.0,
+                temperature_inc=0.0,
+            ),
+        )
+        segments = [
+            {
+                "debut_s": round(float(segment.t0_ms) / 1000.0, 3),
+                "fin_s": round(float(segment.t1_ms) / 1000.0, 3),
+                "texte": segment.text.strip(),
+            }
+            for segment in resultat.segments
+        ]
+    else:
+        resultat = moteur["session"].run(
+            signal, language=LANGUE_IMPOSEE, timestamps="none"
+        )
+        segments = []
     return {
         "texte": resultat.text.strip(),
         "segments": segments,

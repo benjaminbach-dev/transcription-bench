@@ -77,5 +77,41 @@ les audios et les résultats restent sous `data/`, hors Git.
 Pas de contrôle visuel humain, pas de mesure de qualité ou de performance des
 modèles. Les options hors ligne ont été appliquées ; aucune coupure réseau OS
 n'est revendiquée pour ce parcours HTTP (les essais séparés du runner avaient
-leur namespace isolé). Windows, installation vierge et seconde architecture
-GGUF restent non vérifiés par cette passe.
+leur namespace isolé). Windows et installation vierge
+restent non vérifiés par cette passe ; la seconde architecture GGUF (Qwen3-ASR)
+a fait l'objet d'une qualification séparée, ci-dessous.
+
+## Seconde architecture GGUF : Qwen3-ASR-0.6B (tâche 8.2) — 2026-11-03
+
+Même PC Linux de test (contexte déclaré par l'utilisateur dans la session),
+transcribe.cpp 0.4.1 et environnement moteur existants. Modèle choisi par
+l'utilisateur : `handy-computer/Qwen3-ASR-0.6B-gguf`, commit
+`7e7c69a577fa2725dfedbe34b5e999336e30a19b`, licence Apache-2.0 (carte, LICENSE
+et NOTICE du dépôt), fichier `Qwen3-ASR-0.6B-Q8_0.gguf` (850 423 456 octets,
+SHA-256 `f081b2d5e23bd669d92cc331d722a8a0681943b8e6f34b48996fd5c319b5acd8`,
+identique à l'empreinte LFS publiée). Seul ce fichier a été téléchargé, par le
+bouton du serveur après vérification de compatibilité.
+
+- L'en-tête GGUF porte `general.architecture = qwen3_asr` ; la correspondance
+  explicite vers la famille `qwen3-asr` a été ajoutée (un identifiant de famille
+  n'admet pas de soulignés).
+- Premières exécutions par les formulaires HTTP (10,673 s en natif et 47,704 s
+  en deux fenêtres ; une en réseau normal, une dans un namespace réseau isolé) :
+  elles déclaraient encore une durée native de 47,7 s et sont **dépassées**.
+  Un appel natif unique sur un recadrage de 45 s de parole synthétique répétitive
+  a ensuite été arrêté par le moteur (« output repetition », statut 19) : la
+  durée native a donc été **retirée** et le runner découpe en fenêtres de 30 s.
+- Configuration finale, `rejouer-hors-ligne.sh` : namespace réseau Linux isolé
+  (`unshare -rn`, accès externe vérifié impossible : code HTTP 000, consigné dans
+  `rejeu-fenetres.log`), serveur `uv run --offline`, trois audios (10,7 s, 45 s
+  recadrés, 47,7 s) tous en fenêtres de 30 s (1, 2 et 2 fenêtres), exécution
+  `20261103-150154-1bb5e17b` : statut `ok` partout, RTF ≈ 0,16–0,17, pic mémoire
+  ≈ 1,4 Gio, 4 threads demandés, backend et périphérique relus CPU.
+- Transcription non vide comme contrôle technique ; **aucune évaluation de la
+  qualité** (le texte français est approximatif sur la parole synthétique).
+- Limites : pas d'horodatage ni de segments (capacité du moteur `none`) ; langue
+  imposée `fr` plutôt qu'auto-détection ; décodage laissé aux défauts du moteur
+  (consigné) ; risque résiduel d'arrêt par détection de répétition sur une
+  fenêtre ; aucune durée native ; pas de contrôle visuel humain ; Windows non
+  couvert (aucun job CI Qwen3-ASR).
+- Preuves locales, hors Git : `data/feasibility/validation-qwen3-asr/`.

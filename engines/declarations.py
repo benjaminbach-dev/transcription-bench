@@ -355,6 +355,24 @@ DECLARATION_TRANSCRIBE_CPP = DeclarationAdaptateur(
                 ),
             ),
         ),
+        Famille(
+            "qwen3-asr",
+            "Qwen3-ASR",
+            qualifiee=True,
+            # Aucune durée native prouvée (tâche 8.2) : un appel unique sur 45 s
+            # de parole synthétique a été arrêté par le moteur (« output
+            # repetition », statut 19). Fenêtres fixes de 30 s du runner.
+            reglages=(
+                Reglage(
+                    "no_mmap",
+                    "Sans mmap",
+                    TYPE_BOOLEEN,
+                    False,
+                    "Copier les poids en mémoire au lieu de les mmapser ; "
+                    "le mode effectif est consigné.",
+                ),
+            ),
+        ),
     ),
     module_adaptateur="engines.adaptateurs.transcribe_cpp",
     modules_verification=("transcribe_cpp", "numpy"),
