@@ -2,22 +2,22 @@
 
 - [ ] 1.0 Préalable : `habiller-interface-sumi` implémenté (navigation, libellés et navigateurs minimaux définitifs)
 - [ ] 1.1 Faire valider par le propriétaire le public visé (hypothèse : à l'aise avec un ordinateur, sans programmation, prêt à copier-coller des commandes) ; l'exemple principal est décidé (design D5 : whisper-large-v3-turbo-gguf, Q5_K_M)
-- [ ] 1.2 Inventorier le README actuel section par section et établir le tableau de correspondance sans perte (reste, déplacé, réécrit dans le guide, obsolète), joint au change dans `correspondance.md`
-- [ ] 1.3 Relever dans l'interface les libellés, pages et messages réels (gabarits **et** chaînes Python de `transcription_bench/web`, CLI inclus) sur lesquels s'appuieront le guide et le dépannage
+- [x] 1.2 Inventorier le README actuel section par section et établir le tableau de correspondance sans perte (reste, déplacé, réécrit dans le guide, obsolète), joint au change dans `correspondance.md`
+- [x] 1.3 Relever dans l'interface les libellés, pages et messages réels (gabarits **et** chaînes Python de `transcription_bench/web`, CLI inclus) sur lesquels s'appuieront le guide et le dépannage
 
 ## 2. Rédaction
 
 - [ ] 2.1 Écrire `docs/guide-utilisateur.md` : avertissements, ce qu'il faut avoir, parcours pas à pas en trois parties, exemple concret, comparaison, tableau des modèles vérifiés ; `winget` en alternative pour uv sous Windows, archive ZIP en alternative à Git
 - [ ] 2.2 Écrire le glossaire (section « Glossaire »), la liste des accès réseau réels (design D9) et la section de dépannage à partir de messages réellement produits (de l'application, ou du système/navigateur relevés lors d'un essai)
-- [ ] 2.3 Déplacer le contenu technique dans `docs/technique.md` et corriger ce qui est périmé (dont la mention des durées natives, qui ne couvre plus Qwen3-ASR)
-- [ ] 2.4 Réduire `README.md` (moins de soixante lignes) avec liens vers le guide et la documentation technique
+- [x] 2.3 Déplacer le contenu technique dans `docs/technique.md` et corriger ce qui est périmé (dont la mention des durées natives, qui ne couvre plus Qwen3-ASR)
+- [x] 2.4 Réduire `README.md` (moins de soixante lignes) avec liens vers le guide et la documentation technique
 - [ ] 2.5 Renseigner pour chaque procédure son niveau de vérification (Linux daté, CI Windows, non vérifié)
-- [ ] 2.6 Mettre à jour `docs/rapport-livraison.md` (la ligne qui cite « README.md à jour » comme preuve de la documentation de lancement) pour renvoyer au guide
+- [x] 2.6 Mettre à jour `docs/rapport-livraison.md` (la ligne qui cite « README.md à jour » comme preuve de la documentation de lancement) pour renvoyer au guide
 
 ## 3. Contrôles automatiques
 
-- [ ] 3.1 Test de cohérence (UTF-8 explicite) : textes en gras présents dans les gabarits ou chaînes Python de `transcription_bench/web` ou liste blanche ; liens relatifs valides (fichiers seulement) ; liste d'interdits hors glossaire
-- [ ] 3.2 Vérifier que le test échoue bien sur un libellé volontairement faux, un lien cassé et un terme interdit (puis annuler)
+- [x] 3.1 Test de cohérence (UTF-8 explicite) : textes en gras présents dans les gabarits ou chaînes Python de `transcription_bench/web` ou liste blanche ; liens relatifs valides (fichiers seulement) ; liste d'interdits hors glossaire
+- [x] 3.2 Vérifier que le test échoue bien sur un libellé volontairement faux, un lien cassé et un terme interdit (puis annuler)
 
 ## 4. Validation en conditions réelles
 

@@ -59,3 +59,7 @@ transcription non vide comme contrôle technique, sans mot attendu ni score.
 Artéfacts GitHub Actions des runs listés (14 jours), copies locales sous
 `data/ci/rapports/<run>/` (hors Git), compte rendu Linux dans
 `docs/validation-linux.md`, audits dans `docs/audits/`.
+
+## Note du 2026-11-03
+
+Le lancement et l'usage de l'outil sont désormais décrits dans le [guide utilisateur](guide-utilisateur.md) ; la ligne « Documentation de lancement » du tableau ci-dessus est une preuve historique du 2026-11-02 et renvoie à l'ancien `README.md`, dont le contenu technique a été repris dans [la documentation technique](technique.md).
