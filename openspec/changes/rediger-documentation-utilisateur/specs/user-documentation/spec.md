@@ -1,76 +1,100 @@
 ## ADDED Requirements
 
 ### Requirement: Documentation organisée en trois niveaux
-Le dépôt SHALL fournir un `README.md` court (porte d'entrée), un guide utilisateur (`docs/guide-utilisateur.md`) et une documentation technique (`docs/technique.md`). Le `README.md` SHALL présenter en moins de soixante lignes l'usage de l'outil, l'avertissement de non-validation clinique, la commande de lancement et des liens vers le guide et vers la documentation technique, sans détail d'implémentation, de validation ou de CI. Le guide SHALL être le seul document que l'utilisateur doit lire pour réussir sa première transcription. La documentation technique SHALL reprendre le contenu technique de l'ancien README sans en perdre d'information : un tableau de correspondance (section de l'ancien README → emplacement actuel) SHALL être joint au change.
+Le dépôt SHALL fournir un `README.md` court, un guide utilisateur (`docs/guide-utilisateur.md`) et une documentation technique (`docs/technique.md`). Le `README.md` SHALL tenir en moins de soixante lignes : usage, avertissement clinique, commande de lancement, liens vers le guide et la documentation technique, sans détail d'implémentation ni de CI. La documentation technique SHALL reprendre le contenu technique de l'ancien README sans perte.
 
 #### Scenario: Premier contact
 - **WHEN** une personne ouvre le `README.md`
 - **THEN** elle y trouve en moins de soixante lignes ce que fait l'outil, que ce n'est pas un outil médical validé, et un lien direct vers le guide utilisateur
 
 #### Scenario: Aucune perte d'information
-- **WHEN** chaque section de l'ancien README est comparée au tableau de correspondance
-- **THEN** chacune est soit conservée dans la documentation technique, soit réécrite dans le guide, soit explicitement déclarée obsolète avec sa raison
+- **WHEN** chaque section de l'ancien README est comparée à la documentation actuelle
+- **THEN** chacune est conservée dans la documentation technique, réécrite dans le guide, ou déclarée obsolète avec sa raison
 
-### Requirement: Langage adapté à des non-techniciens
-Le guide et le README SHALL être rédigés en français courant, au vouvoiement, en phrases courtes, avec une action par étape numérotée et des verbes à l'impératif. Tout terme technique inévitable (par exemple moteur, modèle, terminal, empreinte, hors ligne) SHALL être défini en une phrase à sa première apparition et dans un glossaire du guide. Un terme technique non défini, un sigle non développé et les termes d'une liste d'interdits maintenue par un test (au minimum CSRF, WSGI, Flask, Jinja, venv, namespace, mmap, RTF, `HF_HUB_OFFLINE`) SHALL NOT apparaître dans le guide ni le README, sauf dans le glossaire ou entre guillemets français lorsqu'ils reproduisent un libellé de l'interface. Les libellés exacts de l'interface SHALL être cités entre guillemets français « … », et ces guillemets SHALL NOT servir à autre chose.
+### Requirement: Termes techniques maîtrisés
+Le guide et le README SHALL éviter le jargon : tout terme technique inévitable (par exemple moteur, modèle, terminal, empreinte, hors ligne) SHALL être défini en une phrase à sa première apparition et dans une section intitulée « Glossaire ». Les termes d'une liste d'interdits maintenue par un test (au minimum CSRF, WSGI, Flask, Jinja, venv, namespace, mmap, RTF, `HF_HUB_OFFLINE`) SHALL NOT apparaître dans le guide ni le README, sauf dans le glossaire ou dans un libellé d'interface en gras.
 
 #### Scenario: Terme technique défini
 - **WHEN** le guide emploie pour la première fois le mot « modèle » ou « moteur »
 - **THEN** une phrase le définit à cet endroit et le glossaire le reprend
 
 #### Scenario: Terme interdit
-- **WHEN** un terme de la liste d'interdits apparaît dans le guide ou le README hors glossaire et hors guillemets français
+- **WHEN** un terme de la liste d'interdits apparaît dans le guide ou le README hors glossaire et hors libellé en gras
 - **THEN** le test de cohérence de la documentation échoue
 
-### Requirement: Parcours pas à pas de bout en bout
-Le guide SHALL décrire, dans l'ordre, tout ce qu'il faut faire pour passer de rien à une première transcription lue puis comparée : ce dont il faut disposer (système, espace disque, mémoire, navigateur récent et ses versions minimales), installer l'outil de lancement, obtenir le projet, ouvrir un terminal, lancer l'application, ouvrir la page dans le navigateur, déposer des audios dans le dossier prévu, installer un moteur, ajouter et télécharger un modèle, lancer la transcription, suivre l'opération, lire le résultat, comparer deux résultats, arrêter l'application et relancer plus tard. Chaque étape SHALL comporter trois parties : ce qu'il faut faire, ce que l'on doit voir, et quoi faire si ce n'est pas le cas (renvoi vers le dépannage). Les commandes à copier SHALL être données pour Linux et pour Windows, et l'ouverture d'un terminal SHALL être expliquée pour chacun.
-
-#### Scenario: Étape complète
-- **WHEN** une étape du parcours est lue
-- **THEN** elle indique l'action à faire, le résultat observable attendu avec le texte exact de l'interface et un renvoi au dépannage en cas d'écart
-
-#### Scenario: Les deux systèmes
-- **WHEN** une commande doit être saisie dans un terminal
-- **THEN** la version Linux et la version Windows sont toutes deux présentes, avec le nom du terminal à ouvrir
-
-### Requirement: Exemple concret vérifié
-Le parcours principal SHALL utiliser un modèle d'essai réellement vérifié du projet, avec son moteur, son identifiant exact, le fichier à choisir lorsque le dépôt en propose plusieurs, la taille à télécharger et la durée approximative attendue. Le guide SHALL aussi lister dans un tableau les autres modèles d'essai vérifiés (moteur, identifiant, taille, remarque) avec un renvoi vers les licences. Il SHALL expliquer comment comparer deux résultats sans prétendre dire quel modèle est le meilleur ni que le texte obtenu est exact.
-
-#### Scenario: Identifiants exacts
-- **WHEN** le guide indique un identifiant de modèle ou un nom de fichier
-- **THEN** il figure dans `docs/licences-modeles.md` ou dans les preuves de validation du projet
-
-### Requirement: Avertissements, limites et vie privée en clair
-Le guide SHALL expliquer en langage courant, au début et là où c'est pertinent : que l'outil n'est pas validé cliniquement et qu'une transcription qui se lit bien peut être fausse ; que les audios et les transcriptions restent sur l'ordinateur et ne sont envoyés à aucun service ; ce que l'application télécharge, quand et quelle quantité, et qu'elle ne le fait que sur action explicite ; que les performances mesurées dépendent de l'ordinateur ; et la liste des limites connues qui touchent l'utilisateur (une seule transcription à la fois, ordinateur sans carte graphique exploitée, systèmes pris en charge).
-
-#### Scenario: Données personnelles
-- **WHEN** le guide présente le dépôt des audios
-- **THEN** il dit que les fichiers ne quittent pas l'ordinateur et que seuls les téléchargements d'outils et de modèles utilisent Internet
-
-### Requirement: Dépannage en langage courant
-Le guide SHALL contenir une section de dépannage organisée en « ce que vous voyez », « cause probable », « que faire », couvrant au minimum : port déjà utilisé, commande de lancement introuvable, moteur non prêt ou installation échouée, modèle refusé ou introuvable, téléchargement interrompu ou espace disque insuffisant, absence de connexion Internet, audio illisible ou format non pris en charge, transcription vide ou exécution interrompue, et page qui ne s'ouvre pas. Chaque cas SHALL s'appuyer sur un message ou comportement réellement produit par l'application.
-
-#### Scenario: Message réel
-- **WHEN** un cas du dépannage cite un message de l'application
-- **THEN** ce message existe dans le code ou les gabarits de l'application
-
-### Requirement: Fidélité à l'interface et aux liens
-Le projet SHALL disposer d'un test automatique de cohérence de la documentation : tout texte entre guillemets français du guide est un libellé présent dans les gabarits de l'interface, un titre de page, ou figure dans une liste blanche explicite de non-libellés ; tous les liens relatifs du README et des documents du dossier `docs/` pointent vers un fichier existant ; la liste d'interdits du langage est respectée. Ce test SHALL s'exécuter dans la suite habituelle, sans réseau et sans nouvelle dépendance.
+### Requirement: Libellés d'interface en gras
+Les libellés exacts de l'interface cités dans le guide SHALL être écrits en gras, et le gras SHALL NOT servir à autre chose. Chaque texte en gras SHALL être présent dans les gabarits ou les chaînes de `transcription_bench/web`, dans le titre d'une page, ou dans une liste blanche explicite du test.
 
 #### Scenario: Libellé changé dans l'interface
 - **WHEN** un libellé d'une page est modifié sans mise à jour du guide
 - **THEN** le test de cohérence échoue en nommant le libellé et le fichier
 
+### Requirement: Parcours pas à pas de bout en bout
+Le guide SHALL décrire dans l'ordre, de rien à une première transcription lue puis comparée : prérequis (système, espace disque, mémoire, versions minimales du navigateur), outil de lancement, obtention du projet, terminal, lancement, page dans le navigateur, dépôt des audios, moteur, modèle, transcription et suivi, lecture, comparaison de deux résultats, arrêt et relancement.
+
+#### Scenario: Parcours complet
+- **WHEN** le sommaire du guide est lu
+- **THEN** chacune de ces étapes y figure, dans cet ordre
+
+### Requirement: Étapes en trois parties pour Linux et Windows
+Chaque étape du parcours SHALL indiquer ce qu'il faut faire, ce que l'on doit voir, et quoi faire sinon (renvoi vers le dépannage). Les commandes à copier SHALL exister pour Linux et pour Windows, avec le nom du terminal à ouvrir pour chacun.
+
+#### Scenario: Étape complète
+- **WHEN** une étape du parcours est lue
+- **THEN** elle indique l'action, le résultat attendu avec le libellé exact de l'interface et un renvoi au dépannage
+
+#### Scenario: Les deux systèmes
+- **WHEN** une commande doit être saisie dans un terminal
+- **THEN** la version Linux et la version Windows sont présentes
+
+### Requirement: Exemple concret vérifié
+Le parcours principal SHALL utiliser `handy-computer/whisper-large-v3-turbo-gguf` avec le moteur transcribe.cpp et le fichier `whisper-large-v3-turbo-Q5_K_M.gguf`, en indiquant la taille à télécharger. Durée, mémoire et espace disque SHALL n'être indiqués que s'ils ont été mesurés, avec la machine de mesure, sinon signalés « non mesuré ». Un tableau SHALL lister les autres modèles d'essai vérifiés (moteur, identifiant, taille, remarque) avec un renvoi vers les licences.
+
+#### Scenario: Identifiants exacts
+- **WHEN** le guide indique un identifiant de modèle ou un nom de fichier
+- **THEN** il figure dans `docs/licences-modeles.md` ou dans les preuves de validation du projet
+
+#### Scenario: Mesure absente
+- **WHEN** le guide mentionne une durée ou une taille mémoire sans mesure faite
+- **THEN** il la signale « non mesurée » au lieu de l'estimer
+
+### Requirement: Comparaison expliquée sans jugement
+Le guide SHALL expliquer comment comparer deux résultats, sans prétendre dire quel modèle est le meilleur ni que le texte obtenu est exact.
+
+#### Scenario: Lecture d'une comparaison
+- **WHEN** le guide présente la comparaison
+- **THEN** il indique que le texte le plus fluide n'est pas forcément le plus exact et que l'outil n'est pas validé cliniquement
+
+### Requirement: Limites et vie privée en clair
+Le guide SHALL expliquer en langage courant, au début et là où c'est pertinent : l'absence de validation clinique ; que les audios et transcriptions restent sur l'ordinateur ; les limites connues qui touchent l'utilisateur (une seule transcription à la fois, ordinateur sans carte graphique exploitée, systèmes pris en charge) ; que les performances dépendent de l'ordinateur.
+
+#### Scenario: Audios locaux
+- **WHEN** le guide présente le dépôt des audios
+- **THEN** il dit que les audios et les transcriptions ne quittent pas l'ordinateur
+
+### Requirement: Accès réseau décrits tels qu'ils sont
+Le guide SHALL lister les accès réseau réels de l'outil (installation de l'outil de lancement, obtention du projet, premier lancement, installation d'un moteur, vérification et téléchargement d'un modèle), dire quand ils ont lieu, à quelle quantité de données et qu'ils ne se produisent que sur action explicite de l'utilisateur, sauf le premier lancement s'il télécharge de lui-même ses dépendances.
+
+#### Scenario: Premier lancement
+- **WHEN** le guide présente le premier lancement
+- **THEN** il dit si ce lancement télécharge des éléments, d'après l'observation du parcours à froid
+
+### Requirement: Dépannage en langage courant
+Le guide SHALL contenir une section de dépannage organisée en « ce que vous voyez », « cause probable », « que faire », couvrant au minimum : port déjà utilisé, commande de lancement introuvable, moteur non prêt ou installation échouée, modèle refusé ou introuvable, téléchargement interrompu ou espace disque insuffisant, absence de connexion Internet, audio illisible ou format non pris en charge, transcription vide ou exécution interrompue, page qui ne s'ouvre pas.
+
+#### Scenario: Message cité
+- **WHEN** un cas du dépannage cite un message
+- **THEN** ce message existe dans le code ou les gabarits de l'application, ou a été relevé lors d'un essai pour un message du système ou du navigateur
+
+### Requirement: Liens valides
+Un test de cohérence de la documentation SHALL vérifier que tous les liens relatifs du README et des documents du dossier `docs/` pointent vers un fichier existant. Il SHALL s'exécuter dans la suite habituelle, sans réseau ni nouvelle dépendance, en lisant les fichiers en UTF-8.
+
 #### Scenario: Lien cassé
 - **WHEN** le README renvoie vers un fichier qui n'existe plus
 - **THEN** le test de cohérence échoue
 
-### Requirement: Vérification honnête de la documentation
-Chaque procédure du guide SHALL porter son niveau de vérification : « vérifié sous Linux le <date> », « contrôlé par la CI Windows » (en précisant ce qui l'a été) ou « non vérifié sur un poste Windows ». Avant d'être déclaré terminé, le guide SHALL avoir été suivi de bout en bout, sans autre connaissance du projet que ce qu'il dit, sur une copie neuve du dépôt avec un dossier de données vierge, jusqu'à une première transcription lue et une comparaison de deux résultats ; les écarts constatés SHALL être corrigés dans le guide. Aucune commande, taille ou durée non exécutée ou non mesurée ne SHALL être présentée comme vérifiée, et le guide SHALL être relu par le propriétaire avant clôture.
-
-#### Scenario: Parcours à froid
-- **WHEN** le guide est suivi pas à pas sur une copie neuve avec un dossier de données vierge
-- **THEN** une première transcription est obtenue et lue sans autre aide, et chaque écart observé est consigné puis corrigé
+### Requirement: Niveau de vérification affiché
+Chaque procédure du guide SHALL porter son niveau de vérification : « vérifié sous Linux le <date> », « contrôlé par la CI Windows » en précisant ce qui l'a été, ou « non vérifié sur un poste Windows ». Aucune commande, taille ou durée non exécutée ou non mesurée ne SHALL être présentée comme vérifiée.
 
 #### Scenario: Windows non vérifié
 - **WHEN** une procédure n'a été exécutée que sous Linux
