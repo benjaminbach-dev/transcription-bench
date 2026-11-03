@@ -24,6 +24,17 @@ Sources figées :
 
 Les pages et arborescences étaient lisibles sans authentification ; l'accès effectif aux poids sera vérifié au téléchargement, sans jeton. Si un dépôt devient restreint ou indisponible, ne pas le contourner ni changer silencieusement de modèle. Les rapports CI identifient le modèle, sa révision et sa licence ; pour NVIDIA, ce document fournit aussi l'attribution et le lien de licence. Une éventuelle redistribution future des poids imposerait une vérification distincte des notices, copyrights, modifications et conditions exactes.
 
+## Feuilles de style de l'interface locale
+
+Les deux feuilles de l'interface sont servies par l'application depuis le paquet (`transcription_bench/web/ressources/`), jamais depuis un réseau ; leurs avis de copyright sont conservés.
+
+| Composant | Licence et provenance |
+| --- | --- |
+| Sumi.css 1.0.0 (copie figée `sumi.min.css`, commit amont `cee85b75efb2f129b82bc014439381b57ede7c22`) | MIT, © 2026 Vladimir Carrer ; texte intégral dans `transcription_bench/web/ressources/LICENSE-Sumi.css`, en-tête de licence conservé dans la copie ; version, commit, date et SHA-256 dans `transcription_bench/web/ressources/PROVENANCE.md` |
+| Flexoki (palette de couleurs employée par `app.css`) | MIT, © Steph Ango, valeurs reprises de <https://stephango.com/flexoki> ; avis de licence en tête de `transcription_bench/web/ressources/app.css` ; aucune couleur hors palette |
+
+Ces deux licences MIT autorisent l'usage, la modification et la redistribution à condition de conserver l'avis de copyright et le texte de licence ; pour Sumi.css le texte est joint dans `LICENSE-Sumi.css`, pour Flexoki le texte type de la MIT s'applique avec le copyright déclaré ci-dessus. Sumi.css est utilisé sans modification fonctionnelle (copie octet pour octet) ; Flexoki n'est employé que par des valeurs de couleur déclarées dans `app.css` du projet.
+
 ## Dépendances principales
 
 D'après leurs métadonnées officielles et dépôts : faster-whisper 1.2.1, CTranslate2 4.8.3, transcribe-cpp et transcribe-cpp-native 0.4.1 déclarent MIT ; Transformers 5.20.2 déclare Apache-2.0 ; PyTorch 2.14.1 utilise notamment BSD-3-Clause avec des composants tiers sous plusieurs licences ; librosa 1.0.0 déclare ISC.

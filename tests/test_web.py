@@ -9,6 +9,7 @@ import threading
 import unittest
 from pathlib import Path
 
+from tests.outils_html import assert_html_seul, assert_sans_script_ni_style
 from transcription_bench.operations import CreneauOperations
 from transcription_bench.paths import DOSSIERS_DATA
 from transcription_bench.web import (
@@ -21,7 +22,6 @@ from transcription_bench.web import (
 
 ADRESSE_LOCALE = "127.0.0.1"
 PORT_TEST = 8765
-ELEMENTS_CSS_JS_INTERDITS = ("<script", "<style", "style=", "stylesheet", "<link", "javascript:")
 CHAMP_ESPION = "champ"
 
 
@@ -66,9 +66,7 @@ class SocleWebTest(unittest.TestCase):
         return (prefixe + "a" * (taille - len(prefixe))).encode("ascii")
 
     def verifier_html_seul(self, corps: str) -> None:
-        for interdit in ELEMENTS_CSS_JS_INTERDITS:
-            self.assertNotIn(interdit, corps)
-        self.assertNotIn("Traceback", corps)
+        assert_html_seul(self, corps)
 
     def verifier_page_erreur(self, reponse, code: int) -> str:
         self.assertEqual(reponse.status_code, code)
@@ -149,7 +147,9 @@ class WebTest(SocleWebTest):
 
         self.assertEqual(reponse.status_code, 303)
         self.assertEqual(reponse.headers["Location"], "/?action=dossiers-verifies")
-        self.verifier_html_seul(reponse.get_data(as_text=True))
+        # Corps d'une redirection 303 : pas encore une page de l'interface, donc
+        # sans les deux feuilles, mais toujours sans script ni style.
+        assert_sans_script_ni_style(self, reponse.get_data(as_text=True))
         for nom in DOSSIERS_DATA:
             self.assertTrue((self.dossier_data / nom).is_dir(), nom)
 
@@ -173,7 +173,11 @@ class WebTest(SocleWebTest):
         self.verifier_page_erreur(reponse, 404)
 
     def test_route_statique_absente(self) -> None:
-        reponse = self.client.get("/static/base.css", base_url=self.base_url())
+        # Les 404 des chemins statiques (`/static/base.css`, `/sumi.min.css`,
+        # remontées d'arborescence) sont couverts par
+        # `tests/test_feuilles.py::RoutesFeuillesTest` : aucun service de
+        # fichiers arbitraires, seul le routeur et les pages d'erreur répondent.
+        reponse = self.client.get("/route/inexistante", base_url=self.base_url())
 
         self.verifier_page_erreur(reponse, 404)
 
@@ -419,7 +423,13 @@ class AccueilEtPagesReellesTest(SocleWebTest):
         )
         self.assertIn("Comparer des transcriptions d'un même audio", corps)
         self.assertIn("empreinte SHA-256", corps)
-        self.assertNotIn('href="/"', corps, "l'accueil ne se lie pas à lui-même")
+        contenu = corps.split("<main>", 1)[1]
+        self.assertNotIn(
+            'href="/"',
+            contenu,
+            "l'accueil ne se lie pas à lui-même dans son contenu "
+            "(la navigation commune, elle, pointe vers l'accueil)",
+        )
         for nom in DOSSIERS_DATA:
             self.assertIn(str(self.dossier_data / nom), corps)
         self.assertIn("(absent)", corps)

@@ -11,6 +11,11 @@ aussi les routes inexistantes. Le jeton est propre à chaque `create_app` et
 reste sans session ni cookie. Les pages restent volontairement limitées à ce qui
 est réellement implémenté : aucun succès n'est affiché pour une fonction absente.
 
+Deux routes GET servent les feuilles de style du paquet, jamais un dossier
+statique : `/sumi.css` (copie figée de Sumi.css, MIT) et `/app.css` (complément
+du projet), avec type explicite, `nosniff` et `no-cache`. Le chemin lu est
+construit depuis ce module, jamais depuis la requête.
+
 Les mutations passent par le créneau unique injecté : la vérification des
 dossiers s'exécute sous son verrou et est refusée (409) pendant une opération
 longue, comme après le passage à l'arrêt (503). L'accueil affiche l'état du
@@ -44,7 +49,7 @@ from dataclasses import dataclass
 from hmac import compare_digest
 from pathlib import Path
 
-from flask import Flask, abort, redirect, render_template, request, url_for
+from flask import Flask, Response, abort, redirect, render_template, request, url_for
 from werkzeug.exceptions import HTTPException
 
 from engines.registre import MoteurInconnu, creer_registre_fourni
@@ -101,6 +106,10 @@ from transcription_bench.paths import (
 
 LIMITE_CORPS_APPLICATION = 64 * 1024
 NOM_CHAMP_JETON = "jeton_csrf"
+TYPE_FEUILLE = "text/css; charset=utf-8"
+DOSSIER_FEUILLES = Path(__file__).resolve().parent / "ressources"
+NOM_FEUILLE_SUMI = "sumi.min.css"
+NOM_FEUILLE_APP = "app.css"
 CHAMP_SELECTION_COMPARAISON = "transcription"
 TYPE_FORMULAIRE = "application/x-www-form-urlencoded"
 HOTES_AUTORISES = ("127.0.0.1", "localhost")
@@ -305,6 +314,21 @@ def create_app(config: ConfigApplication, services: ServicesApplication) -> Flas
     return application
 
 
+def _reponse_feuille(nom_fichier: str) -> Response:
+    """Feuille de style figée du paquet, servie hors ligne avec des en-têtes fixes.
+
+    Le fichier est désigné par une constante de ce module, jamais par la requête :
+    aucune valeur reçue ne peut conduire à un autre fichier. Le type est posé
+    explicitement, le type MIME deviné par le registre Windows n'étant pas fiable.
+    """
+    contenu = (DOSSIER_FEUILLES / nom_fichier).read_bytes()
+    reponse = Response(contenu, status=200)
+    reponse.headers["Content-Type"] = TYPE_FEUILLE
+    reponse.headers["X-Content-Type-Options"] = "nosniff"
+    reponse.headers["Cache-Control"] = "no-cache"
+    return reponse
+
+
 def _verifier_hote(hotes: frozenset[str]) -> None:
     """Refuse toute requête dont l'en-tête `Host` n'est pas local, port compris."""
     if request.host not in hotes:
@@ -386,6 +410,16 @@ def _enregistrer_routes(
             moteurs=moteurs,
             message_moteurs=_message_moteurs(moteurs),
         )
+
+    @application.get("/sumi.css")
+    def feuille_sumi() -> Response:
+        """Copie figée de Sumi.css, servie depuis le paquet, sans réseau."""
+        return _reponse_feuille(NOM_FEUILLE_SUMI)
+
+    @application.get("/app.css")
+    def feuille_app() -> Response:
+        """Feuille complémentaire du projet, chargée après Sumi.css."""
+        return _reponse_feuille(NOM_FEUILLE_APP)
 
     @application.get("/audios")
     def audios() -> str:

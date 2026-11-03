@@ -1,0 +1,161 @@
+/*
+ * app.css — complément du projet à Sumi.css, chargé après /sumi.css.
+ *
+ * Trois rôles seulement (design D4) :
+ *   1. retours à la ligne, coupures et largeur minimale des transcriptions ;
+ *   2. surcharge des jetons de COULEUR de Sumi par la palette Flexoki ;
+ *   3. couleur des boutons d'action destructrice (classe `danger`).
+ *
+ * Palette Flexoki — avis de licence : Flexoki, © Steph Ango, licence MIT
+ * (https://stephango.com/flexoki). Seules des valeurs de cette palette sont
+ * employées ; l'attribution complète figure dans docs/licences-modeles.md.
+ *
+ * Écarts assumés par rapport aux teintes 600/400 que Flexoki recommande, après
+ * mesure du contraste (seuil WCAG de 4,5 exigé par le design D6) :
+ *   - succès en thème clair : vert 700 #536907 (6,03 avec le papier), car le
+ *     vert 600 #66800b ne donne que 4,39 avec le papier ;
+ *   - danger en thème sombre : rouge 300 #e8705f (6,30 avec le noir), car le
+ *     rouge 400 #d14d41 ne donne que 4,42 avec le noir ;
+ *   - liens en thème sombre : bleu 300 #66a0c8 (6,08 avec le noir, 5,27 avec
+ *     la surface), car le bleu 400 #4385be ne donne que 4,37 avec le noir,
+ *     sous le seuil de 4,5, et les liens emploient --s-primary comme couleur
+ *     de texte ;
+ *   - bordures de champs (composants d'interface, WCAG 1.4.11, seuil de 3) :
+ *     base 500 #878580 dans les deux thèmes, car la base 300 #b7b5ac ne donne
+ *     que 2,00 avec le papier et la base 700 #575653 que 2,34 avec le noir.
+ * Aucune autre paire texte/fond ne nécessite d'écart.
+ *
+ * Paires NON garanties à 4,5 (mesurées, hors des contrôles de D6 parce
+ * qu'aucun bloc actuel ne les emploie) : --s-muted sur --s-surface, --s-card
+ * ou --s-card-section et dans les encarts, et --s-primary sur --s-card-section
+ * en thème sombre. Les employer comme texte exigerait de revoir ces valeurs.
+ *
+ * Les jetons de police, de taille, d'espacement, d'ombre et --s-mix/--s-mark-*
+ * de Sumi ne sont pas touchés.
+ */
+
+/* 1. Retours à la ligne, coupures et largeur minimale des transcriptions :
+ *    les transcriptions et les empreintes doivent tenir dans la fenêtre de
+ *    360 px à 1280 px de large, sans réduire les cellules au plus petit mot. */
+
+pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+p,
+li,
+strong,
+dd,
+h1,
+h2,
+h3,
+h4,
+dt,
+code {
+  overflow-wrap: anywhere;
+}
+
+/* Dans un tableau, `anywhere` réduirait la largeur minimale des colonnes
+ * jusqu'à empêcher le conteneur défilant de faire son office : `break-word`
+ * n'entre pas dans le calcul de la largeur minimale. `overflow-wrap` étant
+ * hérité, les sélecteurs des éléments coupés ci-dessus sont répétés dans les
+ * cellules pour y garder `break-word`. */
+
+td,
+th,
+td p,
+th p,
+td li,
+th li,
+td strong,
+th strong,
+td dd,
+th dd,
+td h1,
+th h1,
+td h2,
+th h2,
+td h3,
+th h3,
+td h4,
+th h4,
+td dt,
+th dt,
+td code,
+th code,
+td pre,
+th pre {
+  overflow-wrap: break-word;
+}
+
+/* Dans la vue de comparaison à 360 px, une cellule sans largeur minimale se
+ * réduit au plus petit mot : la transcription n'affiche plus qu'une dizaine
+ * de caractères par ligne. 14rem (224 px) en donnent environ 25 : `pre` est à
+ * 0.875em d'une police racine de 16 px, soit un caractère monospace d'environ
+ * 8,5 px. La cellule s'élargit et le conteneur `overflow-auto` défile alors
+ * horizontalement. `min-width` et non `width`, pour qu'un texte plus large ne
+ * soit jamais bridé. */
+
+td pre,
+th pre {
+  min-width: 14rem;
+}
+
+/* 2. Palette Flexoki, thème clair. Même sélecteur que Sumi (`:root`,
+ *    spécificité égale) : chargé après lui, ce bloc l'emporte. */
+
+:root {
+  --s-bg: #fffcf0; /* papier */
+  --s-surface: #f2f0e5; /* base 50 */
+  --s-card: #fffcf0; /* papier, comme Sumi où la carte se détache par sa bordure */
+  --s-card-section: #f2f0e5; /* base 50 */
+  --s-text: #100f0f; /* noir */
+  --s-muted: #6f6e69; /* base 600 */
+  --s-border: #dad8ce; /* base 150 */
+  --s-border-strong: #878580; /* base 500 (et non 300 : 2,00 avec le papier, sous le seuil de 3) */
+  --s-primary: #205ea6; /* bleu 600 */
+  --s-on-primary: #fffcf0; /* papier */
+  --s-secondary: #575653; /* base 700 */
+  --s-on-secondary: #fffcf0; /* papier */
+  --s-contrast: #100f0f; /* noir */
+  --s-on-contrast: #fffcf0; /* papier */
+  --s-success: #536907; /* vert 700 (et non 600 : 4,39 avec le papier, sous le seuil) */
+  --s-warning: #bc5215; /* orange 600 */
+  --s-danger: #af3029; /* rouge 600 */
+  --s-code-bg: #e6e4d9; /* base 100 */
+}
+
+/* 3. Palette Flexoki, thème sombre. Même sélecteur que le bloc sombre de Sumi,
+ *    chargé après lui : à spécificité égale, la dernière règle l'emporte. */
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --s-bg: #1c1b1a; /* base 950 */
+    --s-surface: #282726; /* base 900 */
+    --s-card: #282726; /* base 900 */
+    --s-card-section: #343331; /* base 850 */
+    --s-text: #cecdc3; /* base 200 */
+    --s-muted: #878580; /* base 500 */
+    --s-border: #403e3c; /* base 800 */
+    --s-border-strong: #878580; /* base 500 (et non 700 : 2,34 avec le noir, sous le seuil de 3) */
+    --s-primary: #66a0c8; /* bleu 300 (et non 400 : 4,37 avec le noir, sous le seuil) */
+    --s-on-primary: #100f0f; /* noir */
+    --s-secondary: #878580; /* base 500 */
+    --s-on-secondary: #100f0f; /* noir */
+    --s-contrast: #cecdc3; /* base 200 */
+    --s-on-contrast: #1c1b1a; /* base 950 */
+    --s-success: #879a39; /* vert 400 */
+    --s-warning: #da702c; /* orange 400 */
+    --s-danger: #e8705f; /* rouge 300 (et non 400 : 4,42 avec le noir, sous le seuil) */
+    --s-code-bg: #282726; /* base 900 */
+  }
+}
+
+/* Bouton d'action destructrice : s'appuie sur les mécanismes de Sumi
+ * (survol et focus compris), sans autre règle. */
+
+button.danger {
+  --s-btn: var(--s-danger);
+  --s-btn-on: var(--s-on-primary);
+}

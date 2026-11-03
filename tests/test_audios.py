@@ -21,6 +21,7 @@ from unittest import mock
 import numpy as np
 
 import transcription_bench.audios as audios_module
+from tests.outils_html import assert_html_seul
 from transcription_bench.audios import (
     AudioEnErreur,
     AudioIllisible,
@@ -43,7 +44,6 @@ CANAUX_TEST = 2
 DUREE_TEST = 0.5
 PORT_TEST = 8765
 BASE_URL = f"http://127.0.0.1:{PORT_TEST}"
-ELEMENTS_CSS_JS_INTERDITS = ("<script", "<style", "style=", "stylesheet", "<link")
 
 
 def ecrire_wav(
@@ -344,7 +344,7 @@ class DecodageAudioTest(SocleAudiosTest):
 
 
 class PageAudiosTest(SocleAudiosTest):
-    """Page HTML minimale : liste lue, erreurs affichées, échappement, no CSS/JS."""
+    """Page HTML minimale : liste lue, erreurs affichées, échappement, hors ligne."""
 
     def setUp(self) -> None:
         super().setUp()
@@ -359,9 +359,7 @@ class PageAudiosTest(SocleAudiosTest):
         return application, application.test_client()
 
     def verifier_html_seul(self, corps: str) -> None:
-        for interdit in ELEMENTS_CSS_JS_INTERDITS:
-            self.assertNotIn(interdit, corps)
-        self.assertNotIn("Traceback", corps)
+        assert_html_seul(self, corps)
 
     def texte(self, chemin: str, client=None) -> str:
         reponse = (client or self.client).get(chemin, base_url=BASE_URL)

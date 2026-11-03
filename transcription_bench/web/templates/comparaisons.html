@@ -1,17 +1,19 @@
 {% extends "base.html" %}
+{% block page_courante %}comparaisons{% endblock %}
 {% block titre %}Comparaison par audio — transcription-bench{% endblock %}
 {% block contenu %}
-<h2>Comparaison par audio</h2>
-<p><a href="{{ url_for('resultats') }}">Retour à la liste des résultats</a> — <a href="{{ url_for('comparaisons') }}">Actualiser</a></p>
+<h1>Comparaison par audio</h1>
+<p class="prose"><a href="{{ url_for('resultats') }}">Retour à la liste des résultats</a> — <a href="{{ url_for('comparaisons') }}">Actualiser</a></p>
 {% if erreur_dossier %}
-<p role="status">{{ erreur_dossier }}</p>
+<p class="callout danger prose" role="status">{{ erreur_dossier }}</p>
 {% endif %}
-<p>Les transcriptions sont regroupées par l'empreinte SHA-256 du fichier audio source, relue dans chaque résultat, et jamais par son nom. Un fichier remplacé par un autre portant le même nom forme donc un autre groupe, et un même contenu déposé sous deux noms différents reste dans un seul groupe. Une transcription dont l'empreinte est absente ou invalide n'est jamais regroupée : elle reste consultable dans le détail de son exécution. Cette page ne fait que relire les fichiers de résultats : elle ne lance aucune inférence et ne modifie aucun fichier.</p>
+<p class="prose">Les transcriptions sont regroupées par l'empreinte SHA-256 du fichier audio source, relue dans chaque résultat, et jamais par son nom. Un fichier remplacé par un autre portant le même nom forme donc un autre groupe, et un même contenu déposé sous deux noms différents reste dans un seul groupe. Une transcription dont l'empreinte est absente ou invalide n'est jamais regroupée : elle reste consultable dans le détail de son exécution. Cette page ne fait que relire les fichiers de résultats : elle ne lance aucune inférence et ne modifie aucun fichier.</p>
 {% if groupes %}
 {% for groupe in groupes %}
-<h3>Empreinte SHA-256 {{ groupe.empreinte }}</h3>
-<p>Nom(s) consigné(s) du fichier audio : {{ groupe.noms | join(', ') }} — {{ groupe.entrees | length }} transcription(s) dans ce groupe.</p>
+<h2>Empreinte SHA-256 {{ groupe.empreinte }}</h2>
+<p class="prose">Nom(s) consigné(s) du fichier audio : {{ groupe.noms | join(', ') }} — {{ groupe.entrees | length }} transcription(s) dans ce groupe.</p>
 <form method="get" action="{{ url_for('comparaison', empreinte=groupe.empreinte) }}">
+<div class="overflow-auto">
 <table>
 <thead>
 <tr><th>Sélection</th><th>Exécution</th><th>Audio</th><th>Statut</th><th>État</th><th>Marques</th><th>Modèle</th><th>Moteur</th></tr>
@@ -31,12 +33,13 @@
 {% endfor %}
 </tbody>
 </table>
-<p>Cochez au moins deux transcriptions de ce groupe, puis lancez la comparaison.</p>
-<p><button type="submit">Comparer les transcriptions sélectionnées</button></p>
+</div>
+<p class="prose">Cochez au moins deux transcriptions de ce groupe, puis lancez la comparaison.</p>
+<p class="prose"><button type="submit">Comparer les transcriptions sélectionnées</button></p>
 </form>
 {% endfor %}
 {% elif not erreur_dossier %}
-<p>Aucune transcription comparable pour l'instant : un groupe apparaît dès qu'une exécution a produit un résultat dont le fichier audio source porte une empreinte SHA-256 valide.</p>
+<p class="callout prose">Aucune transcription comparable pour l'instant : un groupe apparaît dès qu'une exécution a produit un résultat dont le fichier audio source porte une empreinte SHA-256 valide.</p>
 {% endif %}
-<p><a href="{{ url_for('accueil') }}">Retour à l'accueil</a></p>
+<p class="prose"><a href="{{ url_for('accueil') }}">Retour à l'accueil</a></p>
 {% endblock %}

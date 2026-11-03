@@ -1,16 +1,18 @@
 {% extends "base.html" %}
 {% import "formats.html" as formats %}
+{% block page_courante %}parent:comparaisons{% endblock %}
 {% block titre %}Comparaison {{ comparaison.empreinte }} — transcription-bench{% endblock %}
 {% block contenu %}
-<h2>Comparaison côte à côte</h2>
-<p><a href="{{ url_for('comparaisons') }}">Retour aux groupes d'audios</a> — <a href="{{ url_for('resultats') }}">Liste des résultats</a></p>
-<p>Empreinte SHA-256 du fichier audio source : <strong>{{ comparaison.empreinte }}</strong> — nom(s) consigné(s) : {{ comparaison.noms | join(', ') }}. Toutes les colonnes portent la même empreinte : un fichier de même nom mais d'empreinte différente n'est jamais comparé ici. Cette page ne fait que relire les résultats : elle ne lance aucune inférence, ne modifie aucun fichier et n'établit ni score ni référence.</p>
+<h1>Comparaison côte à côte</h1>
+<p class="prose"><a href="{{ url_for('comparaisons') }}">Retour aux groupes d'audios</a> — <a href="{{ url_for('resultats') }}">Liste des résultats</a></p>
+<p class="prose">Empreinte SHA-256 du fichier audio source : <strong>{{ comparaison.empreinte }}</strong> — nom(s) consigné(s) : {{ comparaison.noms | join(', ') }}. Toutes les colonnes portent la même empreinte : un fichier de même nom mais d'empreinte différente n'est jamais comparé ici. Cette page ne fait que relire les résultats : elle ne lance aucune inférence, ne modifie aucun fichier et n'établit ni score ni référence.</p>
 {% if comparaison.factice %}
-<p role="status"><strong>Comparaison portant des marques factices : au moins une transcription vient du moteur factice ou de données simulées.</strong> Ses textes et ses mesures ne sont pas représentatifs d'un PC et ne disent rien de la qualité médicale d'une transcription.</p>
+<p class="callout warning prose" role="status"><strong>Comparaison portant des marques factices : au moins une transcription vient du moteur factice ou de données simulées.</strong> Ses textes et ses mesures ne sont pas représentatifs d'un PC et ne disent rien de la qualité médicale d'une transcription.</p>
 {% endif %}
 {% if comparaison.partiel %}
-<p role="status"><strong>Résultats partiels : au moins une exécution comparée n'est pas terminée.</strong> Ses transcriptions déjà enregistrées sont affichées telles quelles ; les audios sans résultat ne sont pas comparés et une mesure absente n'est jamais remplacée par zéro.</p>
+<p class="callout warning prose" role="status"><strong>Résultats partiels : au moins une exécution comparée n'est pas terminée.</strong> Ses transcriptions déjà enregistrées sont affichées telles quelles ; les audios sans résultat ne sont pas comparés et une mesure absente n'est jamais remplacée par zéro.</p>
 {% endif %}
+<div class="overflow-auto">
 <table>
 <thead>
 <tr>
@@ -31,7 +33,8 @@
 {% endfor %}
 </tbody>
 </table>
-<p>Une ligne marquée « différent » contient au moins une valeur distincte d'une colonne à l'autre. Cette comparaison porte sur la valeur brute des fichiers : les réglages demandés et les réglages effectifs y sont comparés sur leur JSON complet, listes et objets compris, et une valeur formatée pour l'affichage ne décide jamais d'une différence. Deux nombres non finis (<code>NaN</code>, <code>Infinity</code>, <code>-Infinity</code>) ou une valeur nulle peuvent donc être affichés de la même façon (« indisponible » ou <code>null</code>) tout en restant différents sur les données brutes : la ligne est alors marquée « différent » sans que l'affichage permette de le deviner. La ligne « Texte transcrit » fait exception : chaque texte est affiché tel quel dans un bloc préformaté, sans diff textuel, sans alignement caractère par caractère et sans score. Une cellule « non consigné » signifie que la clé est absente du fichier de résultat ; « indisponible » signifie qu'elle est consignée mais nulle ou non finie. Aucune des deux n'est remplacée par zéro.</p>
-<p>Le RTF affiché est recalculé sur la durée décodée. Le repère d'objectif est {{ repere_rtf }} : il n'exclut aucune transcription et n'en marque aucune en échec, même lorsque le RTF le dépasse largement. La durée totale de l'opération comprend le décodage, le chargement du modèle et l'écriture des résultats.</p>
-<p><a href="{{ url_for('comparaisons') }}">Retour aux groupes d'audios</a> — <a href="{{ url_for('resultats') }}">Liste des résultats</a> — <a href="{{ url_for('accueil') }}">Retour à l'accueil</a></p>
+</div>
+<p class="prose">Une ligne marquée « différent » contient au moins une valeur distincte d'une colonne à l'autre. Cette comparaison porte sur la valeur brute des fichiers : les réglages demandés et les réglages effectifs y sont comparés sur leur JSON complet, listes et objets compris, et une valeur formatée pour l'affichage ne décide jamais d'une différence. Deux nombres non finis (<code>NaN</code>, <code>Infinity</code>, <code>-Infinity</code>) ou une valeur nulle peuvent donc être affichés de la même façon (« indisponible » ou <code>null</code>) tout en restant différents sur les données brutes : la ligne est alors marquée « différent » sans que l'affichage permette de le deviner. La ligne « Texte transcrit » fait exception : chaque texte est affiché tel quel dans un bloc préformaté, sans diff textuel, sans alignement caractère par caractère et sans score. Une cellule « non consigné » signifie que la clé est absente du fichier de résultat ; « indisponible » signifie qu'elle est consignée mais nulle ou non finie. Aucune des deux n'est remplacée par zéro.</p>
+<p class="prose">Le RTF affiché est recalculé sur la durée décodée. Le repère d'objectif est {{ repere_rtf }} : il n'exclut aucune transcription et n'en marque aucune en échec, même lorsque le RTF le dépasse largement. La durée totale de l'opération comprend le décodage, le chargement du modèle et l'écriture des résultats.</p>
+<p class="prose"><a href="{{ url_for('comparaisons') }}">Retour aux groupes d'audios</a> — <a href="{{ url_for('resultats') }}">Liste des résultats</a> — <a href="{{ url_for('accueil') }}">Retour à l'accueil</a></p>
 {% endblock %}

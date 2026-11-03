@@ -1,68 +1,69 @@
 {% extends "base.html" %}
+{% block page_courante %}modeles{% endblock %}
 {% block titre %}Modèles — transcription-bench{% endblock %}
 {% block contenu %}
-<h2>Modèles</h2>
-<p><a href="{{ url_for('modeles') }}">Actualiser</a></p>
+<h1>Modèles</h1>
+<p class="prose"><a href="{{ url_for('modeles') }}">Actualiser</a></p>
 {% if message %}
-<p role="status">{{ message }}</p>
+<p class="callout success prose" role="status">{{ message }}</p>
 {% endif %}
-<p>La vérification lit seulement les métadonnées du dépôt et les petits fichiers de configuration ; le téléchargement est une action explicite, à la révision exacte vérifiée, exécutée seule dans le créneau d'opération longue. Aucun poids n'est téléchargé au lancement du serveur.</p>
+<p class="prose">La vérification lit seulement les métadonnées du dépôt et les petits fichiers de configuration ; le téléchargement est une action explicite, à la révision exacte vérifiée, exécutée seule dans le créneau d'opération longue. Aucun poids n'est téléchargé au lancement du serveur.</p>
 {% if instantane.arrete %}
-<p>Arrêt du serveur demandé : aucune vérification, aucun téléchargement et aucune suppression ne sont acceptés.</p>
+<p class="callout warning prose">Arrêt du serveur demandé : aucune vérification, aucun téléchargement et aucune suppression ne sont acceptés.</p>
 {% endif %}
 {% if instantane.etat == 'en_cours' %}
-<p>Une opération « {{ libelles_types[instantane.type_operation] }} » est en cours{% if instantane.cible %} : {{ instantane.cible }}{% endif %}. <a href="{{ url_for('operation') }}">Consulter l'opération</a></p>
+<p class="callout prose">Une opération « {{ libelles_types[instantane.type_operation] }} » est en cours{% if instantane.cible %} : {{ instantane.cible }}{% endif %}. <a href="{{ url_for('operation') }}">Consulter l'opération</a></p>
 {% endif %}
 
-<h3>Vérifier un dépôt</h3>
+<h2>Vérifier un dépôt</h2>
 {% if moteurs %}
 <form method="post" action="{{ url_for('verifier_modele') }}">
 <input type="hidden" name="jeton_csrf" value="{{ jeton_csrf }}">
-<p><label>Identifiant Hugging Face <input type="text" name="identifiant" value=""></label></p>
-<p><label>Moteur installé <select name="moteur">
+<p class="prose"><label>Identifiant Hugging Face <input type="text" name="identifiant" value=""></label></p>
+<p class="prose"><label>Moteur installé <select name="moteur">
 {% for moteur in moteurs %}
 <option value="{{ moteur.identifiant }}">{{ moteur.nom }}</option>
 {% endfor %}
 </select></label></p>
-<p><label>Révision facultative <input type="text" name="revision" value=""></label></p>
-<p><button type="submit">Vérifier la compatibilité sans télécharger</button></p>
+<p class="prose"><label>Révision facultative <input type="text" name="revision" value=""></label></p>
+<p class="prose"><button type="submit" class="secondary">Vérifier la compatibilité sans télécharger</button></p>
 </form>
-<p>La vérification ne télécharge aucun poids et ne rend aucun modèle prêt. Une révision vide laisse le dépôt résoudre sa branche par défaut, puis le commit exact est figé pour la suite.</p>
+<p class="prose">La vérification ne télécharge aucun poids et ne rend aucun modèle prêt. Une révision vide laisse le dépôt résoudre sa branche par défaut, puis le commit exact est figé pour la suite.</p>
 {% else %}
-<p>Aucun moteur réel n'est installé sur ce poste : la vérification et le téléchargement de modèles restent indisponibles. L'installation d'un moteur doit d'abord être validée sur un PC ; le serveur de développement n'installe aucun moteur réel et ne télécharge aucun poids. Le moteur factice ne charge aucun modèle et n'a donc pas besoin de dépôt à vérifier.</p>
+<p class="prose">Aucun moteur réel n'est installé sur ce poste : la vérification et le téléchargement de modèles restent indisponibles. L'installation d'un moteur doit d'abord être validée sur un PC ; le serveur de développement n'installe aucun moteur réel et ne télécharge aucun poids. Le moteur factice ne charge aucun modèle et n'a donc pas besoin de dépôt à vérifier.</p>
 {% endif %}
 
-<h3>Dernière vérification</h3>
+<h2>Dernière vérification</h2>
 {% if resultat is none %}
-<p>Aucune vérification effectuée depuis le démarrage.</p>
+<p class="prose">Aucune vérification effectuée depuis le démarrage.</p>
 {% elif resultat.accepte %}
-<p>Dépôt compatible : famille {{ resultat.famille }}, identifiant canonique {{ resultat.id_resolu }}, commit {{ resultat.commit }}.</p>
-<p>Identifiant demandé : {{ resultat.identifiant }} ; moteur : {{ resultat.moteur }}{% if resultat.fichier_gguf %} ; variante GGUF choisie : {{ resultat.fichier_gguf }}{% endif %}.</p>
-<p>Fichiers retenus et tailles distantes :</p>
-<ul>
+<p class="prose">Dépôt compatible : famille {{ resultat.famille }}, identifiant canonique {{ resultat.id_resolu }}, commit {{ resultat.commit }}.</p>
+<p class="prose">Identifiant demandé : {{ resultat.identifiant }} ; moteur : {{ resultat.moteur }}{% if resultat.fichier_gguf %} ; variante GGUF choisie : {{ resultat.fichier_gguf }}{% endif %}.</p>
+<p class="prose">Fichiers retenus et tailles distantes :</p>
+<ul class="prose">
 {% for fichier in resultat.fichiers %}
 <li>{{ fichier.nom }} : {% if fichier.taille is not none %}{{ fichier.taille }} octets{% else %}taille inconnue{% endif %}</li>
 {% endfor %}
 </ul>
-<p>Taille distante totale : {% if resultat.taille_totale is not none %}{{ resultat.taille_totale }} octets{% else %}inconnue (au moins une taille manque){% endif %}.</p>
+<p class="prose">Taille distante totale : {% if resultat.taille_totale is not none %}{{ resultat.taille_totale }} octets{% else %}inconnue (au moins une taille manque){% endif %}.</p>
 {% if empreinte %}
 <form method="post" action="{{ url_for('telecharger_modele') }}">
 <input type="hidden" name="jeton_csrf" value="{{ jeton_csrf }}">
 <input type="hidden" name="empreinte" value="{{ empreinte }}">
-<p><button type="submit">Télécharger ce modèle à la révision vérifiée</button></p>
+<p class="prose"><button type="submit">Télécharger ce modèle à la révision vérifiée</button></p>
 </form>
 {% endif %}
 {% else %}
-<p>Dépôt refusé{% if resultat.raison %} ({{ resultat.raison }}){% endif %} : {{ resultat.message }}</p>
+<p class="callout danger prose">Dépôt refusé{% if resultat.raison %} ({{ resultat.raison }}){% endif %} : {{ resultat.message }}</p>
 {% if resultat.fichiers_manquants %}
-<p>Fichiers manquants : {{ resultat.fichiers_manquants | join(', ') }}.</p>
+<p class="callout danger prose">Fichiers manquants : {{ resultat.fichiers_manquants | join(', ') }}.</p>
 {% endif %}
 {% if resultat.moteur_suggere %}
-<p>Moteur possible pour ce format : {{ resultat.moteur_suggere }} (soumis à sa propre vérification).</p>
+<p class="prose">Moteur possible pour ce format : {{ resultat.moteur_suggere }} (soumis à sa propre vérification).</p>
 {% endif %}
 {% if resultat.gguf_candidats and resultat.raison in ('fichier-gguf-non-choisi', 'fichier-gguf-decoupe') %}
-<p>Variantes GGUF proposées : choisissez un seul fichier autonome ; une variante découpée en fragments n'est pas prise en charge.</p>
-<ul>
+<p class="prose">Variantes GGUF proposées : choisissez un seul fichier autonome ; une variante découpée en fragments n'est pas prise en charge.</p>
+<ul class="prose">
 {% for candidat in resultat.gguf_candidats %}
 <li>
 <form method="post" action="{{ url_for('verifier_modele') }}">
@@ -71,7 +72,7 @@
 <input type="hidden" name="moteur" value="{{ resultat.moteur }}">
 {% if resultat.commit %}<input type="hidden" name="revision" value="{{ resultat.commit }}">{% endif %}
 <input type="hidden" name="fichier_gguf" value="{{ candidat }}">
-<p><button type="submit">Vérifier avec {{ candidat }}</button></p>
+<p class="prose"><button type="submit" class="secondary">Vérifier avec {{ candidat }}</button></p>
 </form>
 </li>
 {% endfor %}
@@ -79,32 +80,32 @@
 {% endif %}
 {% endif %}
 
-<h3>Modèles locaux prêts</h3>
+<h2>Modèles locaux prêts</h2>
 {% if modeles %}
-<ul>
+<ul class="prose">
 {% for modele in modeles %}
 <li>
-<p><strong>{{ modele.identifiant }}</strong> — moteur : {{ modele.moteur }} ; famille : {{ modele.famille }}{% if modele.fichier_gguf %} ; variante GGUF : {{ modele.fichier_gguf }}{% endif %}.</p>
-<p>Identifiant canonique : {{ modele.id_resolu }} ; commit : {{ modele.commit }} ; ajouté le : {{ modele.date }}.</p>
-<p>Fichiers retenus :</p>
-<ul>
+<p class="prose"><strong>{{ modele.identifiant }}</strong> — moteur : {{ modele.moteur }} ; famille : {{ modele.famille }}{% if modele.fichier_gguf %} ; variante GGUF : {{ modele.fichier_gguf }}{% endif %}.</p>
+<p class="prose">Identifiant canonique : {{ modele.id_resolu }} ; commit : {{ modele.commit }} ; ajouté le : {{ modele.date }}.</p>
+<p class="prose">Fichiers retenus :</p>
+<ul class="prose">
 {% for fichier in modele.fichiers %}
 <li>{{ fichier.nom }} : {% if fichier.taille is not none %}{{ fichier.taille }} octets{% else %}taille distante inconnue{% endif %}</li>
 {% endfor %}
 </ul>
-<p>Taille sur disque : {% if modele.taille_disque is not none %}{{ modele.taille_disque }} octets{% else %}inconnue{% endif %} ; taille distante totale : {% if modele.taille_distante is not none %}{{ modele.taille_distante }} octets{% else %}inconnue{% endif %}.</p>
+<p class="prose">Taille sur disque : {% if modele.taille_disque is not none %}{{ modele.taille_disque }} octets{% else %}inconnue{% endif %} ; taille distante totale : {% if modele.taille_distante is not none %}{{ modele.taille_distante }} octets{% else %}inconnue{% endif %}.</p>
 <form method="post" action="{{ url_for('supprimer_modele') }}">
 <input type="hidden" name="jeton_csrf" value="{{ jeton_csrf }}">
 <input type="hidden" name="moteur" value="{{ modele.moteur }}">
 <input type="hidden" name="cle" value="{{ modele.cle }}">
-<p><button type="submit">Supprimer ce modèle local</button></p>
+<p class="prose"><button type="submit" class="danger">Supprimer ce modèle local</button></p>
 </form>
-<p>La suppression retire les fichiers de ce modèle ; les résultats déjà produits restent consultables.</p>
+<p class="prose">La suppression retire les fichiers de ce modèle ; les résultats déjà produits restent consultables.</p>
 </li>
 {% endfor %}
 </ul>
 {% else %}
-<p>Aucun modèle local prêt. Un dossier incomplet, interrompu ou sans inventaire cohérent n'est jamais proposé comme prêt.</p>
+<p class="callout prose">Aucun modèle local prêt. Un dossier incomplet, interrompu ou sans inventaire cohérent n'est jamais proposé comme prêt.</p>
 {% endif %}
-<p><a href="{{ url_for('accueil') }}">Retour à l'accueil</a></p>
+<p class="prose"><a href="{{ url_for('accueil') }}">Retour à l'accueil</a></p>
 {% endblock %}

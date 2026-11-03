@@ -1,7 +1,8 @@
 {% extends "base.html" %}
+{# Page d'erreur : le bloc `page_courante` reste vide, aucun lien n'est signalé. #}
 {% block titre %}Erreur {{ code }} — transcription-bench{% endblock %}
 {% block contenu %}
-<h2>Erreur {{ code }}</h2>
-<p>{{ message }}</p>
-<p><a href="{{ url_for('accueil') }}">Retour à l'accueil</a></p>
+<h1>Erreur {{ code }}</h1>
+<p class="callout danger prose">{{ message }}</p>
+<p class="prose"><a href="{{ url_for('accueil') }}">Retour à l'accueil</a></p>
 {% endblock %}

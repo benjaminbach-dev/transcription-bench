@@ -1,12 +1,13 @@
 {% extends "base.html" %}
+{% block page_courante %}accueil{% endblock %}
 {% block titre %}Accueil — transcription-bench{% endblock %}
 {% block contenu %}
-<h2>Accueil</h2>
+<h1>Accueil</h1>
 {% if message %}
-<p role="status">{{ message }}</p>
+<p class="callout success prose" role="status">{{ message }}</p>
 {% endif %}
-<h3>Opération longue</h3>
-<dl>
+<h2>Opération longue</h2>
+<dl class="prose">
 <dt>État</dt>
 <dd>{{ libelles_etats[instantane.etat] }}</dd>
 {% if instantane.type_operation %}
@@ -19,34 +20,34 @@
 {% endif %}
 </dl>
 {% if instantane.arrete %}
-<p>Arrêt du serveur demandé : aucune nouvelle opération ni mutation n'est acceptée.</p>
+<p class="callout warning prose">Arrêt du serveur demandé : aucune nouvelle opération ni mutation n'est acceptée.</p>
 {% endif %}
-<p><a href="{{ url_for('operation') }}">Consulter l'état détaillé de l'opération</a></p>
-<h3>Moteurs</h3>
-<p>{{ message_moteurs }}</p>
-<ul>
+<p class="prose"><a href="{{ url_for('operation') }}">Consulter l'état détaillé de l'opération</a></p>
+<h2>Moteurs</h2>
+<p class="prose">{{ message_moteurs }}</p>
+<ul class="prose">
 {% for moteur in moteurs %}
 <li>{{ moteur.nom }} : {{ libelles_etats_moteur[moteur.etat] }}{% if moteur.factice %} (FACTICE, non représentatif){% endif %}</li>
 {% endfor %}
 </ul>
-<p><a href="{{ url_for('moteurs') }}">Consulter la page des moteurs</a></p>
-<h3>Modèles</h3>
-<p><a href="{{ url_for('modeles') }}">Consulter la page des modèles</a> : vérification distante, téléchargement explicite à révision figée et suppression locale.</p>
-<h3>Audios</h3>
-<p><a href="{{ url_for('audios') }}">Consulter la page des audios</a> : fichiers du dossier d'entrée, formats acceptés, durée indicative et erreurs de lecture par fichier.</p>
-<h3>Exécutions</h3>
-<p><a href="{{ url_for('executions') }}">Consulter la page des exécutions</a> : formulaire d'une demande (modèle prêt, audios, threads demandés, réglages déclarés par la famille) ; le bouton de lancement démarre l'exécution dans le créneau global et la page d'opération en suit l'avancement.</p>
-<h3>Résultats</h3>
-<p><a href="{{ url_for('resultats') }}">Consulter la page des résultats</a> : exécutions enregistrées, des plus récentes aux plus anciennes, avec leur état, leurs marques et le détail de chaque transcription (texte, segments, métadonnées et mesures).</p>
-<p><a href="{{ url_for('comparaisons') }}">Comparer des transcriptions d'un même audio</a> : regroupement par empreinte SHA-256 du fichier source et affichage côte à côte, sans diff textuel, sans score et sans texte de référence.</p>
-<h3>Dossiers de données</h3>
-<ul>
+<p class="prose"><a href="{{ url_for('moteurs') }}">Consulter la page des moteurs</a></p>
+<h2>Modèles</h2>
+<p class="prose"><a href="{{ url_for('modeles') }}">Consulter la page des modèles</a> : vérification distante, téléchargement explicite à révision figée et suppression locale.</p>
+<h2>Audios</h2>
+<p class="prose"><a href="{{ url_for('audios') }}">Consulter la page des audios</a> : fichiers du dossier d'entrée, formats acceptés, durée indicative et erreurs de lecture par fichier.</p>
+<h2>Exécutions</h2>
+<p class="prose"><a href="{{ url_for('executions') }}">Consulter la page des exécutions</a> : formulaire d'une demande (modèle prêt, audios, threads demandés, réglages déclarés par la famille) ; le bouton de lancement démarre l'exécution dans le créneau global et la page d'opération en suit l'avancement.</p>
+<h2>Résultats</h2>
+<p class="prose"><a href="{{ url_for('resultats') }}">Consulter la page des résultats</a> : exécutions enregistrées, des plus récentes aux plus anciennes, avec leur état, leurs marques et le détail de chaque transcription (texte, segments, métadonnées et mesures).</p>
+<p class="prose"><a href="{{ url_for('comparaisons') }}">Comparer des transcriptions d'un même audio</a> : regroupement par empreinte SHA-256 du fichier source et affichage côte à côte, sans diff textuel, sans score et sans texte de référence.</p>
+<h2>Dossiers de données</h2>
+<ul class="prose">
 {% for dossier in dossiers %}
 <li>{{ dossier.nom }} : {{ dossier.chemin }} ({% if dossier.existe %}présent{% else %}absent{% endif %})</li>
 {% endfor %}
 </ul>
 <form method="post" action="{{ url_for('verifier_dossiers') }}">
 <input type="hidden" name="jeton_csrf" value="{{ jeton_csrf }}">
-<p><button type="submit">Vérifier les dossiers de données</button></p>
+<p class="prose"><button type="submit">Vérifier les dossiers de données</button></p>
 </form>
 {% endblock %}

@@ -34,7 +34,8 @@ et hypothèses ; ne jamais présenter une transcription fluide comme médicaleme
 - uv et Python 3.12 géré par uv ; ne pas modifier le Python système.
 - Environnement du serveur séparé de ceux des moteurs ; aucune bibliothèque de
   moteur importée dans le serveur. CPU uniquement, sans GPU ni Vulkan.
-- HTML sans CSS ni JavaScript ; une seule opération longue, sans file d'attente.
+- HTML sans JavaScript, avec feuilles de style locales (Sumi.css et `app.css`, jamais de CDN) ;
+  une seule opération longue, sans file d'attente.
 - Installations et téléchargements explicites ; inférences exclusivement locales
   et hors ligne, sans exécution de code distant.
 

@@ -1,40 +1,41 @@
 {% extends "base.html" %}
+{% block page_courante %}moteurs{% endblock %}
 {% block titre %}Moteurs — transcription-bench{% endblock %}
 {% block contenu %}
-<h2>Moteurs</h2>
-<p><a href="{{ url_for('moteurs') }}">Actualiser</a></p>
-<p>Le lancement du serveur n'installe aucun moteur et n'accède à aucun réseau pour eux. Une installation est une action explicite, exécutée seule dans le créneau d'opération longue.</p>
+<h1>Moteurs</h1>
+<p class="prose"><a href="{{ url_for('moteurs') }}">Actualiser</a></p>
+<p class="prose">Le lancement du serveur n'installe aucun moteur et n'accède à aucun réseau pour eux. Une installation est une action explicite, exécutée seule dans le créneau d'opération longue.</p>
 {% if instantane.arrete %}
-<p>Arrêt du serveur demandé : aucune installation n'est acceptée.</p>
+<p class="callout warning prose">Arrêt du serveur demandé : aucune installation n'est acceptée.</p>
 {% endif %}
 {% if instantane.etat == 'en_cours' %}
-<p>Une opération « {{ libelles_types[instantane.type_operation] }} » est en cours{% if instantane.cible %} : {{ instantane.cible }}{% endif %}. <a href="{{ url_for('operation') }}">Consulter l'opération</a></p>
+<p class="callout prose">Une opération « {{ libelles_types[instantane.type_operation] }} » est en cours{% if instantane.cible %} : {{ instantane.cible }}{% endif %}. <a href="{{ url_for('operation') }}">Consulter l'opération</a></p>
 {% endif %}
-<ul>
+<ul class="prose">
 {% for moteur in moteurs %}
 <li>
-<p><strong>{{ moteur.nom }}</strong> — état : {{ libelles_etats_moteur[moteur.etat] }}{% if moteur.factice %} — <strong>FACTICE</strong>{% endif %}</p>
+<p class="prose"><strong>{{ moteur.nom }}</strong> — état : {{ libelles_etats_moteur[moteur.etat] }}{% if moteur.factice %} — <strong>FACTICE</strong>{% endif %}</p>
 {% if moteur.date_installation %}
-<p>Installé le : {{ moteur.date_installation }}</p>
+<p class="prose">Installé le : {{ moteur.date_installation }}</p>
 {% endif %}
 {% if moteur.versions %}
-<p>Versions contrôlées dans l'environnement :
+<p class="prose">Versions contrôlées dans l'environnement :
 {% for nom, version in moteur.versions %}{{ nom }} {% if version %}{{ version }}{% else %}(version non disponible){% endif %}{% if not loop.last %}, {% endif %}{% endfor %}
 </p>
 {% endif %}
 {% if moteur.note %}
-<p>{{ moteur.note }}</p>
+<p class="prose">{{ moteur.note }}</p>
 {% endif %}
-<p><a href="{{ url_for('journal_moteur', identifiant=moteur.identifiant) }}">Consulter le journal d'installation</a></p>
+<p class="prose"><a href="{{ url_for('journal_moteur', identifiant=moteur.identifiant) }}">Consulter le journal d'installation</a></p>
 {% if moteur.installable %}
 <form method="post" action="{{ url_for('installer_moteur', identifiant=moteur.identifiant) }}">
 <input type="hidden" name="jeton_csrf" value="{{ jeton_csrf }}">
-<p><button type="submit">Installer ce moteur</button></p>
+<p class="prose"><button type="submit">Installer ce moteur</button></p>
 </form>
 {% endif %}
 </li>
 {% endfor %}
 </ul>
-<p>Un moteur réel est installable seulement si son verrou de dépendances est présent. Cette action crée son environnement isolé et contrôle ses imports ; le démarrage du serveur ne l'installe pas. Le serveur de développement reste réservé au moteur factice, sans moteur réel ni poids. Le moteur factice ne charge aucun modèle et ne produit que des textes et mesures simulés.</p>
-<p><a href="{{ url_for('accueil') }}">Retour à l'accueil</a></p>
+<p class="prose">Un moteur réel est installable seulement si son verrou de dépendances est présent. Cette action crée son environnement isolé et contrôle ses imports ; le démarrage du serveur ne l'installe pas. Le serveur de développement reste réservé au moteur factice, sans moteur réel ni poids. Le moteur factice ne charge aucun modèle et ne produit que des textes et mesures simulés.</p>
+<p class="prose"><a href="{{ url_for('accueil') }}">Retour à l'accueil</a></p>
 {% endblock %}

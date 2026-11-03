@@ -1,13 +1,14 @@
 {% extends "base.html" %}
+{% block page_courante %}executions{% endblock %}
 {% block titre %}Exécutions — transcription-bench{% endblock %}
 {% block contenu %}
-<h2>Exécutions</h2>
-<p><a href="{{ url_for('executions') }}">Actualiser</a></p>
-<p><strong>Lancement dans le créneau global.</strong> {{ message_lancement }}</p>
+<h1>Exécutions</h1>
+<p class="prose"><a href="{{ url_for('executions') }}">Actualiser</a></p>
+<p class="prose"><strong>Lancement dans le créneau global.</strong> {{ message_lancement }}</p>
 {% if demande %}
-<h3>Demande validée</h3>
-<p>La demande ci-dessous est valide : les valeurs effectives sont complètes et les réglages inconnus ont été refusés. <strong>Aucune exécution n'a été lancée</strong> et rien n'est enregistré.</p>
-<dl>
+<h2>Demande validée</h2>
+<p class="callout success prose">La demande ci-dessous est valide : les valeurs effectives sont complètes et les réglages inconnus ont été refusés. <strong>Aucune exécution n'a été lancée</strong> et rien n'est enregistré.</p>
+<dl class="prose">
 <dt>Modèle</dt>
 {% if demande.synthetique %}
 <dd>{{ demande.identifiant }} (modèle synthétique : aucun fichier, aucun poids, aucun commit ; les textes et mesures seront simulés)</dd>
@@ -22,7 +23,7 @@
 <dd>{{ demande.threads }} (nombre demandé ; aucune valeur appliquée n'est affirmée avant l'exécution)</dd>
 <dt>Audios, dans l'ordre de traitement</dt>
 <dd>
-<ol>
+<ol class="prose">
 {% for nom in demande.audios %}
 <li>{{ nom }}</li>
 {% endfor %}
@@ -31,7 +32,7 @@
 <dt>Réglages effectifs, défauts compris</dt>
 <dd>
 {% if demande.reglages %}
-<ul>
+<ul class="prose">
 {% for reglage in demande.reglages %}
 <li>{{ reglage.nom }} : {% if reglage.valeur is sameas true %}oui{% elif reglage.valeur is sameas false %}non{% elif reglage.valeur == "" %}(vide){% else %}{{ reglage.valeur }}{% endif %}</li>
 {% endfor %}
@@ -46,27 +47,27 @@ aucun réglage déclaré par cette famille : aucun réglage n'est proposé.
 <dd>aucune exécution n'a été lancée.</dd>
 </dl>
 {% endif %}
-<h3>Nouvelle demande</h3>
+<h2>Nouvelle demande</h2>
 {% if not modeles %}
-<p>Aucun modèle proposable : la page des modèles permet de vérifier un dépôt et de le télécharger explicitement. Seul un moteur déclaré peut proposer un modèle.</p>
+<p class="callout prose">Aucun modèle proposable : la page des modèles permet de vérifier un dépôt et de le télécharger explicitement. Seul un moteur déclaré peut proposer un modèle.</p>
 {% else %}
-<p>Le formulaire est répété pour chaque modèle exécutable, car les réglages proposés sont ceux de sa famille. Seuls les réglages déclarés par l'adaptateur apparaissent, avec leur valeur par défaut. Un modèle dont la famille n'est pas exécutable est affiché pour information et n'est pas sélectionnable.</p>
+<p class="prose">Le formulaire est répété pour chaque modèle exécutable, car les réglages proposés sont ceux de sa famille. Seuls les réglages déclarés par l'adaptateur apparaissent, avec leur valeur par défaut. Un modèle dont la famille n'est pas exécutable est affiché pour information et n'est pas sélectionnable.</p>
 {% for modele in modeles %}
-<h4>{{ modele.nom_moteur }} — {{ modele.identifiant }}</h4>
+<h3>{{ modele.nom_moteur }} — {{ modele.identifiant }}</h3>
 {% if modele.synthetique %}
-<p>Modèle synthétique du moteur factice : aucun fichier de modèle, aucun poids. Le moteur factice ne charge rien et produira des textes et mesures simulés, jamais représentatifs d'un PC. Moteur {{ modele.moteur }} ; famille {{ modele.libelle_famille }}.</p>
+<p class="prose">Modèle synthétique du moteur factice : aucun fichier de modèle, aucun poids. Le moteur factice ne charge rien et produira des textes et mesures simulés, jamais représentatifs d'un PC. Moteur {{ modele.moteur }} ; famille {{ modele.libelle_famille }}.</p>
 {% else %}
-<p>Moteur {{ modele.moteur }} ; famille {{ modele.libelle_famille }}{% if not modele.qualifiee %} (non validée sur PC){% endif %}{% if modele.fichier_gguf %} ; variante GGUF {{ modele.fichier_gguf }}{% endif %}. Commit {{ modele.commit }}.</p>
+<p class="prose">Moteur {{ modele.moteur }} ; famille {{ modele.libelle_famille }}{% if not modele.qualifiee %} (non validée sur PC){% endif %}{% if modele.fichier_gguf %} ; variante GGUF {{ modele.fichier_gguf }}{% endif %}. Commit {{ modele.commit }}.</p>
 {% endif %}
 {% if not modele.executable %}
-<p><strong>Non exécutable :</strong> {{ modele.motif_non_executable }}. Ce modèle est affiché pour information : il ne peut pas être sélectionné et une demande qui le cite est refusée.</p>
+<p class="callout warning prose"><strong>Non exécutable :</strong> {{ modele.motif_non_executable }}. Ce modèle est affiché pour information : il ne peut pas être sélectionné et une demande qui le cite est refusée.</p>
 {% elif not audios %}
-<p>Aucun audio lisible dans le dossier d'entrée : la page des audios liste les fichiers présents et les erreurs de lecture, et aucun formulaire n'est proposé pour ce modèle.</p>
+<p class="callout warning prose">Aucun audio lisible dans le dossier d'entrée : la page des audios liste les fichiers présents et les erreurs de lecture, et aucun formulaire n'est proposé pour ce modèle.</p>
 {% else %}
 {% if modele.fenetre_fixe_secondes is none %}
-<p>Mécanisme natif d'audio long pris en charge jusqu'à la durée déclarée par la famille ; au-delà, repli en fenêtres fixes de 30 s sans recouvrement. La méthode effectivement utilisée est consignée pour chaque audio.</p>
+<p class="prose">Mécanisme natif d'audio long pris en charge jusqu'à la durée déclarée par la famille ; au-delà, repli en fenêtres fixes de 30 s sans recouvrement. La méthode effectivement utilisée est consignée pour chaque audio.</p>
 {% else %}
-<p>Famille sans mécanisme natif d'audio long pris en charge par le runner : les audios seront découpés en fenêtres fixes de {{ "%.0f"|format(modele.fenetre_fixe_secondes) }} s sans recouvrement, et la durée de fenêtre sera consignée pour chaque audio.</p>
+<p class="prose">Famille sans mécanisme natif d'audio long pris en charge par le runner : les audios seront découpés en fenêtres fixes de {{ "%.0f"|format(modele.fenetre_fixe_secondes) }} s sans recouvrement, et la durée de fenêtre sera consignée pour chaque audio.</p>
 {% endif %}
 <form method="post" action="{{ url_for('verifier_demande_execution') }}">
 <input type="hidden" name="jeton_csrf" value="{{ jeton_csrf }}">
@@ -74,43 +75,43 @@ aucun réglage déclaré par cette famille : aucun réglage n'est proposé.
 <fieldset>
 <legend>Audios</legend>
 {% for audio in audios %}
-<p><label><input type="checkbox" name="audios" value="{{ audio.nom }}"> {{ audio.nom }}{% if audio.duree_indicative is not none %} (durée indicative {{ "%.2f"|format(audio.duree_indicative) }} s){% endif %}</label></p>
+<p class="prose"><label><input type="checkbox" name="audios" value="{{ audio.nom }}"> {{ audio.nom }}{% if audio.duree_indicative is not none %} (durée indicative {{ "%.2f"|format(audio.duree_indicative) }} s){% endif %}</label></p>
 {% endfor %}
-<p>La durée indicative vient de l'en-tête du fichier ; la durée de référence du RTF sera la durée réellement décodée.</p>
+<p class="prose">La durée indicative vient de l'en-tête du fichier ; la durée de référence du RTF sera la durée réellement décodée.</p>
 </fieldset>
-<p><label>Threads demandés <input type="number" name="threads" value="{{ threads_defaut }}" min="1" step="1"></label></p>
-<p>Valeur par défaut : nombre de cœurs physiques, à défaut cœurs logiques. Le nombre demandé sera consigné ; le nombre appliqué ne sera affirmé que si l'API du moteur permet de le relire.</p>
+<p class="prose"><label>Threads demandés <input type="number" name="threads" value="{{ threads_defaut }}" min="1" step="1"></label></p>
+<p class="prose">Valeur par défaut : nombre de cœurs physiques, à défaut cœurs logiques. Le nombre demandé sera consigné ; le nombre appliqué ne sera affirmé que si l'API du moteur permet de le relire.</p>
 <fieldset>
 <legend>Réglages de la famille {{ modele.libelle_famille }}</legend>
 {% if not modele.reglages %}
-<p>Aucun réglage n'est déclaré par cette famille : aucun réglage n'est proposé pour cette exécution.</p>
+<p class="prose">Aucun réglage n'est déclaré par cette famille : aucun réglage n'est proposé pour cette exécution.</p>
 {% endif %}
 {% for reglage in modele.reglages %}
 {% if reglage.type_valeur == 'booleen' %}
-<p>{{ reglage.libelle }} ({{ reglage.nom }}) :
+<p class="prose">{{ reglage.libelle }} ({{ reglage.nom }}) :
 <label><input type="radio" name="{{ prefixe_reglage }}{{ reglage.nom }}" value="oui"{% if reglage.defaut %} checked{% endif %}> oui</label>
 <label><input type="radio" name="{{ prefixe_reglage }}{{ reglage.nom }}" value="non"{% if not reglage.defaut %} checked{% endif %}> non</label>
 </p>
 {% elif reglage.type_valeur == 'choix' %}
-<p><label>{{ reglage.libelle }} ({{ reglage.nom }}) <select name="{{ prefixe_reglage }}{{ reglage.nom }}">
+<p class="prose"><label>{{ reglage.libelle }} ({{ reglage.nom }}) <select name="{{ prefixe_reglage }}{{ reglage.nom }}">
 {% for valeur in reglage.valeurs %}
 <option value="{{ valeur }}"{% if valeur == reglage.defaut %} selected{% endif %}>{{ valeur }}</option>
 {% endfor %}
 </select></label></p>
 {% elif reglage.type_valeur == 'entier' %}
-<p><label>{{ reglage.libelle }} ({{ reglage.nom }}) <input type="number" name="{{ prefixe_reglage }}{{ reglage.nom }}" value="{{ reglage.defaut }}" step="1"></label></p>
+<p class="prose"><label>{{ reglage.libelle }} ({{ reglage.nom }}) <input type="number" name="{{ prefixe_reglage }}{{ reglage.nom }}" value="{{ reglage.defaut }}" step="1"></label></p>
 {% else %}
-<p><label>{{ reglage.libelle }} ({{ reglage.nom }}) <input type="text" name="{{ prefixe_reglage }}{{ reglage.nom }}" value="{{ reglage.defaut }}"></label></p>
+<p class="prose"><label>{{ reglage.libelle }} ({{ reglage.nom }}) <input type="text" name="{{ prefixe_reglage }}{{ reglage.nom }}" value="{{ reglage.defaut }}"></label></p>
 {% endif %}
-<p>{{ reglage.description }} (défaut : {% if reglage.type_valeur == 'booleen' %}{% if reglage.defaut %}oui{% else %}non{% endif %}{% elif reglage.defaut == "" %}(vide){% else %}{{ reglage.defaut }}{% endif %})</p>
+<p class="prose">{{ reglage.description }} (défaut : {% if reglage.type_valeur == 'booleen' %}{% if reglage.defaut %}oui{% else %}non{% endif %}{% elif reglage.defaut == "" %}(vide){% else %}{{ reglage.defaut }}{% endif %})</p>
 {% endfor %}
 </fieldset>
-<p>Les audios sélectionnés seront décodés par le serveur en signaux bruts 16 kHz mono dans un dossier de travail de l'exécution sous <code>data/cache</code>, supprimé à la fin ; le moteur est lancé dans son propre groupe de processus et le créneau reste occupé jusqu'à sa fin réelle.</p>
-<p><button type="submit">Vérifier la demande (aucun lancement)</button></p>
-<p><button type="submit" formaction="{{ url_for('lancer_execution') }}">Lancer l'exécution</button></p>
+<p class="prose">Les audios sélectionnés seront décodés par le serveur en signaux bruts 16 kHz mono dans un dossier de travail de l'exécution sous <code>data/cache</code>, supprimé à la fin ; le moteur est lancé dans son propre groupe de processus et le créneau reste occupé jusqu'à sa fin réelle.</p>
+<p class="prose"><button type="submit" class="secondary">Vérifier la demande (aucun lancement)</button></p>
+<p class="prose"><button type="submit" formaction="{{ url_for('lancer_execution') }}">Lancer l'exécution</button></p>
 </form>
 {% endif %}
 {% endfor %}
 {% endif %}
-<p><a href="{{ url_for('accueil') }}">Retour à l'accueil</a></p>
+<p class="prose"><a href="{{ url_for('accueil') }}">Retour à l'accueil</a></p>
 {% endblock %}

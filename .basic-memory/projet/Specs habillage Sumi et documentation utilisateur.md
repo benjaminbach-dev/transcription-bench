@@ -21,3 +21,24 @@ tags:
 ## Relations
 
 - relates_to [[Qualification Qwen3-ASR 2026-11-03]]
+
+## Révision et mise en œuvre (2026-11-03, suite)
+
+- [decision] Archivage de `add-benchmark-prototype` fait le 2026-11-03 (6 specs de référence créées) : le préalable de la modification de l'exigence « sans CSS » est levé. Reste à corriger à la main le `## Purpose` de `openspec/specs/local-web-interface/spec.md` à l'archivage de l'habillage.
+- [decision] Revue advisor puis arbitrages du propriétaire : palette **Flexoki** (MIT, Steph Ango) par surcharge des jetons de couleur de Sumi dans `app.css` ; bouton destructeur en couleur (`button.danger`, via `--s-btn`) ; libellés d'interface en **gras** dans le guide ; exemple principal `handy-computer/whisper-large-v3-turbo-gguf` (Q5_K_M, ≈ 620 Mo) à la place de Qwen3-ASR (Linux seulement). Specs poussées (commit 5c03627), `--strict` vert pour les deux changes.
+- [fact] Contraste WCAG mesuré : Flexoki 600/400 ne suffit pas pour le succès clair (vert 600 : 4,39) ni le danger sombre (rouge 400 : 4,42) ; retenus vert 700 `#536907` et rouge 300 `#E8705F` (valeurs officielles du dépôt kepano/flexoki).
+- [validation] Habillage implémenté par un worker en deux lots (ressources/routes/app.css/tests des feuilles ; gabarits/navigation/tests partagés) : suite complète de 756 tests verte sous Linux (serveur de développement). Vérification visuelle et CI Windows non encore faites à cette ligne.
+- [limit] Guide utilisateur rédigé (docs/guide-utilisateur.md), README court (< 60 lignes), docs/technique.md et test de cohérence tests/test_documentation.py ; le parcours à froid exige un PC de test déclaré par le propriétaire (installation de moteur, téléchargement, inférence réelle) : non fait.
+
+## Vérification visuelle de l'habillage (2026-11-03, sur serveur de développement, moteur factice)
+
+- [validation] Quatre lots du worker + deux passes du navigator (thème clair réel, 360 et 1280 px) : aucune page ne défile horizontalement à 360 px, aucune requête hors application, console propre hors favicon et 404 volontaire ; suite complète de 764 tests verte sous Linux.
+- [fact] Corrections issues du navigateur : nom du programme en `strong` (le `h1` de Sumi fait 45 px) avec un `h1` par page ; coupures `overflow-wrap` étendues (titres, `p`, `li`, `strong`, `dt`) ; `prose` homogène ; boutons de vérification en `secondary` ; liens sombres en bleu 300 `#66A0C8` (le bleu 400 donnait 4,37) ; bordures fortes en base-500 (3:1).
+- [limit] Thème sombre vérifié seulement par injection des feuilles (aucune émulation de média dans le Playwright de l'hôte) ; bouton « Arrêter l'exécution » vu en aperçu injecté ; vue de comparaison à 360 px étroite (≈ 9 caractères par ligne dans les transcriptions) ; CI Windows (SHA-256 avec `-text`, type MIME) non encore exécutée.
+- [limit] Restent : mise à jour d'AGENTS.md relue par le propriétaire (modifiée localement, non commitée), correction du `## Purpose` à l'archivage, parcours à froid de la documentation sur un PC de test déclaré.
+
+## Revue advisor de l'implémentation et corrections (2026-11-03, soir)
+
+- [validation] Revue advisor (lecture seule) : code conforme aux specs ; points corrigés : `td pre` en `break-word` puis `min-width: 14rem` (transcriptions à ≈ 20 caractères par ligne à 360 px au lieu de ≈ 10, mesuré au navigateur), licence Flexoki jointe, tests de contraste/feuilles durcis (rapport brut, commentaires ignorés, blocs imbriqués), test d'encart clinique et de classes plus stricts, guide corrigé (accès réseau, définitions à la première apparition, mention Microsoft Store retirée, nuance sur la vérification des modèles). 772 tests verts sous Linux.
+- [limit] Paires de contraste non garanties ≥ 4,5 mais inutilisées aujourd'hui : `--s-muted` sur surface/card/card-section et encarts, `--s-primary` sur card-section en sombre.
+- [limit] Le run CI Windows du 2026-11-03 sur le commit 5c03627 (specs seulement) a échoué sur `test_arret_utilisateur_interrompu_conserve_les_resultats` (FileNotFoundError, course probable), sans rapport avec l'habillage ; l'habillage n'a pas encore été vu par la CI Windows (SHA-256 de `sumi.min.css`, type MIME).

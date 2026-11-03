@@ -2,12 +2,44 @@
 <html lang="fr">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{% block titre %}transcription-bench{% endblock %}</title>
+<link rel="stylesheet" href="/sumi.css">
+<link rel="stylesheet" href="/app.css">
 </head>
 <body>
+{# `page_courante` désigne le lien de la navigation à signaler. Une page de
+   premier niveau donne sa clé (`modeles`) : son lien reçoit
+   `aria-current="page"`. Une sous-page donne `parent:<clé>` (`parent:resultats`,
+   `parent:comparaisons`, `parent:moteurs`) : le lien de sa page parente reçoit
+   `aria-current="true"`. La page d'erreur ne remplit pas le bloc : aucun lien
+   n'est signalé. Le nom du programme est un `strong` — ni un titre (Sumi
+   dessinerait un `h1` à 45 px, démesuré dans la barre), ni un lien, qui
+   doublerait « Accueil » — placé dans le premier `li` du `nav`. Le `h1` de
+   chaque page est son titre, dans `main` (design D7). #}
+{% set page_courante %}{% block page_courante %}{% endblock %}{% endset %}
+{%- macro lien(cle, route, libelle) -%}
+<li><a href="{{ url_for(route) }}"{% if page_courante|trim == cle %} aria-current="page"{% elif page_courante|trim == 'parent:' ~ cle %} aria-current="true"{% endif %}>{{ libelle }}</a></li>
+{%- endmacro -%}
 <header>
-<h1>transcription-bench</h1>
-<p>Prototype local de comparaison de modèles de transcription française sur CPU, non validé cliniquement.</p>
+<nav aria-label="Navigation principale">
+<ul>
+<li><strong>transcription-bench</strong></li>
+</ul>
+<ul>
+{{ lien('accueil', 'accueil', 'Accueil') }}
+{{ lien('audios', 'audios', 'Audios') }}
+{{ lien('moteurs', 'moteurs', 'Moteurs') }}
+{{ lien('modeles', 'modeles', 'Modèles') }}
+{{ lien('executions', 'executions', 'Exécutions') }}
+{{ lien('resultats', 'resultats', 'Résultats') }}
+{{ lien('comparaisons', 'comparaisons', 'Comparaisons') }}
+{{ lien('operation', 'operation', 'Opération') }}
+</ul>
+</nav>
+<div class="callout warning">
+<p class="prose">Prototype local de comparaison de modèles de transcription française sur CPU, non validé cliniquement.</p>
+</div>
 </header>
 <main>
 {% block contenu %}{% endblock %}

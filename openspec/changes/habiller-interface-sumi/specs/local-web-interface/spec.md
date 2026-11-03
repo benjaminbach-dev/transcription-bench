@@ -55,8 +55,15 @@ Toutes les pages SHALL partager un squelette HTML : `lang="fr"`, `meta viewport`
 - **WHEN** une page quelconque est chargée
 - **THEN** elle déclare `lang="fr"` et un `meta viewport`, et son titre diffère de celui des autres pages
 
+### Requirement: Hiérarchie des titres
+Chaque page SHALL contenir exactement un élément `h1`, qui porte son titre, et ses sous-titres SHALL se suivre sans saut de niveau. Le nom du programme figure dans la navigation sans être un titre.
+
+#### Scenario: Titres d'une page
+- **WHEN** une page quelconque est chargée
+- **THEN** elle contient un seul `h1` et aucun titre de niveau supérieur de plus d'un cran au précédent
+
 ### Requirement: Navigation commune et page courante
-Le `header` SHALL contenir un `nav` portant un `aria-label`, à deux listes : le nom du programme en texte simple, puis des liens vers Accueil, Audios, Moteurs, Modèles, Exécutions, Résultats, Comparaisons et Opération. Sur chacune de ces huit pages, son lien SHALL porter `aria-current="page"` et lui seul ; sur une sous-page (détail d'un résultat, vue de comparaison, journal d'un moteur), le lien de la page parente SHALL porter `aria-current="true"` ; la page d'erreur n'en porte aucun.
+Le `header` SHALL contenir un `nav` portant un `aria-label`, à deux listes : le nom du programme en `strong`, puis des liens vers Accueil, Audios, Moteurs, Modèles, Exécutions, Résultats, Comparaisons et Opération. Sur chacune de ces huit pages, son lien SHALL porter `aria-current="page"` et lui seul ; sur une sous-page (détail d'un résultat, vue de comparaison, journal d'un moteur), le lien de la page parente SHALL porter `aria-current="true"` ; la page d'erreur n'en porte aucun.
 
 #### Scenario: Page courante signalée
 - **WHEN** la page des modèles est chargée
@@ -82,19 +89,19 @@ Les contenus susceptibles de dépasser la largeur de l'écran SHALL rester lisib
 - **THEN** seul le conteneur du tableau défile horizontalement ; la page elle-même ne défile pas horizontalement
 
 #### Scenario: Valeur sans espace
-- **WHEN** une empreinte SHA-256 de 64 caractères est affichée dans un titre ou une liste de définitions à 360 px de large
-- **THEN** elle se coupe sur plusieurs lignes et reste entièrement visible
+- **WHEN** une empreinte SHA-256 de 64 caractères ou un chemin absolu est affiché dans un titre, un paragraphe, une liste ou une liste de définitions à 360 px de large
+- **THEN** il se coupe sur plusieurs lignes, reste entièrement visible et la page ne défile pas horizontalement
 
 #### Scenario: Texte courant sur grand écran
 - **WHEN** une page contenant un paragraphe long est affichée à 1280 px de large
 - **THEN** les lignes du paragraphe restent d'une largeur de lecture confortable (vérification visuelle)
 
 ### Requirement: Feuille complémentaire bornée
-`/app.css` SHALL se limiter à trois rôles : les retours à la ligne et coupures (`white-space`, `overflow-wrap`), la surcharge des jetons de couleur de Sumi pour la palette (clair et sombre), et la couleur des boutons destructeurs par `--s-btn` et `--s-btn-on`. Elle SHALL NOT déclarer de police, de taille, d'espacement ni de jeton de Sumi autre que les jetons de couleur nommés dans le design.
+`/app.css` SHALL se limiter à trois rôles : les retours à la ligne, coupures et largeur minimale des blocs `pre` de transcription dans les tableaux (`white-space`, `overflow-wrap`, `min-width`), la surcharge des jetons de couleur de Sumi pour la palette (clair et sombre), et la couleur des boutons destructeurs par `--s-btn` et `--s-btn-on`. Elle SHALL NOT déclarer de police, de taille, d'espacement ni de jeton de Sumi autre que les jetons de couleur nommés dans le design.
 
 #### Scenario: Feuille complémentaire bornée
 - **WHEN** le contenu de `/app.css` est analysé par un test
-- **THEN** chaque propriété déclarée appartient à la liste autorisée (`white-space`, `overflow-wrap`, les jetons de couleur nommés dans le design, `--s-btn`, `--s-btn-on`)
+- **THEN** chaque propriété déclarée appartient à la liste autorisée (`white-space`, `overflow-wrap`, `min-width` pour les seuls `pre` de cellule, les jetons de couleur nommés dans le design, `--s-btn`, `--s-btn-on`)
 
 ### Requirement: Thème selon le système avec la palette Flexoki
 Le thème clair ou sombre SHALL suivre le réglage du système de l'utilisateur par la seule feuille de style, avec la palette Flexoki, sans bascule, sans préférence mémorisée (cela exigerait du JavaScript) et sans attribut `data-theme` dans les gabarits. L'avis de licence MIT de Flexoki SHALL figurer dans la feuille et dans la documentation des licences.
@@ -122,7 +129,7 @@ Les gabarits SHALL n'employer que des éléments HTML standard et, au plus, les 
 - **THEN** toute classe littérale utilisée appartient à la liste autorisée, et aucun élément `dialog` ni attribut `role="button"`, `aria-busy` ou `aria-invalid` n'est présent
 
 ### Requirement: Actions destructrices distinctes
-Les boutons des actions destructrices (suppression d'un modèle local, arrêt d'une exécution) SHALL porter la classe `danger` et s'afficher avec la couleur de danger de la palette, sans autre texte ajouté ni confirmation JavaScript. Les autres boutons SHALL NOT porter cette classe.
+Les boutons des actions destructrices (suppression d'un modèle local, arrêt d'une exécution) SHALL porter la classe `danger` et s'afficher avec la couleur de danger de la palette, sans autre texte ajouté ni confirmation JavaScript. Les autres boutons SHALL NOT porter cette classe ; les boutons de simple contrôle (vérifications) portent `secondary`.
 
 #### Scenario: Action destructrice
 - **WHEN** la page des modèles affiche un bouton de suppression et un bouton de téléchargement
