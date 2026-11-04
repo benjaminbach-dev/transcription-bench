@@ -1,4 +1,7 @@
-"""Tests de l'habillage Sumi (lot 2) : squelette, navigation, classes et encarts.
+"""Tests de l'habillage Sumi : squelette, navigation, classes et encarts.
+
+Lot 2 : squelette et classes ; lot 5 : cartes (`article`), accordéons
+(`details`/`summary`) et grilles, sans JavaScript.
 
 Les gabarits sont contrôlés de deux façons : analyse statique des classes
 littérales et des balises écrites dans `transcription_bench/web/templates/`, et
@@ -12,9 +15,10 @@ import re
 import threading
 import unittest
 from html import unescape
+from html.parser import HTMLParser
 from pathlib import Path
 
-from tests.outils_html import ELEMENTS_INTERDITS, ELEMENTS_VIDES, assert_html_seul
+from tests.outils_html import ELEMENTS_INTERDITS, assert_html_seul
 from tests.test_comparaison_resultats import EMPREINTE_A, resultat_empreinte
 from tests.test_consultation_resultats import (
     IDENTIFIANT,
@@ -36,6 +40,9 @@ DOSSIER_GABARITS = (
 CLASSES_AUTORISEES = frozenset(
     {
         "overflow-auto",
+        "grid",
+        "cols-2",
+        "cols-3",
         "callout",
         "warning",
         "danger",
@@ -63,11 +70,6 @@ LIENS_NAVIGATION = (
 )
 CHEMIN_NAVIGATION = ("html", "body", "header", "nav")
 CHEMIN_HEADER = ("html", "body", "header")
-
-AVERTISSEMENT_CLINIQUE = (
-    "Prototype local de comparaison de modèles de transcription française sur CPU, "
-    "non validé cliniquement."
-)
 
 # Boutons destructeurs : seuls ceux-là portent la classe `danger`.
 BOUTONS_DESTRUCTEURS = {
@@ -99,11 +101,6 @@ MOTIF_CLASSE = re.compile(r'class="([^"]*)"')
 MOTIF_PARAGRAPHE = re.compile(r"<p\b[^>]*>")
 MOTIF_LISTE = re.compile(r"<(?:ul|ol|dl)\b[^>]*>")
 MOTIF_GESTIONNAIRE = re.compile(r"<[^>]*\son[a-z]+\s*=")
-MOTIF_BALISE = re.compile(r"<(/?)([A-Za-z][A-Za-z0-9]*)\b([^>]*)>")
-MOTIF_CLASSE_ATTRIBUT = re.compile(r'\bclass="([^"]*)"')
-MOTIF_AVERTISSEMENT = re.compile(
-    r"\s+".join(map(re.escape, AVERTISSEMENT_CLINIQUE.split()))
-)
 # Classes d'encart de Sumi : elles ne prennent effet que sur un `callout`.
 CLASSES_D_ENCART = ("danger", "warning", "success")
 MOTIF_BLOC_TITRE = re.compile(r"{%-?\s*block titre\s*-?%}")
@@ -113,6 +110,10 @@ MOTIF_BLOC_COURANTE = re.compile(
 
 DELAI = 5.0
 IDENTIFIANT_DETAIL = "20240103-000000-0000dead"
+
+# Design D8 : contenus qui restent visibles sans ouvrir d'accordéon.
+CONTENU_TOUJOURS_VISIBLE = frozenset({"pre", "button"})
+CLASSES_TOUJOURS_VISIBLES = frozenset({"danger", "warning"})
 
 
 def gabarits() -> dict[str, str]:
@@ -138,35 +139,69 @@ def classes_de_balise(balise: str) -> set[str]:
     return set(" ".join(MOTIF_CLASSE.findall(balise)).split())
 
 
-def elements_englobants(
-    source: str, position: int
-) -> list[tuple[str, frozenset[str], int]]:
-    """Éléments ouverts autour de `position` : (nom, classes, position d'ouverture).
+class BlocDetails:
+    """Un `details` d'une page rendue : état d'ouverture, résumé et contenu."""
 
-    `html.parser` ne conserve pas la position des balises ; ce relevé permet de
-    vérifier qu'un texte est bien dans un élément donné, et non seulement sur
-    la page.
+    def __init__(self, ouvert: bool) -> None:
+        self.ouvert = ouvert
+        self.resume = ""
+        self.balises: list[tuple[str, dict[str, str | None]]] = []
+
+
+class AnalyseDetails(HTMLParser):
+    """Blocs `details` d'une page rendue, dans l'ordre du document.
+
+    `blocs` conserve, pour chaque `details`, s'il est ouvert (attribut `open`
+    posé par le serveur), le texte de son `summary` et les balises qu'il
+    contient. Sert à vérifier qu'aucun contenu à garder visible (erreur, marque,
+    texte transcrit, bouton d'action) n'est enfermé dans un accordéon fermé.
     """
-    pile: list[tuple[str, frozenset[str], int]] = []
-    for balise in MOTIF_BALISE.finditer(source):
-        if balise.start() >= position:
-            break
-        fermante, nom, attributs = balise.groups()
-        nom = nom.lower()
-        if nom in ELEMENTS_VIDES:
-            continue
-        if fermante:
-            for index in range(len(pile) - 1, -1, -1):
-                if pile[index][0] == nom:
-                    del pile[index:]
-                    break
-            continue
-        classes: frozenset[str] = frozenset()
-        attribut = MOTIF_CLASSE_ATTRIBUT.search(attributs)
-        if attribut:
-            classes = frozenset(attribut.group(1).split())
-        pile.append((nom, classes, balise.start()))
-    return pile
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.blocs: list[BlocDetails] = []
+        self._ouverts: list[BlocDetails] = []
+        self._capture: list[str] | None = None
+
+    def handle_starttag(self, tag, attrs) -> None:
+        attributs = dict(attrs)
+        if tag == "details":
+            bloc = BlocDetails("open" in attributs)
+            self.blocs.append(bloc)
+            self._ouverts.append(bloc)
+            return
+        if tag == "summary":
+            self._capture = []
+            return
+        for bloc in self._ouverts:
+            bloc.balises.append((tag, attributs))
+
+    def handle_startendtag(self, tag, attrs) -> None:
+        if tag == "details":
+            return
+        self.handle_starttag(tag, attrs)
+
+    def handle_endtag(self, tag) -> None:
+        if tag == "summary" and self._capture is not None:
+            if self._ouverts:
+                self._ouverts[-1].resume = " ".join(
+                    "".join(self._capture).split()
+                )
+            self._capture = None
+        elif tag == "details" and self._ouverts:
+            self._ouverts.pop()
+
+    def handle_data(self, data) -> None:
+        if self._capture is not None:
+            self._capture.append(data)
+
+
+def analyser_details(corps: str) -> AnalyseDetails:
+    """Analyse les `details` d'un corps de page rendue."""
+    analyse = AnalyseDetails()
+    analyse.feed(corps)
+    analyse.close()
+    return analyse
 
 
 class GabaritsTest(unittest.TestCase):
@@ -395,9 +430,45 @@ class GabaritsTest(unittest.TestCase):
                     self.assertNotIn("secondary", classes_de_balise(lignes[0]))
                     self.assertNotIn("danger", classes_de_balise(lignes[0]))
 
+    def test_details_avec_summary_sans_titre_ni_lien(self) -> None:
+        # Design D8 : le `summary` ne porte ni titre ni lien (Sumi le style
+        # comme un contrôle, et un titre dans un accordéon brouille la
+        # hiérarchie des titres de la page).
+        for nom, source in self.sources.items():
+            with self.subTest(gabarit=nom):
+                self.assertEqual(
+                    source.count("<details"),
+                    source.count("<summary"),
+                    "un `details` a exactement un `summary`",
+                )
+                for ligne in source.splitlines():
+                    if "<summary" not in ligne:
+                        continue
+                    for interdit in ("<h1", "<h2", "<h3", "<h4", "<h5", "<h6"):
+                        self.assertNotIn(interdit, ligne, nom)
+                    self.assertNotIn("<a ", ligne, nom)
+                    self.assertNotIn("<button", ligne, nom)
+
+    def test_grille_utilisee_hors_de_main_et_des_tableaux(self) -> None:
+        # Design D8 : les cartes se répartissent avec `.grid` et `.cols-N`.
+        attendus = {
+            "accueil.html": "grid cols-3",
+            "moteurs.html": "grid cols-2",
+            "modeles.html": "grid cols-2",
+        }
+        for nom, classes in attendus.items():
+            with self.subTest(gabarit=nom):
+                self.assertIn(f'class="{classes}"', self.sources[nom])
+        for nom, source in self.sources.items():
+            for ligne in source.splitlines():
+                if "class=\"grid" not in ligne:
+                    continue
+                self.assertNotIn("<main", ligne)
+                self.assertNotIn("<table", ligne)
+
 
 class HabillagePageTest(SocleWebTest):
-    """Pages rendues : squelette, navigation, encart clinique et classes."""
+    """Pages rendues : squelette, navigation, cartes, accordéons et classes."""
 
     def page(self, chemin: str, **options):
         options.setdefault("base_url", self.base_url())
@@ -469,12 +540,22 @@ class HabillagePageTest(SocleWebTest):
                 self.assertEqual(len(vues), 1, "une seule meta viewport")
                 self.assertIn("width=device-width", vues[0])
 
-                self.assertNotIn("footer", page.elements)
+                entetes = [ancetres for ancetres, _, _ in page.balises_de("header")]
+                self.assertEqual(entetes[0], ("html", "body"), "<header> de la page")
                 self.assertEqual(
-                    [ancetres for ancetres, _, _ in page.balises_de("header")],
-                    [("html", "body")],
-                    "<header> enfant direct de body",
+                    entetes.count(("html", "body")),
+                    1,
+                    "un seul en-tête de page",
                 )
+                # Les autres `header` sont ceux des cartes (`article`).
+                for ancetres in entetes[1:]:
+                    self.assertIn("article", ancetres, "<header> hors d'une carte")
+
+                # Aucun pied de page de page : les `footer` sont ceux des cartes.
+                pieds = [ancetres for ancetres, _, _ in page.balises_de("footer")]
+                self.assertNotIn(("html", "body"), pieds)
+                for ancetres in pieds:
+                    self.assertIn("article", ancetres, "<footer> hors d'une carte")
                 self.assertEqual(
                     [ancetres for ancetres, _, _ in page.balises_de("main")],
                     [("html", "body")],
@@ -535,31 +616,12 @@ class HabillagePageTest(SocleWebTest):
 
         self.assertEqual(len(titres), len(set(titres)), titres)
 
-    def test_avertissement_clinique_avant_le_contenu(self) -> None:
+    def test_aucun_bandeau_d_avertissement_clinique(self) -> None:
+        # D5 amendée : ce pré-projet de banc de modèles n'affiche plus de
+        # bandeau « non validé cliniquement » (aucune diffusion clinique).
         for chemin, page in self.pages_a_controler().items():
             with self.subTest(chemin=chemin):
-                occurrences = list(MOTIF_AVERTISSEMENT.finditer(page.corps))
-                self.assertTrue(occurrences, "texte d'avertissement absent")
-
-                # Le texte doit être DANS un élément `callout`, pas seulement
-                # présent quelque part dans la page.
-                encarts = [
-                    englobant
-                    for occurrence in occurrences
-                    for englobant in elements_englobants(
-                        page.corps, occurrence.start()
-                    )
-                    if "callout" in englobant[1]
-                ]
-                self.assertTrue(
-                    encarts, "le texte d'avertissement n'est pas dans un callout"
-                )
-
-                (main,) = re.finditer(r"<main\b", page.corps)
-                self.assertTrue(
-                    all(encart[2] < main.start() for encart in encarts),
-                    "l'encart doit précéder le contenu de main",
-                )
+                self.assertNotIn("non validé cliniquement", page.corps)
 
     def test_classes_d_encart_reservees_aux_callouts(self) -> None:
         # D3 : `danger`, `warning` et `success` ne prennent effet que sur un
@@ -704,6 +766,39 @@ class HabillagePageTest(SocleWebTest):
                     self.assertIn(
                         ancetres, conteneurs, "tableau hors d'un conteneur overflow-auto"
                     )
+
+    def test_aucun_contenu_a_garder_visible_dans_un_details_ferme(self) -> None:
+        # Design D8 : erreurs, marques, résultats partiels, texte transcrit et
+        # boutons d'action ne sont jamais enfermés dans un accordéon fermé (un
+        # `details` qui contient une erreur porte `open`).
+        for chemin, page in self.pages_a_controler().items():
+            for bloc in analyser_details(page.corps).blocs:
+                if bloc.ouvert:
+                    continue
+                for tag, attributs in bloc.balises:
+                    with self.subTest(chemin=chemin, resume=bloc.resume, balise=tag):
+                        self.assertNotIn(tag, CONTENU_TOUJOURS_VISIBLE, bloc.resume)
+                        classes = set((attributs.get("class") or "").split())
+                        self.assertFalse(
+                            classes & CLASSES_TOUJOURS_VISIBLES, bloc.resume
+                        )
+                        self.assertNotEqual(attributs.get("role"), "status")
+
+    def test_journal_ouvert_pendant_une_operation(self) -> None:
+        # Design D8 : le journal d'une opération en cours est ouvert d'emblée.
+        fin = threading.Event()
+        self.addCleanup(fin.set)
+        self.creneau.demarrer(
+            "execution", lambda travailleur: fin.wait(DELAI), cible="a.wav"
+        )
+
+        blocs = analyser_details(self.page("/operation").corps).blocs
+        journaux = [bloc for bloc in blocs if bloc.resume.startswith("Journal")]
+
+        self.assertEqual(len(journaux), 1, [bloc.resume for bloc in blocs])
+        self.assertTrue(
+            journaux[0].ouvert, "journal fermé alors que l'opération est en cours"
+        )
 
     def test_arret_execution_en_danger(self) -> None:
         fin = threading.Event()

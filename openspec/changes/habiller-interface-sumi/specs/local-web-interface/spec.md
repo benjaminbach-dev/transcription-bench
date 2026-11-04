@@ -45,15 +45,15 @@ L'application SHALL servir `/sumi.css` et `/app.css` depuis des fichiers du dép
 - **THEN** le SHA-256 de la copie est identique à celui consigné
 
 ### Requirement: Squelette commun des pages
-Toutes les pages SHALL partager un squelette HTML : `lang="fr"`, `meta viewport`, un titre de page distinct, un `header` contenant la navigation, puis un `main`, ces deux éléments étant enfants directs de `body`. L'avertissement de non-validation clinique SHALL rester visible en haut de chaque page, dans un encart placé avant le contenu de `main`.
-
-#### Scenario: Avertissement visible
-- **WHEN** une page quelconque est chargée
-- **THEN** l'avertissement indiquant que le prototype n'est pas validé cliniquement figure dans un encart avant le contenu de `main`
+Toutes les pages SHALL partager un squelette HTML : `lang="fr"`, `meta viewport`, un titre de page distinct, un `header` contenant la navigation, puis un `main`, ces deux éléments étant enfants directs de `body`. Le squelette ne porte aucun bandeau d'avertissement clinique : ce pré-projet de banc de modèles n'est pas diffusé en clinique (décision du propriétaire, 2026-11-04).
 
 #### Scenario: Squelette d'une page
 - **WHEN** une page quelconque est chargée
-- **THEN** elle déclare `lang="fr"` et un `meta viewport`, et son titre diffère de celui des autres pages
+- **THEN** elle déclare `lang="fr"` et un `meta viewport`, son titre diffère de celui des autres pages, elle a un seul `header` enfant direct de `body` et son contenu est dans un `main` enfant direct de `body`
+
+#### Scenario: Aucun bandeau d'avertissement clinique
+- **WHEN** une page quelconque est chargée
+- **THEN** elle n'affiche pas de bandeau « non validé cliniquement »
 
 ### Requirement: Hiérarchie des titres
 Chaque page SHALL contenir exactement un élément `h1`, qui porte son titre, et ses sous-titres SHALL se suivre sans saut de niveau. Le nom du programme figure dans la navigation sans être un titre.
@@ -122,11 +122,37 @@ Chaque paire texte/fond des jetons de couleur déclarés dans `/app.css` SHALL a
 - **THEN** aucune paire n'est inférieure à 4,5
 
 ### Requirement: Classes d'habillage restreintes
-Les gabarits SHALL n'employer que des éléments HTML standard et, au plus, les classes `overflow-auto`, `callout` (avec `warning`, `danger` ou `success`), `secondary`, `contrast`, `outline`, `muted`, `small`, `narrow`, `prose` et `danger` sur un bouton. Ils SHALL NOT employer l'élément `dialog`, `role="button"`, `aria-busy` ni `aria-invalid`.
+Les gabarits SHALL n'employer que des éléments HTML standard et, au plus, les classes `overflow-auto`, `grid`, `cols-2`, `cols-3`, `callout` (avec `warning`, `danger` ou `success`), `secondary`, `contrast`, `outline`, `muted`, `small`, `narrow`, `prose` et `danger` sur un bouton. Ils SHALL NOT employer l'élément `dialog`, `role="button"`, `aria-busy` ni `aria-invalid`. Les classes de grille (`grid`, `cols-2`, `cols-3`) ne se posent jamais sur `main` ni sur un tableau.
 
 #### Scenario: Classe inconnue
 - **WHEN** les gabarits sont analysés par un test
 - **THEN** toute classe littérale utilisée appartient à la liste autorisée, et aucun élément `dialog` ni attribut `role="button"`, `aria-busy` ou `aria-invalid` n'est présent
+
+#### Scenario: Grille de cartes
+- **WHEN** une page répartit ses cartes en colonnes
+- **THEN** elle emploie `grid` avec `cols-2` ou `cols-3` sur un `div`, jamais sur `main` ni sur un tableau, et Sumi ramène la grille à une colonne sous 48 rem
+
+### Requirement: Cartes et accordéons natifs
+Les regroupements de contenu SHALL employer les éléments HTML natifs : une carte est un `article` dont le `header` porte le titre de la carte (et non un titre de section hors carte), et un regroupement repliable est un `details` dont le premier enfant est un `summary` ; aucun `footer` n'est un enfant direct de `body`. Le `summary` SHALL NOT contenir de titre (`h1` à `h6`), de lien ni de bouton. La hiérarchie des titres reste sans saut de niveau malgré les cartes.
+
+#### Scenario: Carte d'une page
+- **WHEN** une page présente des cartes
+- **THEN** chaque carte est un `article` dont le `header` porte un titre, et tout `footer` de la page est dans un `article`
+
+#### Scenario: Résumé d'accordéon
+- **WHEN** les gabarits sont analysés par un test
+- **THEN** chaque `details` a exactement un `summary`, qui ne contient ni titre, ni lien, ni bouton
+
+### Requirement: Contenus jamais masqués par un accordéon
+Les contenus suivants SHALL rester visibles sans ouvrir d'accordéon : erreurs, marques `FACTICE`/`SYNTHÉTIQUE`/`MESURES SIMULÉES`, résultats partiels, refus de dépôt, texte transcrit (`pre`), état de l'opération et boutons d'action. Un `details` qui contient une erreur ou un avertissement SHALL porter l'attribut `open` posé par le serveur ; le journal d'une opération en cours, échouée ou interrompue SHALL être ouvert.
+
+#### Scenario: Contenu à garder visible dans un accordéon
+- **WHEN** une page rendue est analysée par un test
+- **THEN** aucun `details` sans attribut `open` ne contient de `pre`, de bouton, d'encart `warning` ou `danger` ni d'élément `role="status"`
+
+#### Scenario: Journal d'une opération en cours
+- **WHEN** la page de l'opération affiche une opération en cours
+- **THEN** l'accordéon du journal porte `open`
 
 ### Requirement: Actions destructrices distinctes
 Les boutons des actions destructrices (suppression d'un modèle local, arrêt d'une exécution) SHALL porter la classe `danger` et s'afficher avec la couleur de danger de la palette, sans autre texte ajouté ni confirmation JavaScript. Les autres boutons SHALL NOT porter cette classe ; les boutons de simple contrôle (vérifications) portent `secondary`.

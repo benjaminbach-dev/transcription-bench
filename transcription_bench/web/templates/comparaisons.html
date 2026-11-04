@@ -10,8 +10,14 @@
 <p class="prose">Les transcriptions sont regroupées par l'empreinte SHA-256 du fichier audio source, relue dans chaque résultat, et jamais par son nom. Un fichier remplacé par un autre portant le même nom forme donc un autre groupe, et un même contenu déposé sous deux noms différents reste dans un seul groupe. Une transcription dont l'empreinte est absente ou invalide n'est jamais regroupée : elle reste consultable dans le détail de son exécution. Cette page ne fait que relire les fichiers de résultats : elle ne lance aucune inférence et ne modifie aucun fichier.</p>
 {% if groupes %}
 {% for groupe in groupes %}
-<h2>Empreinte SHA-256 {{ groupe.empreinte }}</h2>
-<p class="prose">Nom(s) consigné(s) du fichier audio : {{ groupe.noms | join(', ') }} — {{ groupe.entrees | length }} transcription(s) dans ce groupe.</p>
+<article>
+<header>
+<h2>Audio « {{ groupe.noms | join(', ') }} » — {{ groupe.entrees | length }} transcription(s)</h2>
+</header>
+<details>
+<summary>Empreinte SHA-256 du fichier audio</summary>
+<p class="prose"><strong>{{ groupe.empreinte }}</strong> — nom(s) consigné(s) du fichier audio : {{ groupe.noms | join(', ') }}.</p>
+</details>
 <form method="get" action="{{ url_for('comparaison', empreinte=groupe.empreinte) }}">
 <div class="overflow-auto">
 <table>
@@ -35,8 +41,11 @@
 </table>
 </div>
 <p class="prose">Cochez au moins deux transcriptions de ce groupe, puis lancez la comparaison.</p>
+<footer>
 <p class="prose"><button type="submit">Comparer les transcriptions sélectionnées</button></p>
+</footer>
 </form>
+</article>
 {% endfor %}
 {% elif not erreur_dossier %}
 <p class="callout prose">Aucune transcription comparable pour l'instant : un groupe apparaît dès qu'une exécution a produit un résultat dont le fichier audio source porte une empreinte SHA-256 valide.</p>

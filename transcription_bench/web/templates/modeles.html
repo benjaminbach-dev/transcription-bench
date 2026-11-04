@@ -14,8 +14,10 @@
 {% if instantane.etat == 'en_cours' %}
 <p class="callout prose">Une opération « {{ libelles_types[instantane.type_operation] }} » est en cours{% if instantane.cible %} : {{ instantane.cible }}{% endif %}. <a href="{{ url_for('operation') }}">Consulter l'opération</a></p>
 {% endif %}
-
+<article>
+<header>
 <h2>Vérifier un dépôt</h2>
+</header>
 {% if moteurs %}
 <form method="post" action="{{ url_for('verifier_modele') }}">
 <input type="hidden" name="jeton_csrf" value="{{ jeton_csrf }}">
@@ -32,13 +34,18 @@
 {% else %}
 <p class="prose">Aucun moteur réel n'est installé sur ce poste : la vérification et le téléchargement de modèles restent indisponibles. L'installation d'un moteur doit d'abord être validée sur un PC ; le serveur de développement n'installe aucun moteur réel et ne télécharge aucun poids. Le moteur factice ne charge aucun modèle et n'a donc pas besoin de dépôt à vérifier.</p>
 {% endif %}
-
+</article>
+<article>
+<header>
 <h2>Dernière vérification</h2>
+</header>
 {% if resultat is none %}
 <p class="prose">Aucune vérification effectuée depuis le démarrage.</p>
 {% elif resultat.accepte %}
 <p class="prose">Dépôt compatible : famille {{ resultat.famille }}, identifiant canonique {{ resultat.id_resolu }}, commit {{ resultat.commit }}.</p>
 <p class="prose">Identifiant demandé : {{ resultat.identifiant }} ; moteur : {{ resultat.moteur }}{% if resultat.fichier_gguf %} ; variante GGUF choisie : {{ resultat.fichier_gguf }}{% endif %}.</p>
+<details>
+<summary>Fichiers du modèle et identifiants</summary>
 <p class="prose">Fichiers retenus et tailles distantes :</p>
 <ul class="prose">
 {% for fichier in resultat.fichiers %}
@@ -46,6 +53,10 @@
 {% endfor %}
 </ul>
 <p class="prose">Taille distante totale : {% if resultat.taille_totale is not none %}{{ resultat.taille_totale }} octets{% else %}inconnue (au moins une taille manque){% endif %}.</p>
+{% if empreinte %}
+<p class="prose">Empreinte de la demande de téléchargement : <small>{{ empreinte }}</small></p>
+{% endif %}
+</details>
 {% if empreinte %}
 <form method="post" action="{{ url_for('telecharger_modele') }}">
 <input type="hidden" name="jeton_csrf" value="{{ jeton_csrf }}">
@@ -79,13 +90,18 @@
 </ul>
 {% endif %}
 {% endif %}
-
+</article>
 <h2>Modèles locaux prêts</h2>
 {% if modeles %}
-<ul class="prose">
+<div class="grid cols-2">
 {% for modele in modeles %}
-<li>
-<p class="prose"><strong>{{ modele.identifiant }}</strong> — moteur : {{ modele.moteur }} ; famille : {{ modele.famille }}{% if modele.fichier_gguf %} ; variante GGUF : {{ modele.fichier_gguf }}{% endif %}.</p>
+<article>
+<header>
+<h3>{{ modele.identifiant }}</h3>
+</header>
+<p class="prose">Moteur : {{ modele.moteur }} ; famille : {{ modele.famille }}{% if modele.fichier_gguf %} ; variante GGUF : {{ modele.fichier_gguf }}{% endif %}.</p>
+<details>
+<summary>Fichiers du modèle et identifiants</summary>
 <p class="prose">Identifiant canonique : {{ modele.id_resolu }} ; commit : {{ modele.commit }} ; ajouté le : {{ modele.date }}.</p>
 <p class="prose">Fichiers retenus :</p>
 <ul class="prose">
@@ -94,16 +110,19 @@
 {% endfor %}
 </ul>
 <p class="prose">Taille sur disque : {% if modele.taille_disque is not none %}{{ modele.taille_disque }} octets{% else %}inconnue{% endif %} ; taille distante totale : {% if modele.taille_distante is not none %}{{ modele.taille_distante }} octets{% else %}inconnue{% endif %}.</p>
+</details>
+<footer>
 <form method="post" action="{{ url_for('supprimer_modele') }}">
 <input type="hidden" name="jeton_csrf" value="{{ jeton_csrf }}">
 <input type="hidden" name="moteur" value="{{ modele.moteur }}">
 <input type="hidden" name="cle" value="{{ modele.cle }}">
 <p class="prose"><button type="submit" class="danger">Supprimer ce modèle local</button></p>
 </form>
+</footer>
 <p class="prose">La suppression retire les fichiers de ce modèle ; les résultats déjà produits restent consultables.</p>
-</li>
+</article>
 {% endfor %}
-</ul>
+</div>
 {% else %}
 <p class="callout prose">Aucun modèle local prêt. Un dossier incomplet, interrompu ou sans inventaire cohérent n'est jamais proposé comme prêt.</p>
 {% endif %}

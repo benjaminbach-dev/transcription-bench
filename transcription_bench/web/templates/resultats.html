@@ -13,7 +13,7 @@
 <div class="overflow-auto">
 <table>
 <thead>
-<tr><th>Exécution</th><th>Créée le</th><th>Modèle</th><th>Moteur</th><th>État</th><th>Audios traités</th><th>Durée totale de l'opération</th><th>Marques</th></tr>
+<tr><th>Exécution</th><th>Créée le</th><th>Modèle</th><th>État</th><th>Marques</th></tr>
 </thead>
 <tbody>
 {% for execution in executions %}
@@ -21,16 +21,33 @@
 <td>{% if execution.exploitable %}<a href="{{ url_for('resultat_detail', identifiant=execution.identifiant) }}">{{ execution.identifiant }}</a>{% else %}{{ execution.identifiant }}{% endif %}</td>
 <td>{{ formats.afficher(execution.cree_le) }}</td>
 <td>{{ formats.afficher(execution.modele) }}</td>
-<td>{{ formats.afficher(execution.moteur) }}</td>
 <td>{% if execution.exploitable %}{{ execution.libelle_etat }}{% if execution.partiel %} (résultats partiels){% endif %}{% else %}{{ execution.libelle_etat }} : {{ execution.motif }}{% endif %}</td>
-<td>{% if execution.audios_traites is not none %}{{ execution.audios_traites }} sur {{ execution.audios_total }}{% else %}indisponible{% endif %}</td>
-<td>{{ formats.duree(execution.duree_operation_s) }}</td>
 <td>{% if execution.marques is none %}indisponible{% elif execution.marques %}{{ execution.marques | join(', ') }}{% else %}aucune{% endif %}</td>
 </tr>
 {% endfor %}
 </tbody>
 </table>
 </div>
+<details>
+<summary>Moteur, audios traités et durée de chaque exécution</summary>
+<div class="overflow-auto">
+<table>
+<thead>
+<tr><th>Exécution</th><th>Moteur</th><th>Audios traités</th><th>Durée totale de l'opération</th></tr>
+</thead>
+<tbody>
+{% for execution in executions %}
+<tr>
+<td>{{ execution.identifiant }}</td>
+<td>{{ formats.afficher(execution.moteur) }}</td>
+<td>{% if execution.audios_traites is not none %}{{ execution.audios_traites }} sur {{ execution.audios_total }}{% else %}indisponible{% endif %}</td>
+<td>{{ formats.duree(execution.duree_operation_s) }}</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+</div>
+</details>
 <p class="prose">Une durée totale « indisponible » n'a jamais été mesurée : elle n'est pas remplacée par zéro. Une exécution abandonnée après un arrêt brutal du serveur n'a par exemple aucune durée totale ni durée de processus.</p>
 <p class="prose">Les marques <strong>FACTICE</strong>, <strong>SYNTHÉTIQUE</strong> et <strong>MESURES SIMULÉES</strong> viennent du moteur factice ou de données synthétiques : leurs textes et leurs mesures ne sont jamais représentatifs d'un PC et ne disent rien de la qualité médicale d'une transcription.</p>
 {% elif not erreur_dossier %}

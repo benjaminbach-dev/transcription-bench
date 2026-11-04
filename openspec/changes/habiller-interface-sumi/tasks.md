@@ -16,7 +16,7 @@
 
 ## 4. Gabarits
 
-- [x] 4.1 Refondre `base.html` : `viewport`, bloc `page_courante`, `header` + `nav` à deux listes avec `aria-label` (nom du programme en texte simple), encart d'avertissement clinique, `main`, deux `link` ; pas de `footer` ; `aria-current="page"` sur les huit pages, `"true"` sur le parent des sous-pages, aucun sur la page d'erreur — fait au lot 2 (`h1` conservé dans le premier `li` du `nav`, encart `callout warning` dans le `header`, avant `main`) — NB : le nom du programme est finalement un `strong` (et non un `h1`) ; un `h1` par page (4.5)
+- [x] 4.1 Refondre `base.html` : `viewport`, bloc `page_courante`, `header` + `nav` à deux listes avec `aria-label` (nom du programme en texte simple), `main`, deux `link` ; pas de `footer` de page ; `aria-current="page"` sur les huit pages, `"true"` sur le parent des sous-pages, aucun sur la page d'erreur — fait au lot 2 (`h1` conservé dans le premier `li` du `nav`, encart `callout warning` dans le `header`, avant `main`) — NB : le nom du programme est finalement un `strong` (et non un `h1`) ; un `h1` par page (4.5). **Amendé au lot 5** : l'encart d'avertissement clinique est retiré (décision du propriétaire, 2026-11-04 ; voir 8.1)
 - [x] 4.2 Envelopper chaque tableau dans un conteneur `overflow-auto` ; poser `prose`/`narrow` sur les blocs de texte courant (jamais sur `main`) ; **conserver** les liens d'action de l'accueil (aucun texte d'interface retiré) — fait au lot 2 (5 tableaux, aucun texte modifié)
 - [x] 4.3 Classe `danger` sur « Supprimer ce modèle local » et « Arrêter l'exécution » ; employer `callout` pour les refus, états et avertissements (en conservant `role="status"`) — fait au lot 2 (9 `role="status"` conservés, chacun dans un encart)
 - [x] 4.4 Page d'erreur habillée par le même squelette — fait au lot 2 (`erreur.html` étend `base.html`, statuts HTTP et messages inchangés, aucun `aria-current`)
@@ -43,4 +43,19 @@
 ## 7. Documentation et clôture
 
 - [x] 7.1 Corriger les mentions « sans CSS » du README
-- [ ] 7.2 À l'archivage : corriger à la main le `## Purpose` de `openspec/specs/local-web-interface/spec.md` (« sans CSS ni JavaScript ») ; consigner en mémoire projet la décision (Sumi.css + Flexoki, bouton `danger` en couleur, pas de footer) et la provenance
+- [ ] 7.2 À l'archivage : corriger à la main le `## Purpose` de `openspec/specs/local-web-interface/spec.md` (« sans CSS ni JavaScript ») ; consigner en mémoire projet la décision (Sumi.css + Flexoki, bouton `danger` en couleur, pas de footer de page) et la provenance
+
+## 8. Lot 5 — retrait du bandeau clinique, cartes et accordéons natifs (2026-11-04)
+
+- [x] 8.1 Retirer le bandeau « non validé cliniquement » de `base.html` ; adapter le delta de spec (`Squelette commun des pages`, scénario `Avertissement visible` supprimé), le design (D5) et `tests/test_habillage.py` (constante, motif et test d'encart retirés, remplacés par un test d'absence du bandeau)
+- [x] 8.2 Autoriser `grid`, `cols-2`, `cols-3` dans le delta de spec (`Classes d'habillage restreintes`) et le design (D3, D8) ; `dialog` reste interdit ; `CLASSES_AUTORISEES` de `tests/test_habillage.py` mis à jour, avec un test de grille (jamais sur `main` ni sur un tableau)
+- [x] 8.3 Refondre `resultat.html` : carte de synthèse, texte transcrit toujours visible, puis par audio des accordéons (segments horodatés, mesures détaillées, fichier source, paramètres utilisés, timings natifs) et des accordéons globaux (mesures de l'opération, modèle et moteur, réglages, ordinateur et version du programme)
+- [x] 8.4 Refondre `executions.html` : « Demande validée » en carte avec encart de succès et résumé d'une ligne, détails de la demande en accordéon, une carte par modèle, réglages et threads dans un accordéon « Réglages avancés (facultatif) », boutons d'action hors accordéon
+- [x] 8.5 Refondre `modeles.html` : identifiants, empreinte et fichiers en accordéon, une carte par modèle prêt avec suppression en `footer`, candidats GGUF et refus de dépôt toujours visibles
+- [x] 8.6 Refondre `comparaisons.html` : titre « Audio « noms » — N transcriptions » (`groupe.noms`, déjà fourni par `consultation_resultats.py`), empreinte en accordéon ; replier aussi `resultats.html` (tableau réduit, moteur/audios/durée en accordéon) et `audios.html` (tailles et dossier d'entrée en accordéon)
+- [x] 8.7 Refondre `accueil.html` en grille de cartes par section, chemins de dossiers en accordéon ouvert avec le bouton de vérification ; `moteurs.html` en cartes (versions et journal en accordéon) ; `operation.html` en carte d'état, début/fin et journal en accordéon (journal ouvert si l'opération est en cours, échouée ou interrompue)
+- [x] 8.8 Tests d'accordéons dans `tests/test_habillage.py` : `summary` sans titre, lien ni bouton ; aucun `pre`, bouton, encart `warning`/`danger` ni `role="status"` dans un `details` fermé ; journal ouvert pendant une opération ; amendement du test de squelette (`header`/`footer` de cartes dans un `article`)
+- [x] 8.9 Tests ciblés sous Linux, sans réseau : `tests/test_habillage.py`, `tests/test_web.py`, `tests/test_resultats_web.py`, `tests/test_operation_web.py`, `tests/test_comparaison_web.py`, `tests/test_audios.py`, `tests/test_modeles_web.py`, `tests/test_executions.py`, `tests/test_feuilles.py`, `tests/test_hors_ligne.py`
+- [ ] 8.10 Vérification visuelle des cartes, grilles et accordéons (clair/sombre, 360 px et 1280 px, accordéon ouvert/fermé) par le navigator : **non faite**, aucun rendu visuel affirmé par ce lot
+- [ ] 8.11 À faire hors de ce change : `docs/guide-utilisateur.md` annonce encore un rappel de non-validation clinique sur l'accueil (changement `rediger-documentation-utilisateur`)
+

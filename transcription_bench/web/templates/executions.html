@@ -6,8 +6,14 @@
 <p class="prose"><a href="{{ url_for('executions') }}">Actualiser</a></p>
 <p class="prose"><strong>Lancement dans le créneau global.</strong> {{ message_lancement }}</p>
 {% if demande %}
+<article>
+<header>
 <h2>Demande validée</h2>
+</header>
 <p class="callout success prose">La demande ci-dessous est valide : les valeurs effectives sont complètes et les réglages inconnus ont été refusés. <strong>Aucune exécution n'a été lancée</strong> et rien n'est enregistré.</p>
+<p class="prose">Résumé : modèle {{ demande.identifiant }}, moteur {{ demande.moteur }}, {{ demande.audios | length }} audio(s) ; aucune exécution n'a été lancée.</p>
+<details>
+<summary>Détails de la demande</summary>
 <dl class="prose">
 <dt>Modèle</dt>
 {% if demande.synthetique %}
@@ -46,6 +52,8 @@ aucun réglage déclaré par cette famille : aucun réglage n'est proposé.
 <dt>Lancement</dt>
 <dd>aucune exécution n'a été lancée.</dd>
 </dl>
+</details>
+</article>
 {% endif %}
 <h2>Nouvelle demande</h2>
 {% if not modeles %}
@@ -53,7 +61,10 @@ aucun réglage déclaré par cette famille : aucun réglage n'est proposé.
 {% else %}
 <p class="prose">Le formulaire est répété pour chaque modèle exécutable, car les réglages proposés sont ceux de sa famille. Seuls les réglages déclarés par l'adaptateur apparaissent, avec leur valeur par défaut. Un modèle dont la famille n'est pas exécutable est affiché pour information et n'est pas sélectionnable.</p>
 {% for modele in modeles %}
+<article>
+<header>
 <h3>{{ modele.nom_moteur }} — {{ modele.identifiant }}</h3>
+</header>
 {% if modele.synthetique %}
 <p class="prose">Modèle synthétique du moteur factice : aucun fichier de modèle, aucun poids. Le moteur factice ne charge rien et produira des textes et mesures simulés, jamais représentatifs d'un PC. Moteur {{ modele.moteur }} ; famille {{ modele.libelle_famille }}.</p>
 {% else %}
@@ -79,6 +90,8 @@ aucun réglage déclaré par cette famille : aucun réglage n'est proposé.
 {% endfor %}
 <p class="prose">La durée indicative vient de l'en-tête du fichier ; la durée de référence du RTF sera la durée réellement décodée.</p>
 </fieldset>
+<details>
+<summary>Réglages avancés (facultatif)</summary>
 <p class="prose"><label>Threads demandés <input type="number" name="threads" value="{{ threads_defaut }}" min="1" step="1"></label></p>
 <p class="prose">Valeur par défaut : nombre de cœurs physiques, à défaut cœurs logiques. Le nombre demandé sera consigné ; le nombre appliqué ne sera affirmé que si l'API du moteur permet de le relire.</p>
 <fieldset>
@@ -106,11 +119,15 @@ aucun réglage déclaré par cette famille : aucun réglage n'est proposé.
 <p class="prose">{{ reglage.description }} (défaut : {% if reglage.type_valeur == 'booleen' %}{% if reglage.defaut %}oui{% else %}non{% endif %}{% elif reglage.defaut == "" %}(vide){% else %}{{ reglage.defaut }}{% endif %})</p>
 {% endfor %}
 </fieldset>
+</details>
 <p class="prose">Les audios sélectionnés seront décodés par le serveur en signaux bruts 16 kHz mono dans un dossier de travail de l'exécution sous <code>data/cache</code>, supprimé à la fin ; le moteur est lancé dans son propre groupe de processus et le créneau reste occupé jusqu'à sa fin réelle.</p>
+<footer>
 <p class="prose"><button type="submit" class="secondary">Vérifier la demande (aucun lancement)</button></p>
 <p class="prose"><button type="submit" formaction="{{ url_for('lancer_execution') }}">Lancer l'exécution</button></p>
+</footer>
 </form>
 {% endif %}
+</article>
 {% endfor %}
 {% endif %}
 <p class="prose"><a href="{{ url_for('accueil') }}">Retour à l'accueil</a></p>

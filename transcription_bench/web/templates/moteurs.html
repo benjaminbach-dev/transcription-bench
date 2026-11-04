@@ -11,10 +11,18 @@
 {% if instantane.etat == 'en_cours' %}
 <p class="callout prose">Une opération « {{ libelles_types[instantane.type_operation] }} » est en cours{% if instantane.cible %} : {{ instantane.cible }}{% endif %}. <a href="{{ url_for('operation') }}">Consulter l'opération</a></p>
 {% endif %}
-<ul class="prose">
+<div class="grid cols-2">
 {% for moteur in moteurs %}
-<li>
-<p class="prose"><strong>{{ moteur.nom }}</strong> — état : {{ libelles_etats_moteur[moteur.etat] }}{% if moteur.factice %} — <strong>FACTICE</strong>{% endif %}</p>
+<article>
+<header>
+<h2>{{ moteur.nom }}</h2>
+</header>
+<p class="prose">État : {{ libelles_etats_moteur[moteur.etat] }}{% if moteur.factice %} — <strong>FACTICE</strong>{% endif %}</p>
+{% if moteur.note %}
+<p class="prose">{{ moteur.note }}</p>
+{% endif %}
+<details>
+<summary>Versions installées</summary>
 {% if moteur.date_installation %}
 <p class="prose">Installé le : {{ moteur.date_installation }}</p>
 {% endif %}
@@ -22,20 +30,22 @@
 <p class="prose">Versions contrôlées dans l'environnement :
 {% for nom, version in moteur.versions %}{{ nom }} {% if version %}{{ version }}{% else %}(version non disponible){% endif %}{% if not loop.last %}, {% endif %}{% endfor %}
 </p>
-{% endif %}
-{% if moteur.note %}
-<p class="prose">{{ moteur.note }}</p>
+{% else %}
+<p class="prose">Aucune version contrôlée dans l'environnement de ce moteur.</p>
 {% endif %}
 <p class="prose"><a href="{{ url_for('journal_moteur', identifiant=moteur.identifiant) }}">Consulter le journal d'installation</a></p>
+</details>
 {% if moteur.installable %}
+<footer>
 <form method="post" action="{{ url_for('installer_moteur', identifiant=moteur.identifiant) }}">
 <input type="hidden" name="jeton_csrf" value="{{ jeton_csrf }}">
 <p class="prose"><button type="submit">Installer ce moteur</button></p>
 </form>
+</footer>
 {% endif %}
-</li>
+</article>
 {% endfor %}
-</ul>
+</div>
 <p class="prose">Un moteur réel est installable seulement si son verrou de dépendances est présent. Cette action crée son environnement isolé et contrôle ses imports ; le démarrage du serveur ne l'installe pas. Le serveur de développement reste réservé au moteur factice, sans moteur réel ni poids. Le moteur factice ne charge aucun modèle et ne produit que des textes et mesures simulés.</p>
 <p class="prose"><a href="{{ url_for('accueil') }}">Retour à l'accueil</a></p>
 {% endblock %}

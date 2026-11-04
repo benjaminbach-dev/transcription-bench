@@ -7,6 +7,10 @@
 {% if message %}
 <p class="callout warning prose">{{ message }}</p>
 {% endif %}
+<article>
+<header>
+<h2>État de l'opération</h2>
+</header>
 <dl class="prose">
 <dt>État</dt>
 <dd>{{ libelles_etats[instantane.etat] }}</dd>
@@ -22,6 +26,15 @@
 <dt>Cible</dt>
 <dd>{{ instantane.cible }}</dd>
 {% endif %}
+{% if instantane.erreur %}
+<dt>Dernière erreur</dt>
+<dd>{{ instantane.erreur }}</dd>
+{% endif %}
+</dl>
+{% if instantane.debut or instantane.fin %}
+<details>
+<summary>Début et fin de l'opération</summary>
+<dl class="prose">
 {% if instantane.debut %}
 <dt>Début</dt>
 <dd>{{ instantane.debut }}</dd>
@@ -30,12 +43,13 @@
 <dt>Fin</dt>
 <dd>{{ instantane.fin }}</dd>
 {% endif %}
-{% if instantane.erreur %}
-<dt>Dernière erreur</dt>
-<dd>{{ instantane.erreur }}</dd>
-{% endif %}
 </dl>
+</details>
+{% endif %}
+</article>
 <h2>Journal</h2>
+<details{% if instantane.etat in ('en_cours', 'echouee', 'interrompue') or instantane.erreur %} open{% endif %}>
+<summary>Journal complet</summary>
 {% if instantane.journal %}
 <ul class="prose">
 {% for ligne in instantane.journal %}
@@ -45,6 +59,7 @@
 {% else %}
 <p class="callout prose">Aucune opération enregistrée depuis le démarrage.</p>
 {% endif %}
+</details>
 {% if execution_active %}
 <h2>Arrêt de l'exécution</h2>
 <form method="post" action="{{ url_for('arreter_execution') }}">

@@ -13,7 +13,10 @@
 <p class="callout warning prose" role="status"><strong>Exécution non terminée ({{ detail.execution.libelle_etat }}) : résultats partiels.</strong> Les transcriptions déjà enregistrées restent consultables, mais elles ne forment pas un lot complet : les audios sans résultat sont signalés comme non traités et aucune mesure manquante n'est remplacée par zéro.</p>
 {% endif %}
 
-<h2>Exécution</h2>
+<article>
+<header>
+<h2>Synthèse de l'exécution</h2>
+</header>
 <dl class="prose">
 <dt>Identifiant</dt>
 <dd>{{ detail.execution.identifiant }}</dd>
@@ -28,8 +31,132 @@
 <dt>Erreur consignée</dt>
 <dd>{{ formats.afficher(detail.erreur) }}</dd>
 </dl>
+</article>
 
-<h2>Mesures de l'exécution</h2>
+<h2>Audios et transcriptions</h2>
+{% if not detail.audios %}
+<p class="prose">Aucun audio consigné dans cette exécution.</p>
+{% endif %}
+{% for audio in detail.audios %}
+<article>
+<header>
+<h3>Audio {{ audio.ordre }} — {{ audio.nom }} : {{ audio.libelle_statut }}{% if audio.partiel %} ; résultat partiel{% endif %}</h3>
+</header>
+<p class="prose">Dossier relatif du résultat : {{ audio.dossier }}</p>
+{% if audio.erreur %}
+<p class="callout danger prose">Erreur consignée pour cet audio : {{ audio.erreur }}</p>
+{% endif %}
+{% if audio.motif_indisponible %}
+<p class="prose">{{ audio.motif_indisponible }}.</p>
+{% endif %}
+{% if audio.transcription %}
+{% set transcription = audio.transcription %}
+{% if transcription.marques %}
+<p class="prose"><strong>Marques de cette transcription : {{ transcription.marques | join(', ') }}.</strong> Texte et mesures simulés, sans modèle ni inférence réelle.</p>
+{% endif %}
+<p class="prose">Écrite le {{ formats.afficher(transcription.ecrit_le) }}.</p>
+<h4>Texte transcrit</h4>
+{% if transcription.texte is not none %}
+<pre>{{ transcription.texte }}</pre>
+{% else %}
+<p class="prose">Aucun texte transcrit pour cet audio{% if transcription.erreur %} (erreur consignée : {{ transcription.erreur }}){% endif %}.</p>
+{% endif %}
+<details>
+<summary>Segments horodatés</summary>
+{% if transcription.segments %}
+<p class="prose">Une borne « indisponible » est un horodatage non fini transmis par le moteur : le texte du segment reste affiché.</p>
+<div class="overflow-auto">
+<table>
+<thead>
+<tr><th>Début (s)</th><th>Fin (s)</th><th>Texte</th></tr>
+</thead>
+<tbody>
+{% for segment in transcription.segments %}
+<tr><td>{{ formats.position(segment.debut_s) }}</td><td>{{ formats.position(segment.fin_s) }}</td><td>{{ segment.texte }}</td></tr>
+{% endfor %}
+</tbody>
+</table>
+</div>
+{% else %}
+<p class="prose">Aucun segment horodaté fourni pour cet audio.</p>
+{% endif %}
+</details>
+<details>
+<summary>Mesures détaillées (mémoire, vitesse)</summary>
+<dl class="prose">
+<dt>Temps de décodage (serveur)</dt>
+<dd>{{ formats.duree(transcription.mesures.temps_decodage_s) }}</dd>
+<dt>Durée de transcription</dt>
+<dd>{{ formats.duree(transcription.mesures.duree_transcription_s) }}</dd>
+<dt>Temps CPU consommé</dt>
+<dd>{{ formats.duree(transcription.mesures.temps_cpu_s) }}</dd>
+<dt>RTF (durée de transcription / durée décodée)</dt>
+<dd>{% if transcription.mesures.rtf is none %}indisponible : aucun RTF n'est calculé sans durée décodée mesurée, et jamais sur une durée nulle{% else %}{{ "%.3f"|format(transcription.mesures.rtf) }}, repère d'objectif {{ repere_rtf }} (non bloquant){% if transcription.mesures.rtf > repere_rtf %} : au-dessus du repère, la transcription est enregistrée normalement et n'est ni exclue ni marquée en échec{% endif %}{% endif %}</dd>
+<dt>Pic de mémoire du moteur</dt>
+<dd>{{ formats.octets(transcription.mesures.pic_memoire_octets) }}</dd>
+</dl>
+</details>
+<details>
+<summary>Informations sur le fichier audio</summary>
+<dl class="prose">
+{% for libelle, valeur in transcription.audio %}
+<dt>{{ libelle }}</dt>
+<dd>{{ formats.afficher(valeur) }}</dd>
+{% endfor %}
+</dl>
+</details>
+<details>
+<summary>Paramètres utilisés</summary>
+<dl class="prose">
+<dt>Langue imposée</dt>
+<dd>{% if transcription.langue_imposee %}{{ transcription.langue_imposee }}{% else %}non consignée : aucune langue imposée n'a été relue du moteur (famille sans choix de langue, ou information absente){% endif %}</dd>
+{% for libelle, valeur in transcription.threads %}
+<dt>{{ libelle }}</dt>
+<dd>{{ formats.afficher(valeur) }}</dd>
+{% endfor %}
+{% for libelle, valeur in transcription.fenetre %}
+<dt>{{ libelle }}</dt>
+<dd>{{ formats.afficher(valeur) }}</dd>
+{% endfor %}
+</dl>
+<p class="prose">La durée décodée est la référence du RTF ; la durée indicative vient de l'en-tête du fichier et ne sert qu'à l'affichage et à la comparaison.</p>
+{% if transcription.reglages_effectifs %}
+<p class="prose">Réglages effectifs relus du moteur :</p>
+<ul class="prose">
+{% for nom, valeur in transcription.reglages_effectifs %}
+<li>{{ nom }} : {{ formats.afficher(valeur) }}</li>
+{% endfor %}
+</ul>
+{% else %}
+<p class="prose">Aucun réglage effectif n'a été relu du moteur pour cet audio.</p>
+{% endif %}
+</details>
+<details>
+<summary>Timings natifs transmis par le moteur</summary>
+{% if transcription.timings_natifs %}
+<p class="prose">Un relevé par appel, sans agrégation ni conversion (unité telle que rapportée) :</p>
+<div class="overflow-auto">
+<table>
+<thead>
+<tr><th>Appel</th><th>Unité</th><th>Chargement</th><th>Mel</th><th>Encodage</th><th>Décodage</th></tr>
+</thead>
+<tbody>
+{% for timing in transcription.timings_natifs %}
+<tr><td>{{ loop.index }}</td><td>{{ timing.unite }}</td><td>{{ formats.nombre(timing.chargement) }}</td><td>{{ formats.nombre(timing.mel) }}</td><td>{{ formats.nombre(timing.encodage) }}</td><td>{{ formats.nombre(timing.decodage) }}</td></tr>
+{% endfor %}
+</tbody>
+</table>
+</div>
+{% else %}
+<p class="prose">Aucun timing natif n'a été transmis pour cet audio : information facultative, absente d'un moteur qui ne la rapporte pas et des résultats antérieurs à ce champ.</p>
+{% endif %}
+</details>
+{% endif %}
+</article>
+{% endfor %}
+
+<details>
+<summary>Mesures de l'opération</summary>
 <dl class="prose">
 <dt>Durée totale de l'opération</dt>
 <dd>{{ formats.duree(detail.mesures.duree_operation_s) }} <small>(du début de la préparation à la fin de la collecte et de l'écriture des résultats, décodage, chargement et inférence compris)</small></dd>
@@ -41,8 +168,10 @@
 <dd>{{ formats.octets(detail.mesures.pic_memoire_octets) }} <small>(cumulatif depuis le démarrage du processus, chargement compris)</small>{% if detail.mesures.pic_memoire_partiel %} — <strong>partiel</strong> : dernier relevé transmis, qui n'est pas le pic final d'une exécution terminée{% endif %}</dd>
 </dl>
 <p class="prose">Une mesure « indisponible » n'a jamais été mesurée : elle n'est pas remplacée par zéro. Une exécution abandonnée après un arrêt brutal du serveur conserve par exemple la durée de chargement et le dernier pic mémoire transmis, mais pas les durées totale et du processus.</p>
+</details>
 
-<h2>Modèle et moteur</h2>
+<details>
+<summary>Modèle et moteur</summary>
 <dl class="prose">
 {% for libelle, valeur in detail.modele %}
 <dt>{{ libelle }}</dt>
@@ -65,8 +194,10 @@
 {% else %}
 <p class="prose">Aucune version de moteur n'a été relue pour cette exécution.</p>
 {% endif %}
+</details>
 
-<h2>Réglages et threads</h2>
+<details>
+<summary>Réglages et threads de l'exécution</summary>
 <dl class="prose">
 <dt>Threads demandés</dt>
 <dd>{{ formats.afficher(detail.threads_demandes) }}</dd>
@@ -95,8 +226,10 @@
 {% else %}
 <p class="prose">Aucun réglage effectif n'a été relu du moteur.</p>
 {% endif %}
+</details>
 
-<h2>Machine et programme</h2>
+<details>
+<summary>Ordinateur et version du programme</summary>
 <dl class="prose">
 {% for libelle, valeur in detail.machine %}
 <dt>{{ libelle }}</dt>
@@ -111,113 +244,7 @@
 <dd>{{ formats.afficher(valeur) }}</dd>
 {% endfor %}
 </dl>
-
-<h2>Audios et transcriptions</h2>
-{% if not detail.audios %}
-<p class="prose">Aucun audio consigné dans cette exécution.</p>
-{% endif %}
-{% for audio in detail.audios %}
-<h3>Audio {{ audio.ordre }} — {{ audio.nom }} : {{ audio.libelle_statut }}{% if audio.partiel %} ; résultat partiel{% endif %}</h3>
-<p class="prose">Dossier relatif du résultat : {{ audio.dossier }}</p>
-{% if audio.erreur %}
-<p class="prose">Erreur consignée pour cet audio : {{ audio.erreur }}</p>
-{% endif %}
-{% if audio.motif_indisponible %}
-<p class="prose">{{ audio.motif_indisponible }}.</p>
-{% endif %}
-{% if audio.transcription %}
-{% set transcription = audio.transcription %}
-{% if transcription.marques %}
-<p class="prose"><strong>Marques de cette transcription : {{ transcription.marques | join(', ') }}.</strong> Texte et mesures simulés, sans modèle ni inférence réelle.</p>
-{% endif %}
-<p class="prose">Écrite le {{ formats.afficher(transcription.ecrit_le) }}.</p>
-<h4>Texte transcrit</h4>
-{% if transcription.texte is not none %}
-<pre>{{ transcription.texte }}</pre>
-{% else %}
-<p class="prose">Aucun texte transcrit pour cet audio{% if transcription.erreur %} (erreur consignée : {{ transcription.erreur }}){% endif %}.</p>
-{% endif %}
-<h4>Segments horodatés</h4>
-{% if transcription.segments %}
-<p class="prose">Une borne « indisponible » est un horodatage non fini transmis par le moteur : le texte du segment reste affiché.</p>
-<div class="overflow-auto">
-<table>
-<thead>
-<tr><th>Début (s)</th><th>Fin (s)</th><th>Texte</th></tr>
-</thead>
-<tbody>
-{% for segment in transcription.segments %}
-<tr><td>{{ formats.position(segment.debut_s) }}</td><td>{{ formats.position(segment.fin_s) }}</td><td>{{ segment.texte }}</td></tr>
-{% endfor %}
-</tbody>
-</table>
-</div>
-{% else %}
-<p class="prose">Aucun segment horodaté fourni pour cet audio.</p>
-{% endif %}
-<h4>Mesures de la transcription</h4>
-<dl class="prose">
-<dt>Temps de décodage (serveur)</dt>
-<dd>{{ formats.duree(transcription.mesures.temps_decodage_s) }}</dd>
-<dt>Durée de transcription</dt>
-<dd>{{ formats.duree(transcription.mesures.duree_transcription_s) }}</dd>
-<dt>Temps CPU consommé</dt>
-<dd>{{ formats.duree(transcription.mesures.temps_cpu_s) }}</dd>
-<dt>RTF (durée de transcription / durée décodée)</dt>
-<dd>{% if transcription.mesures.rtf is none %}indisponible : aucun RTF n'est calculé sans durée décodée mesurée, et jamais sur une durée nulle{% else %}{{ "%.3f"|format(transcription.mesures.rtf) }}, repère d'objectif {{ repere_rtf }} (non bloquant){% if transcription.mesures.rtf > repere_rtf %} : au-dessus du repère, la transcription est enregistrée normalement et n'est ni exclue ni marquée en échec{% endif %}{% endif %}</dd>
-<dt>Pic de mémoire du moteur</dt>
-<dd>{{ formats.octets(transcription.mesures.pic_memoire_octets) }}</dd>
-</dl>
-<h4>Audio source</h4>
-<dl class="prose">
-{% for libelle, valeur in transcription.audio %}
-<dt>{{ libelle }}</dt>
-<dd>{{ formats.afficher(valeur) }}</dd>
-{% endfor %}
-</dl>
-<h4>Réglages et découpage de cet audio</h4>
-<dl class="prose">
-<dt>Langue imposée</dt>
-<dd>{% if transcription.langue_imposee %}{{ transcription.langue_imposee }}{% else %}non consignée : aucune langue imposée n'a été relue du moteur (famille sans choix de langue, ou information absente){% endif %}</dd>
-{% for libelle, valeur in transcription.threads %}
-<dt>{{ libelle }}</dt>
-<dd>{{ formats.afficher(valeur) }}</dd>
-{% endfor %}
-{% for libelle, valeur in transcription.fenetre %}
-<dt>{{ libelle }}</dt>
-<dd>{{ formats.afficher(valeur) }}</dd>
-{% endfor %}
-</dl>
-<p class="prose">La durée décodée est la référence du RTF ; la durée indicative vient de l'en-tête du fichier et ne sert qu'à l'affichage et à la comparaison.</p>
-{% if transcription.timings_natifs %}
-<p class="prose">Timings natifs transmis par le moteur, un par appel, sans agrégation ni conversion (unité telle que rapportée) :</p>
-<div class="overflow-auto">
-<table>
-<thead>
-<tr><th>Appel</th><th>Unité</th><th>Chargement</th><th>Mel</th><th>Encodage</th><th>Décodage</th></tr>
-</thead>
-<tbody>
-{% for timing in transcription.timings_natifs %}
-<tr><td>{{ loop.index }}</td><td>{{ timing.unite }}</td><td>{{ formats.nombre(timing.chargement) }}</td><td>{{ formats.nombre(timing.mel) }}</td><td>{{ formats.nombre(timing.encodage) }}</td><td>{{ formats.nombre(timing.decodage) }}</td></tr>
-{% endfor %}
-</tbody>
-</table>
-</div>
-{% else %}
-<p class="prose">Aucun timing natif n'a été transmis pour cet audio : information facultative, absente d'un moteur qui ne la rapporte pas et des résultats antérieurs à ce champ.</p>
-{% endif %}
-{% if transcription.reglages_effectifs %}
-<p class="prose">Réglages effectifs relus du moteur :</p>
-<ul class="prose">
-{% for nom, valeur in transcription.reglages_effectifs %}
-<li>{{ nom }} : {{ formats.afficher(valeur) }}</li>
-{% endfor %}
-</ul>
-{% else %}
-<p class="prose">Aucun réglage effectif n'a été relu du moteur pour cet audio.</p>
-{% endif %}
-{% endif %}
-{% endfor %}
+</details>
 
 <p class="prose"><a href="{{ url_for('resultats') }}">Retour à la liste des résultats</a></p>
 <p class="prose"><a href="{{ url_for('accueil') }}">Retour à l'accueil</a></p>
