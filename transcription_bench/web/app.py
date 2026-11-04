@@ -79,6 +79,11 @@ from transcription_bench.gestion_modeles import (
     GestionModeles,
     empreinte_verification,
 )
+from transcription_bench.indicateurs_resultats import (
+    formater_duree_premier_niveau,
+    formater_memoire_premier_niveau,
+    formater_pourcentage_premier_niveau,
+)
 from transcription_bench.moteurs import (
     ETAT_PRET,
     LIBELLES_ETATS_MOTEUR,
@@ -262,6 +267,13 @@ def create_app(config: ConfigApplication, services: ServicesApplication) -> Flas
         PORT=config.port,
         DOSSIER_DATA=str(config.dossier_data),
         MAX_CONTENT_LENGTH=LIMITE_CORPS_APPLICATION,
+    )
+    # Initialiser Jinja après la configuration : FLASK_DEBUG ne doit pas
+    # activer son rechargement automatique. Les formats détaillés restent inchangés.
+    application.jinja_env.globals.update(
+        formater_duree_premier_niveau=formater_duree_premier_niveau,
+        formater_memoire_premier_niveau=formater_memoire_premier_niveau,
+        formater_pourcentage_premier_niveau=formater_pourcentage_premier_niveau,
     )
     application.extensions[NOM_CHAMP_JETON] = jeton
     hotes = frozenset(f"{adresse}:{config.port}" for adresse in HOTES_AUTORISES)

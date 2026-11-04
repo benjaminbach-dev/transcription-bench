@@ -10,6 +10,7 @@ poids ni réseau ; ses mesures de moteur sont simulées et marquées comme telle
 from __future__ import annotations
 
 import json
+import shutil
 import unittest
 from typing import Any
 
@@ -183,6 +184,8 @@ class GroupesParEmpreinteTest(SocleConsultationTest):
         entree = self.service.groupes_par_empreinte()[0].entrees[0]
 
         self.assertEqual(entree.libelle_etat, "interrompue")
+        self.assertEqual(entree.etat, ETAT_INTERROMPUE)
+        self.assertEqual(entree.date_essai, run["cree_le"])
         self.assertTrue(entree.partiel)
         self.assertEqual(entree.libelle_statut, "transcrit")
         self.assertIn("FACTICE", entree.marques)
@@ -190,6 +193,170 @@ class GroupesParEmpreinteTest(SocleConsultationTest):
         self.assertIn("MESURES SIMULÉES", entree.marques)
         self.assertEqual(entree.modele, "aucun modèle, textes et mesures simulés")
         self.assertEqual(entree.moteur, "Moteur factice")
+        self.assertEqual(entree.mesures.duree_transcription_s, 1.0)
+        self.assertEqual(entree.mesures.temps_cpu_s, 1.5)
+        self.assertEqual(entree.mesures.pic_memoire_octets, 2048)
+        self.assertEqual(entree.materiel.coeurs_logiques, 8)
+        self.assertEqual(entree.materiel.ram_totale_octets, 8 * 1024**3)
+
+    def test_entree_mesures_par_audio_et_materiel_consigne(self) -> None:
+        machine = {
+            "os": "Windows",
+            "version_os": "10.0.19045",
+            "architecture": "ARM64",
+            "processeur": "Processeur fictif de test",
+            "coeurs_physiques": 2,
+            "coeurs_logiques": 3,
+            "ram_totale_octets": 4_000_000_000,
+        }
+        run = run_json(
+            audios=(("a.wav", STATUT_OK), ("b.wav", STATUT_OK)),
+            machine=machine,
+            cree_le="2024-05-06T07:08:09+00:00",
+        )
+        premier, second = run["audios"]
+        ecrire_execution(
+            self.donnees,
+            run,
+            (
+                resultat_empreinte(
+                    run,
+                    premier,
+                    mesures_extra={
+                        "duree_transcription_s": 1.0,
+                        "temps_cpu_s": 2.5,
+                        "pic_memoire_octets": 1000,
+                    },
+                ),
+                resultat_empreinte(
+                    run,
+                    second,
+                    mesures_extra={
+                        "duree_transcription_s": 7.5,
+                        "temps_cpu_s": 12.0,
+                        "pic_memoire_octets": 9000,
+                    },
+                ),
+            ),
+        )
+
+        entree_a, entree_b = self.service.groupes_par_empreinte()[0].entrees
+
+        # Les mesures sont celles de chaque audio, jamais celles de l'exécution.
+        self.assertEqual((entree_a.ordre, entree_b.ordre), (1, 2))
+        self.assertEqual(entree_a.mesures.duree_transcription_s, 1.0)
+        self.assertEqual(entree_a.mesures.temps_cpu_s, 2.5)
+        self.assertEqual(entree_a.mesures.pic_memoire_octets, 1000)
+        self.assertEqual(entree_b.mesures.duree_transcription_s, 7.5)
+        self.assertEqual(entree_b.mesures.temps_cpu_s, 12.0)
+        self.assertEqual(entree_b.mesures.pic_memoire_octets, 9000)
+        # Le matériel est celui consigné dans l'essai, pas celui du poste qui
+        # consulte : rien n'est remplacé par une capacité locale.
+        self.assertEqual(entree_a.materiel, entree_b.materiel)
+        self.assertEqual(entree_a.materiel.os, "Windows")
+        self.assertEqual(entree_a.materiel.version_os, "10.0.19045")
+        self.assertEqual(entree_a.materiel.architecture, "ARM64")
+        self.assertEqual(entree_a.materiel.processeur, "Processeur fictif de test")
+        self.assertEqual(entree_a.materiel.coeurs_physiques, 2)
+        self.assertEqual(entree_a.materiel.coeurs_logiques, 3)
+        self.assertEqual(entree_a.materiel.ram_totale_octets, 4_000_000_000)
+        self.assertEqual(entree_a.date_essai, "2024-05-06T07:08:09+00:00")
+        self.assertEqual(entree_a.date_essai, entree_b.date_essai)
+        self.assertEqual(entree_a.etat, ETAT_TERMINEE)
+
+    def test_entree_disponible_apres_suppression_du_modele_local(self) -> None:
+        run = run_json()
+        modele = self.donnees / "models" / "factice" / ("0" * 64)
+        modele.mkdir(parents=True)
+        (modele / "modele.bin").write_bytes(b"poids simules")
+        ecrire_execution(
+            self.donnees, run, (resultat_empreinte(run, run["audios"][0]),)
+        )
+
+        avant = self.service.groupes_par_empreinte()[0].entrees[0]
+        shutil.rmtree(self.donnees / "models")
+        self.assertFalse((self.donnees / "models").exists())
+        apres = self.service.groupes_par_empreinte()[0].entrees[0]
+
+        # Les données consignées ne dépendent pas des poids locaux : le modèle
+        # supprimé ne retire ni mesure, ni matériel, ni date de l'entrée.
+        self.assertEqual(apres, avant)
+        self.assertEqual(apres.mesures.duree_transcription_s, 1.0)
+        self.assertEqual(apres.materiel.coeurs_logiques, 8)
+        self.assertEqual(apres.date_essai, run["cree_le"])
+
+    def test_entree_champs_manquants_ou_invalides_indisponibles(self) -> None:
+        ancien = run_json(IDENTIFIANT_ANCIEN, machine=None, cree_le=None)
+        ancien_resultat = resultat_empreinte(ancien, ancien["audios"][0])
+        del ancien_resultat["mesures"]
+        ecrire_execution(self.donnees, ancien, (ancien_resultat,))
+
+        invalide = run_json(
+            IDENTIFIANT,
+            machine={
+                "os": 123,
+                "version_os": "  ",
+                "architecture": None,
+                "processeur": False,
+                "coeurs_physiques": "2",
+                "coeurs_logiques": 3.0,
+                "ram_totale_octets": True,
+            },
+            cree_le=42,
+        )
+        ecrire_execution(
+            self.donnees,
+            invalide,
+            (
+                resultat_empreinte(
+                    invalide,
+                    invalide["audios"][0],
+                    mesures_extra={
+                        "duree_transcription_s": "1.0",
+                        "temps_cpu_s": True,
+                        "pic_memoire_octets": float("nan"),
+                    },
+                ),
+            ),
+        )
+
+        entree_invalide, entree_ancienne = self.service.groupes_par_empreinte()[
+            0
+        ].entrees
+
+        # Un champ illisible reste indisponible : il n'est ni repris ni remplacé
+        # par zéro, et l'exécution reste groupée.
+        self.assertIsNone(entree_invalide.date_essai)
+        self.assertEqual(entree_invalide.etat, ETAT_TERMINEE)
+        self.assertIsNone(entree_invalide.mesures.duree_transcription_s)
+        self.assertIsNone(entree_invalide.mesures.temps_cpu_s)
+        self.assertIsNone(entree_invalide.mesures.pic_memoire_octets)
+        self.assertEqual(
+            (
+                entree_invalide.materiel.os,
+                entree_invalide.materiel.version_os,
+                entree_invalide.materiel.architecture,
+                entree_invalide.materiel.processeur,
+                entree_invalide.materiel.coeurs_physiques,
+                entree_invalide.materiel.coeurs_logiques,
+                entree_invalide.materiel.ram_totale_octets,
+            ),
+            (None, None, None, None, None, None, None),
+        )
+        # Résultat antérieur aux champs : toutes les mesures sont indisponibles,
+        # mais le matériel manquant ne rend pas l'entrée inutilisable.
+        self.assertIsNone(entree_ancienne.date_essai)
+        self.assertIsNone(entree_ancienne.mesures.duree_transcription_s)
+        self.assertIsNone(entree_ancienne.mesures.temps_cpu_s)
+        self.assertEqual(
+            (
+                entree_ancienne.materiel.os,
+                entree_ancienne.materiel.architecture,
+                entree_ancienne.materiel.coeurs_logiques,
+                entree_ancienne.materiel.ram_totale_octets,
+            ),
+            (None, None, None, None),
+        )
 
     def test_execution_non_interpretable_ignoree_sans_exception(self) -> None:
         valide = run_json()
@@ -291,6 +458,20 @@ class ComparerTest(SocleConsultationTest):
         self.assertEqual([cellule.valeur for cellule in duree.cellules], [12.5, 12.5])
         self.assertFalse(duree.differents)
         self.assertEqual(duree.nature, "duree")
+
+    def test_colonnes_portent_mesures_et_materiel_consignes(self) -> None:
+        self.deux_executions(
+            mesures_audio_a={"duree_transcription_s": 3.0},
+            mesures_audio_b={"duree_transcription_s": 9.0},
+        )
+
+        vue = self.comparer()
+
+        self.assertEqual(vue.colonnes[0].mesures.duree_transcription_s, 3.0)
+        self.assertEqual(vue.colonnes[1].mesures.duree_transcription_s, 9.0)
+        self.assertEqual(vue.colonnes[0].date_essai, "2024-01-02T03:04:05+00:00")
+        self.assertEqual(vue.colonnes[0].materiel.coeurs_logiques, 8)
+        self.assertEqual(vue.colonnes[0].etat, ETAT_TERMINEE)
 
     def test_ligne_texte_transcrit_sans_diff_textuel(self) -> None:
         self.deux_executions(

@@ -46,12 +46,14 @@ le nom du fichier. Deux fichiers de même nom et d'empreintes différentes
 forment donc deux groupes distincts, et une transcription dont l'empreinte est
 absente ou invalide n'est jamais regroupée. Une comparaison ne réunit que des
 transcriptions d'une même empreinte : toute sélection qui la mélangerait est
-refusée, comme tout identifiant ou ordre hostile. Les réglages demandés et les
-réglages effectifs de chaque audio sont comparés sur leur valeur JSON brute —
-les valeurs formatées ne servent qu'à l'affichage : listes et objets compris, une
-clé absente reste distincte d'une valeur explicite nulle, et deux valeurs non
-finies restent distinctes entre elles. Aucun diff de texte, aucun WER ni aucune
-référence ne sont calculés.
+refusée, comme tout identifiant ou ordre hostile. Chaque entrée de groupe porte
+les mesures de son audio, le matériel, la date et l'état consignés de l'essai :
+ils restent lisibles sans le modèle local et ne sont jamais réécrits. Les
+réglages demandés et les réglages effectifs de chaque audio sont comparés sur
+leur valeur JSON brute — les valeurs formatées ne servent qu'à l'affichage :
+listes et objets compris, une clé absente reste distincte d'une valeur
+explicite nulle, et deux valeurs non finies restent distinctes entre elles.
+Aucun diff de texte, aucun WER ni aucune référence ne sont calculés.
 """
 
 from __future__ import annotations
@@ -250,6 +252,27 @@ class MesuresAudioVue:
 
 
 @dataclass(frozen=True)
+class MaterielVue:
+    """Matériel consigné pour un essai ; `None` = valeur absente ou invalide.
+
+    Ces valeurs viennent du `run.json` de l'exécution, jamais du poste qui
+    consulte les résultats : elles servent aux ratios de lecture et à la
+    détection d'un matériel différent. `os`, `architecture`, `coeurs_logiques`
+    et `ram_totale_octets` sont les quatre champs requis pour cette détection ;
+    `processeur` reste informatif et son absence seule n'est pas une alerte.
+    Aucune valeur n'est remplacée par une mesure locale, ni par zéro.
+    """
+
+    os: str | None
+    version_os: str | None
+    architecture: str | None
+    processeur: str | None
+    coeurs_physiques: int | None
+    coeurs_logiques: int | None
+    ram_totale_octets: int | None
+
+
+@dataclass(frozen=True)
 class TimingsNatifVue:
     """Timings d'un appel natif, tels que transmis par le moteur.
 
@@ -367,6 +390,19 @@ class EntreeEmpreinte:
 
     `partiel` signale une exécution non terminée ; `marques` réunit celles de
     l'exécution et celles du résultat, sans doublon et sans en déduire aucune.
+
+    `mesures` sont celles de cet audio, telles que consignées dans son
+    `result.json`. `materiel`, `date_essai` (le `cree_le` de l'exécution) et
+    `etat` (l'état brut de l'exécution, en plus de `libelle_etat`) viennent du
+    `run.json` : ils décrivent l'essai consigné, jamais le poste qui consulte,
+    et restent disponibles même si le modèle local a été supprimé. Ces champs
+    sont renseignés à la lecture pour un tri ou un ratio ultérieur ; aucune
+    valeur n'est réécrite dans les fichiers de résultat.
+
+    Les quatre nouveaux champs ont une valeur par défaut pour qu'une entrée
+    construite hors de ce module reste valide. À la lecture, `mesures` et
+    `materiel` sont des objets dont les champs inconnus valent `None` ; une
+    entrée construite manuellement peut aussi laisser ces objets à `None`.
     """
 
     execution: str
@@ -380,6 +416,10 @@ class EntreeEmpreinte:
     marques: tuple[str, ...]
     modele: str | None
     moteur: str | None
+    mesures: MesuresAudioVue | None = None
+    materiel: MaterielVue | None = None
+    date_essai: str | None = None
+    etat: str | None = None
 
 
 @dataclass(frozen=True)
@@ -560,6 +600,7 @@ class ConsultationResultats:
         groupes: dict[str, list[EntreeEmpreinte]] = {}
         for dossier, contenu in self._executions_interpretables():
             execution = _resume(contenu)
+            materiel = _materiel(contenu)
             for plan in contenu["audios"]:
                 transcription, _motif = _lire_transcription(dossier, plan)
                 if transcription is None:
@@ -568,7 +609,7 @@ class ConsultationResultats:
                 if empreinte is None:
                     continue
                 groupes.setdefault(empreinte, []).append(
-                    _entree(execution, plan, transcription, empreinte)
+                    _entree(execution, plan, transcription, empreinte, materiel)
                 )
         return tuple(
             GroupeEmpreinte(
@@ -665,7 +706,9 @@ class ConsultationResultats:
                 "fichiers audio"
             )
         return _Colonne(
-            entree=_entree(_resume(contenu), plan, transcription, empreinte),
+            entree=_entree(
+                _resume(contenu), plan, transcription, empreinte, _materiel(contenu)
+            ),
             transcription=transcription,
             mesures=_mesures_execution(_mapping(contenu.get("mesures"))),
         )
@@ -757,8 +800,13 @@ def _entree(
     plan: Mapping[str, Any],
     transcription: TranscriptionVue,
     empreinte: str,
+    materiel: MaterielVue | None = None,
 ) -> EntreeEmpreinte:
-    """Entrée de comparaison d'une transcription déjà relue."""
+    """Entrée de comparaison d'une transcription déjà relue.
+
+    Les mesures sont celles de cet audio et le matériel celui de l'essai :
+    rien n'est déduit du poste courant ni d'un autre audio de l'exécution.
+    """
     return EntreeEmpreinte(
         execution=execution.identifiant,
         ordre=plan["ordre"],
@@ -772,6 +820,10 @@ def _entree(
         marques=tuple(dict.fromkeys(execution.marques + transcription.marques)),
         modele=execution.modele,
         moteur=execution.moteur,
+        mesures=transcription.mesures,
+        materiel=materiel,
+        date_essai=execution.cree_le,
+        etat=execution.etat,
     )
 
 
@@ -1117,6 +1169,25 @@ def _mesures_execution(mesure: Mapping[str, Any]) -> MesuresVue:
         duree_chargement_s=_nombre(mesure.get("duree_chargement_s")),
         pic_memoire_octets=_entier(mesure.get("pic_memoire_octets")),
         pic_memoire_partiel=_booleen(mesure.get("pic_memoire_partiel")),
+    )
+
+
+def _materiel(contenu: Mapping[str, Any]) -> MaterielVue:
+    """Matériel consigné d'une exécution ; un champ douteux reste `None`.
+
+    La lecture suit les mêmes conversions que le détail : un texte vide, un
+    entier non strict (`8.0`, `True`) ou un objet ne deviennent jamais une
+    capacité. Aucune valeur n'est complétée par le matériel local.
+    """
+    machine = _mapping(contenu.get("machine"))
+    return MaterielVue(
+        os=_texte(machine.get("os")),
+        version_os=_texte(machine.get("version_os")),
+        architecture=_texte(machine.get("architecture")),
+        processeur=_texte(machine.get("processeur")),
+        coeurs_physiques=_entier(machine.get("coeurs_physiques")),
+        coeurs_logiques=_entier(machine.get("coeurs_logiques")),
+        ram_totale_octets=_entier(machine.get("ram_totale_octets")),
     )
 
 

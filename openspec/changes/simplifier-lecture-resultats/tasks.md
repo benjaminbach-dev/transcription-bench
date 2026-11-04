@@ -2,8 +2,8 @@
 
 ## 1. Données de lecture et formats
 
-- [ ] 1.1 Enrichir les entrées de groupes avec mesures par audio, matériel de l'essai, date, état et ordre ; vérifier dans les tests de consultation que les données proviennent des résultats consignés et restent disponibles après suppression du modèle local.
-- [ ] 1.2 Ajouter les ratios CPU/RAM purs et les formats français de premier niveau ; tester 50 % CPU (8 s CPU / 2 s / 8 logiques), RAM SI, valeurs absentes, booléens, infinis, dénominateurs invalides, ratios > 100 %, valeurs positives très petites et absence de réécriture des JSON ; documenter les conventions dans l'aide locale.
+- [x] 1.1 Enrichir les entrées de groupes avec mesures par audio, matériel de l'essai, date, état et ordre ; vérifier dans les tests de consultation que les données proviennent des résultats consignés et restent disponibles après suppression du modèle local.
+- [x] 1.2 Ajouter les ratios CPU/RAM purs et les formats français de premier niveau ; tester 50 % CPU (8 s CPU / 2 s / 8 logiques), RAM SI, valeurs absentes, booléens, infinis, dénominateurs invalides, ratios > 100 %, valeurs positives très petites et absence de réécriture des JSON ; documenter les conventions dans l'aide locale.
 
 ## 2. Classement par audio
 

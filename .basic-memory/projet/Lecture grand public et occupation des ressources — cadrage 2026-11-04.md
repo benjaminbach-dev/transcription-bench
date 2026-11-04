@@ -27,3 +27,10 @@ Contexte : après la refonte Sumi (base 931e2a5), demande d'une lecture plus rap
 
 - relates_to [[Décisions du prototype de benchmark]]
 - extends [[Specs habillage Sumi et documentation utilisateur]]
+
+## Premier lot UI implémenté — 2026-11-04
+
+- [validation] Tâches 1.1 et 1.2 réalisées par deux workers distincts, relues et corrigées par le principal ; revue advisor de fin de lot puis contrôle final favorables. Matériel/date/état/ordre et mesures par audio exposés dans les groupes, sans mesure de la machine courante ni dépendance aux poids locaux.
+- [validation] Ratios et formats français purs ajoutés ; formats détaillés préservés. Corrections principales : arithmétique sans débordement intermédiaire, contrôle 0..100, échappement HTML, initialisation Jinja après configuration Flask et bruit flottant de pourcentage exact. Tests finaux du principal : 211 ciblés réussis, OpenSpec strict et diff sans espaces invalides ; advisor a aussi exécuté 799 tests complets avant les dernières petites corrections, puis 21 ciblés après. Aucun moteur réel ni validation Windows.
+- [status] Progression `simplifier-lecture-resultats` : 2/9. Le gabarit d'aide est préparé et testé au rendu, mais non routé : l'accès HTTP relève de 3.3. Ni classement, cartes ni nouvelle mesure système implémentés dans ce lot.
+- [next] Raccord des lots 2/3 : les ratios purs retournent None pour absence ou incohérence ; choisir le libellé avec les données brutes disponibles pour ne pas appeler « non mesurée » une mesure brute existante mais un ratio inexploitable. Aucun framework d'états supplémentaire nécessaire. La route d'aide et son test d'absence HTTP seront adaptés à 3.3.

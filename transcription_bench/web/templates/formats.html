@@ -1,7 +1,14 @@
 {# Macros de formatage communes aux pages de résultats (tâche 7.1).
    Aucune valeur absente n'est remplacée par zéro : elle s'affiche
    « indisponible ». Aucune macro n'émet de style, de script ni de balise
-   active : le HTML reste seul. #}
+   active : le HTML reste seul.
+
+   Les macros `duree`, `nombre`, `octets` et `position` sont les formats
+   détaillés : trois décimales et octets bruts, employés par les vues
+   existantes. Les macros `*_premier_niveau` délèguent à
+   `transcription_bench.indicateurs_resultats` (tâche 1.2) et ne les
+   remplacent pas : segments horodatés et mesures détaillées gardent leur
+   précision actuelle. #}
 {% macro afficher(valeur) -%}
 {%- if valeur is none -%}indisponible
 {%- elif valeur is sameas true -%}oui
@@ -30,3 +37,6 @@
 {%- else -%}{{ valeur }} octets
 {%- endif -%}
 {% endmacro %}
+{% macro duree_premier_niveau(valeur) -%}{{ formater_duree_premier_niveau(valeur) }}{%- endmacro %}
+{% macro memoire_premier_niveau(valeur) -%}{{ formater_memoire_premier_niveau(valeur) }}{%- endmacro %}
+{% macro pourcentage_premier_niveau(valeur) -%}{{ formater_pourcentage_premier_niveau(valeur) }}{%- endmacro %}

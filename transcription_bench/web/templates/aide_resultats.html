@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% import "formats.html" as formats %}
+{% block page_courante %}parent:resultats{% endblock %}
+{% block titre %}Comprendre les indicateurs — transcription-bench{% endblock %}
+{% block contenu %}
+<h1>Comprendre les indicateurs</h1>
+<p class="prose">Cette aide explique les trois repères de premier niveau à partir des valeurs consignées de chaque essai. Elle ne mesure rien sur l'ordinateur qui consulte la page et ne juge pas la qualité d'une transcription.</p>
+
+<h2>Durée, mémoire et occupation CPU</h2>
+<dl class="prose">
+<dt>Transcription</dt>
+<dd>Temps passé par le moteur pour transcrire cet audio, mesuré autour de ses fenêtres de transcription. Ce n'est ni la durée du fichier audio, ni la durée totale du lot, qui comprend aussi le chargement du modèle, les attentes et l'écriture des résultats.</dd>
+<dt>Mémoire max</dt>
+<dd>Pic de mémoire résidente du processus moteur relevé après cet audio, rapporté à la RAM totale consignée. Le pic est cumulatif : il inclut le chargement du modèle, ses bibliothèques et ses tampons, et il peut donc provenir d'un audio précédent du même lot. Aucune marge restante n'est calculée et le pic du serveur n'y est pas ajouté.</dd>
+<dt>CPU du moteur</dt>
+<dd>Occupation moyenne du seul processus moteur, threads compris, pendant la transcription de cet audio. 100 % désigne tous les processeurs logiques visibles par le système de l'essai. Ce n'est ni la charge de l'ordinateur, ni une mesure d'énergie ou de la difficulté du calcul, ni une garantie de rapidité ou de fluidité.</dd>
+</dl>
+
+<h2>Calcul des ratios</h2>
+<p class="prose">Le CPU moyen vaut <strong>100 × temps CPU ÷ (durée de transcription × processeurs logiques consignés)</strong>. La part de mémoire vaut <strong>100 × pic mémoire ÷ RAM totale consignée</strong>. Les deux capacités viennent du matériel enregistré avec l'essai, jamais de l'ordinateur qui consulte la page. Un résultat ancien est recalculé à la lecture, sans réécrire ses fichiers.</p>
+<p class="prose">Un ratio supérieur à 100 % n'est pas retenu : il reste indisponible et n'est jamais ramené à 100 %, car les bornes CPU et de durée ne sont pas parfaitement simultanées et les compteurs peuvent être grossiers. Une valeur absente, un booléen, un nombre non fini, une valeur négative, un dénominateur nul ou une capacité manquante rendent aussi le ratio indisponible, jamais zéro. Un zéro réellement mesuré reste affiché comme zéro.</p>
+
+<h2>Formats affichés</h2>
+<p class="prose">Les durées passent des secondes aux minutes puis aux heures : <code>{{ formats.duree_premier_niveau(97) }}</code> pour 97 secondes. La mémoire est exprimée en Mo et Go décimaux, avec 1 Mo = 10⁶ octets et 1 Go = 10⁹ octets : <code>{{ formats.memoire_premier_niveau(2400000000) }}</code> et <code>{{ formats.memoire_premier_niveau(16000000000) }}</code> pour 2,4 Go et 16 Go. Les pourcentages sont entiers : <code>{{ formats.pourcentage_premier_niveau(15) }}</code>.</p>
+<p class="prose">Une petite valeur strictement positive n'est jamais arrondie à zéro : elle s'affiche avec une borne, par exemple <code>{{ formats.duree_premier_niveau(0.04) }}</code>, <code>{{ formats.memoire_premier_niveau(50000) }}</code> ou <code>{{ formats.pourcentage_premier_niveau(0.4) }}</code>. Les valeurs brutes et leur précision restent consultables dans le détail des résultats.</p>
+
+<h2>Limites d'interprétation</h2>
+<ul class="prose">
+<li>100 % ne signifie pas que l'ordinateur est saturé : l'hyperthreading, l'affinité, les quotas système, les conteneurs et les machines virtuelles limitent ce que représente le ratio.</li>
+<li>Un CPU peu occupé ne veut pas dire un texte meilleur, plus rapide ou plus fluide. La durée et la mémoire se lisent séparément.</li>
+<li>La mémoire est un pic cumulatif, pas une mesure isolée par audio ; le pic peut avoir été atteint pendant le chargement du modèle ou un audio précédent.</li>
+<li>Ces valeurs sont des mesures observées une fois, sans intervalle d'incertitude, sans garantie de performance et sans score global de qualité ou d'efficacité.</li>
+<li>Une mesure absente affiche « non mesuré » et un résultat partiel est signalé comme tel ; une absence n'est jamais remplacée par zéro.</li>
+</ul>
+{# La route et les liens de cette aide sont ajoutés à la tâche 3.3. #}
+{% endblock %}
