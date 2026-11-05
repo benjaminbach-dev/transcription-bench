@@ -8,12 +8,14 @@
 <p class="callout danger prose" role="status">{{ erreur_dossier }}</p>
 {% endif %}
 <p class="prose">Les transcriptions sont regroupées par l'empreinte SHA-256 du fichier audio source, relue dans chaque résultat, et jamais par son nom. Un fichier remplacé par un autre portant le même nom forme donc un autre groupe, et un même contenu déposé sous deux noms différents reste dans un seul groupe. Une transcription dont l'empreinte est absente ou invalide n'est jamais regroupée : elle reste consultable dans le détail de son exécution. Cette page ne fait que relire les fichiers de résultats : elle ne lance aucune inférence et ne modifie aucun fichier.</p>
+<p class="prose">Les résultats de chaque audio se classent par temps de transcription (défaut), mémoire max, CPU du moteur ou date d'essai, sur les valeurs consignées non arrondies. Changer de classement recharge la page : les cases cochées mais non soumises ne sont pas conservées (page sans JavaScript).</p>
 {% if groupes %}
 {% for groupe in groupes %}
-<article>
+<article id="groupe-{{ groupe.empreinte }}">
 <header>
 <h2>Audio « {{ groupe.noms | join(', ') }} » — {{ groupe.entrees | length }} transcription(s)</h2>
 </header>
+<p class="prose">Classer ce groupe : {% for valeur, libelle in criteres_tri %}{% if valeur == tri %}<strong>{{ libelle }}</strong>{% else %}<a href="{{ url_for('comparaisons', tri=valeur) }}#groupe-{{ groupe.empreinte }}">{{ libelle }}</a>{% endif %}{% if not loop.last %} · {% endif %}{% endfor %}</p>
 <details>
 <summary>Empreinte SHA-256 du fichier audio</summary>
 <p class="prose"><strong>{{ groupe.empreinte }}</strong> — nom(s) consigné(s) du fichier audio : {{ groupe.noms | join(', ') }}.</p>

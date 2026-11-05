@@ -24,9 +24,15 @@ from tests.test_consultation_resultats import (
 )
 from tests.test_execution_moteur import SocleExecutionTest
 from transcription_bench.consultation_resultats import (
+    TRI_CPU,
+    TRI_DEFAUT,
+    TRI_RAM,
+    TRI_RECENT,
+    TRI_TEMPS,
     ConsultationResultats,
     ResultatIntrouvable,
     analyser_selection,
+    analyser_tri,
 )
 from transcription_bench.paths import ValeurRefusee
 from transcription_bench.resultats import (
@@ -369,6 +375,34 @@ class GroupesParEmpreinteTest(SocleConsultationTest):
 
         self.assertEqual(len(groupes), 1)
         self.assertEqual(groupes[0].entrees[0].execution, IDENTIFIANT)
+
+
+class ClassementTest(SocleConsultationTest):
+    """Critère de tri borné des listes de résultats (tâche 2.1)."""
+
+    def test_analyser_tri_defaut_et_criteres_connus(self) -> None:
+        self.assertEqual(TRI_DEFAUT, TRI_TEMPS)
+        self.assertEqual(analyser_tri(()), TRI_DEFAUT)
+        for critere in (TRI_TEMPS, TRI_RAM, TRI_CPU, TRI_RECENT):
+            with self.subTest(critere=critere):
+                self.assertEqual(analyser_tri([critere]), critere)
+                self.assertEqual(analyser_tri(critere), critere)
+
+    def test_analyser_tri_refuse_duplique_vide_ou_inconnu(self) -> None:
+        for valeurs in (
+            [TRI_CPU, TRI_RAM],
+            [TRI_CPU, TRI_CPU],
+            ["inconnu"],
+            [""],
+            ["Temps"],
+        ):
+            with self.subTest(valeurs=valeurs):
+                with self.assertRaises(ValeurRefusee):
+                    analyser_tri(valeurs)
+
+    def test_groupes_refusent_un_critere_inconnu(self) -> None:
+        with self.assertRaises(ValeurRefusee):
+            self.service.groupes_par_empreinte("inconnu")
 
 
 class ComparerTest(SocleConsultationTest):

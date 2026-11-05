@@ -7,7 +7,7 @@
 
 ## 2. Classement par audio
 
-- [ ] 2.1 Ajouter le tri GET borné temps/ram/cpu/recent, temps par défaut et départage stable avant arrondi sur les listes de `/resultats/comparaison`, avec ancre de retour au groupe et limite explicite des cases non soumises ; couvrir dans les tests web tri dupliqué/inconnu (400), None en fin, égalités, dates inconnues et conservation de l'ordre reçu sur la vue de comparaison.
+- [x] 2.1 Ajouter le tri GET borné temps/ram/cpu/recent, temps par défaut et départage stable avant arrondi sur les listes de `/resultats/comparaison`, avec ancre de retour au groupe et limite explicite des cases non soumises ; couvrir dans les tests web tri dupliqué/inconnu (400), None en fin, égalités, dates inconnues et conservation de l'ordre reçu sur la vue de comparaison.
 - [ ] 2.2 Présenter une ligne par résultat avec état, marques, date et réglages distinctifs, séparer les simulations et exclure les mesures partielles des distinctions ; tester absence de dédoublonnage, classement CPU non qualifié d'efficacité, et accès à l'historique global complet sans empreinte valide.
 
 ## 3. Comparaison et détail progressif

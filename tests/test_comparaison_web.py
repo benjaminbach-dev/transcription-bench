@@ -10,6 +10,7 @@ fichier.
 from __future__ import annotations
 
 import html
+import re
 
 from tests.test_comparaison_resultats import (
     EMPREINTE_A,
@@ -29,7 +30,17 @@ from transcription_bench.resultats import (
     STATUT_ERREUR,
     STATUT_OK,
 )
-from transcription_bench.web.app import CHAMP_SELECTION_COMPARAISON
+from transcription_bench.web.app import (
+    CHAMP_SELECTION_COMPARAISON,
+    CHAMP_TRI_CLASSEMENT,
+)
+
+
+IDENTIFIANT_TIERS = "20240103-040506-55667788"
+IDENTIFIANT_QUATRIEME = "20240104-050607-8899aabb"
+DATE_ANCIENNE = "2024-01-01T00:00:00+00:00"
+DATE_RECENTE = "2024-01-02T00:00:00+00:00"
+MOTIF_SELECTION = re.compile(r'name="transcription" value="([^"]+)"')
 
 
 class ComparaisonWebTest(SocleWebTest):
@@ -477,6 +488,317 @@ class ComparaisonWebTest(SocleWebTest):
         )
 
         self.verifier_page_erreur(reponse, 422)
+
+
+class ClassementGroupesWebTest(SocleWebTest):
+    """Tri GET borné des listes de `/resultats/comparaison` (tâche 2.1).
+
+    Les données sont synthétiques et écrites dans le dossier temporaire du socle :
+    aucune inférence, aucun réseau, aucune écriture dans les fichiers lus.
+    """
+
+    def page(self, chemin: str = "/resultats/comparaison", **options) -> str:
+        """Page rendue avec succès, HTML seul et entités décodées."""
+        options.setdefault("base_url", self.base_url())
+        reponse = self.client.get(chemin, **options)
+        self.assertEqual(reponse.status_code, 200, chemin)
+        corps = reponse.get_data(as_text=True)
+        self.verifier_html_seul(corps)
+        return html.unescape(corps)
+
+    def ecrire_essai(
+        self,
+        identifiant: str,
+        *,
+        cree_le: str | None = DATE_RECENTE,
+        mesures: dict | None = None,
+        machine: dict | None = None,
+        empreinte: str = EMPREINTE_A,
+        audios: int = 1,
+    ) -> None:
+        """Exécution terminée d'un audio de l'empreinte demandée.
+
+        `mesures` remplace les mesures de l'audio (`None` = mesures par défaut) ;
+        `audios` crée plusieurs audios de même contenu pour observer le départage
+        par ordre audio.
+        """
+        plans = tuple(
+            (f"prise{position}.wav", STATUT_OK) for position in range(1, audios + 1)
+        )
+        remplacements: dict = {"cree_le": cree_le}
+        if machine is not None:
+            remplacements["machine"] = machine
+        run = run_json(identifiant, audios=plans, **remplacements)
+        resultats = tuple(
+            resultat_empreinte(
+                run,
+                plan,
+                empreinte,
+                **({} if mesures is None else {"mesures_extra": mesures}),
+            )
+            for plan in run["audios"]
+        )
+        ecrire_execution(self.dossier_data, run, resultats)
+
+    def selections(self, corps: str) -> list[str]:
+        """Sélections de comparaison, dans l'ordre où la page les affiche."""
+        return MOTIF_SELECTION.findall(corps)
+
+    def selections_du_groupe(self, corps: str, empreinte: str) -> list[str]:
+        """Sélections d'un groupe, de son ancre à l'ancre suivante."""
+        debut = corps.index(f'id="groupe-{empreinte}"')
+        fin = corps.find('id="groupe-', debut + 1)
+        section = corps[debut:] if fin == -1 else corps[debut:fin]
+        return self.selections(section)
+
+    def test_tri_par_defaut_temps_croissant_avant_arrondi(self) -> None:
+        # 1,03 s et 1,04 s s'affichent toutes deux « 1 s » : l'ordre prouve que
+        # le tri porte sur la valeur non arrondie.
+        self.ecrire_essai(IDENTIFIANT_ANCIEN, mesures={"duree_transcription_s": 1.04})
+        self.ecrire_essai(IDENTIFIANT, mesures={"duree_transcription_s": 1.03})
+        self.ecrire_essai(IDENTIFIANT_TIERS, mesures={"duree_transcription_s": 2.0})
+
+        sans_parametre = self.page()
+        self.assertEqual(
+            self.selections(sans_parametre),
+            [f"{IDENTIFIANT}:1", f"{IDENTIFIANT_ANCIEN}:1", f"{IDENTIFIANT_TIERS}:1"],
+        )
+        explicite = self.page(query_string=[(CHAMP_TRI_CLASSEMENT, "temps")])
+
+        self.assertEqual(self.selections(explicite), self.selections(sans_parametre))
+
+    def test_tri_ram_cpu_et_recent(self) -> None:
+        self.ecrire_essai(
+            IDENTIFIANT_ANCIEN,
+            mesures={"duree_transcription_s": 2.0, "pic_memoire_octets": 1000},
+        )
+        self.ecrire_essai(
+            IDENTIFIANT,
+            mesures={
+                "duree_transcription_s": 1.0,
+                "temps_cpu_s": 1.0,
+                "pic_memoire_octets": 500,
+            },
+        )
+        self.ecrire_essai(
+            IDENTIFIANT_TIERS,
+            mesures={"duree_transcription_s": 3.0, "pic_memoire_octets": None},
+            cree_le=None,
+        )
+
+        ram = self.page(query_string=[(CHAMP_TRI_CLASSEMENT, "ram")])
+        self.assertEqual(
+            self.selections(ram),
+            [f"{IDENTIFIANT}:1", f"{IDENTIFIANT_ANCIEN}:1", f"{IDENTIFIANT_TIERS}:1"],
+        )
+
+        # CPU = 100 × temps CPU / (durée × 8 processeurs logiques) : 6,25 %
+        # (TIERS), 9,375 % (ANCIEN), 12,5 % (IDENTIFIANT) ; une capacité
+        # absente rend le ratio indisponible, donc classé en fin.
+        self.ecrire_essai(
+            IDENTIFIANT_QUATRIEME,
+            mesures={"duree_transcription_s": 2.0, "temps_cpu_s": 8.0},
+            machine={"os": "Linux", "coeurs_logiques": None},
+        )
+        cpu = self.page(query_string=[(CHAMP_TRI_CLASSEMENT, "cpu")])
+
+        self.assertEqual(
+            self.selections_du_groupe(cpu, EMPREINTE_A),
+            [
+                f"{IDENTIFIANT_TIERS}:1",
+                f"{IDENTIFIANT_ANCIEN}:1",
+                f"{IDENTIFIANT}:1",
+                f"{IDENTIFIANT_QUATRIEME}:1",
+            ],
+        )
+
+        # Date inconnue de TIERS en fin, les trois autres dates égales étant
+        # départagées par identifiant décroissant.
+        recent = self.page(query_string=[(CHAMP_TRI_CLASSEMENT, "recent")])
+        self.assertEqual(
+            self.selections_du_groupe(recent, EMPREINTE_A)[-1],
+            f"{IDENTIFIANT_TIERS}:1",
+        )
+
+    def test_duree_nulle_mesuree_reste_triable(self) -> None:
+        self.ecrire_essai(IDENTIFIANT, mesures={"duree_transcription_s": 0.0})
+        self.ecrire_essai(IDENTIFIANT_ANCIEN, mesures={"duree_transcription_s": 1.0})
+        corps = self.page()
+        self.assertEqual(
+            self.selections_du_groupe(corps, EMPREINTE_A),
+            [f"{IDENTIFIANT}:1", f"{IDENTIFIANT_ANCIEN}:1"],
+        )
+
+    def test_tri_absents_en_fin_et_dates_inconnues_en_fin(self) -> None:
+        self.ecrire_essai(IDENTIFIANT, mesures={"duree_transcription_s": 5.0})
+        self.ecrire_essai(
+            IDENTIFIANT_ANCIEN,
+            mesures={"duree_transcription_s": None},
+            cree_le=None,
+        )
+        self.ecrire_essai(
+            IDENTIFIANT_TIERS,
+            mesures={"duree_transcription_s": "1.0"},
+            cree_le="pas une date",
+        )
+
+        temps = self.page(query_string=[(CHAMP_TRI_CLASSEMENT, "temps")])
+        # Valeur valide d'abord ; les deux indisponibles ensuite, départagées par
+        # identifiant décroissant (date inconnue pour les deux).
+        self.assertEqual(
+            self.selections_du_groupe(temps, EMPREINTE_A),
+            [f"{IDENTIFIANT}:1", f"{IDENTIFIANT_TIERS}:1", f"{IDENTIFIANT_ANCIEN}:1"],
+        )
+
+        recent = self.page(query_string=[(CHAMP_TRI_CLASSEMENT, "recent")])
+        self.assertEqual(
+            self.selections_du_groupe(recent, EMPREINTE_A),
+            [f"{IDENTIFIANT}:1", f"{IDENTIFIANT_TIERS}:1", f"{IDENTIFIANT_ANCIEN}:1"],
+        )
+
+    def test_egalites_departagees_par_date_identifiant_et_ordre_audio(self) -> None:
+        self.ecrire_essai(
+            IDENTIFIANT_ANCIEN,
+            cree_le=DATE_ANCIENNE,
+            mesures={"duree_transcription_s": 1.0},
+            audios=2,
+        )
+        self.ecrire_essai(
+            IDENTIFIANT, cree_le=DATE_RECENTE, mesures={"duree_transcription_s": 1.0}
+        )
+        self.ecrire_essai(
+            IDENTIFIANT_TIERS,
+            cree_le=DATE_RECENTE,
+            mesures={"duree_transcription_s": 1.0},
+        )
+
+        corps = self.page(query_string=[(CHAMP_TRI_CLASSEMENT, "temps")])
+
+        # Date décroissante, puis identifiant décroissant, puis ordre audio.
+        self.assertEqual(
+            self.selections_du_groupe(corps, EMPREINTE_A),
+            [
+                f"{IDENTIFIANT_TIERS}:1",
+                f"{IDENTIFIANT}:1",
+                f"{IDENTIFIANT_ANCIEN}:1",
+                f"{IDENTIFIANT_ANCIEN}:2",
+            ],
+        )
+
+    def test_tri_applique_a_toutes_les_listes_de_groupes(self) -> None:
+        self.ecrire_essai(IDENTIFIANT, mesures={"pic_memoire_octets": 900})
+        self.ecrire_essai(IDENTIFIANT_ANCIEN, mesures={"pic_memoire_octets": 100})
+        self.ecrire_essai(
+            IDENTIFIANT_TIERS, mesures={"pic_memoire_octets": 500}, empreinte=EMPREINTE_B
+        )
+        self.ecrire_essai(
+            IDENTIFIANT_QUATRIEME, mesures={"pic_memoire_octets": 200}, empreinte=EMPREINTE_B
+        )
+
+        corps = self.page(query_string=[(CHAMP_TRI_CLASSEMENT, "ram")])
+
+        self.assertEqual(
+            self.selections_du_groupe(corps, EMPREINTE_A),
+            [f"{IDENTIFIANT_ANCIEN}:1", f"{IDENTIFIANT}:1"],
+        )
+        self.assertEqual(
+            self.selections_du_groupe(corps, EMPREINTE_B),
+            [f"{IDENTIFIANT_QUATRIEME}:1", f"{IDENTIFIANT_TIERS}:1"],
+        )
+
+    def test_tri_duplique_ou_inconnu_refuse_sans_operation(self) -> None:
+        self.ecrire_essai(IDENTIFIANT, mesures={"duree_transcription_s": 2.0})
+        self.ecrire_essai(IDENTIFIANT_ANCIEN, mesures={"duree_transcription_s": 1.0})
+        racine = self.dossier_data / "results"
+        avant = {
+            chemin: chemin.read_bytes()
+            for chemin in sorted(racine.rglob("*"))
+            if chemin.is_file()
+        }
+
+        for parametres in (
+            [(CHAMP_TRI_CLASSEMENT, "cpu"), (CHAMP_TRI_CLASSEMENT, "ram")],
+            [(CHAMP_TRI_CLASSEMENT, "cpu"), (CHAMP_TRI_CLASSEMENT, "cpu")],
+            [(CHAMP_TRI_CLASSEMENT, "inconnu")],
+            [(CHAMP_TRI_CLASSEMENT, "")],
+        ):
+            with self.subTest(parametres=parametres):
+                reponse = self.client.get(
+                    "/resultats/comparaison",
+                    query_string=parametres,
+                    base_url=self.base_url(),
+                )
+                corps = self.verifier_page_erreur(reponse, 400)
+                self.assertIn("Classement refusé", corps)
+
+        self.assertEqual(
+            {
+                chemin: chemin.read_bytes()
+                for chemin in sorted(racine.rglob("*"))
+                if chemin.is_file()
+            },
+            avant,
+        )
+        instantane = self.creneau.instantane()
+        self.assertIsNone(instantane.type_operation)
+        self.assertEqual(instantane.journal, ())
+
+    def test_liens_de_tri_avec_ancre_de_retour_et_limite_des_cases(self) -> None:
+        self.ecrire_essai(IDENTIFIANT, mesures={"duree_transcription_s": 2.0})
+        self.ecrire_essai(IDENTIFIANT_ANCIEN, mesures={"duree_transcription_s": 1.0})
+
+        corps = self.page()
+
+        # Chaque groupe est une cible d'ancre ; le critère courant n'est pas un lien.
+        self.assertIn(f'id="groupe-{EMPREINTE_A}"', corps)
+        for critere in ("ram", "cpu", "recent"):
+            self.assertIn(
+                f'href="/resultats/comparaison?{CHAMP_TRI_CLASSEMENT}={critere}'
+                f'#groupe-{EMPREINTE_A}"',
+                corps,
+            )
+        self.assertIn("<strong>Temps de transcription</strong>", corps)
+        self.assertNotIn(
+            f'href="/resultats/comparaison?{CHAMP_TRI_CLASSEMENT}=temps#groupe-', corps
+        )
+
+        # Le critère demandé devient le critère courant, et le temps redevient
+        # un lien : la page ne propose jamais de recharger le critère affiché.
+        ram = self.page(query_string=[(CHAMP_TRI_CLASSEMENT, "ram")])
+        self.assertIn("<strong>Mémoire max</strong>", ram)
+        self.assertIn(
+            f'href="/resultats/comparaison?{CHAMP_TRI_CLASSEMENT}=temps'
+            f'#groupe-{EMPREINTE_A}"',
+            ram,
+        )
+        # Limite explicite du HTML sans JavaScript : les cases non soumises
+        # ne sont pas conservées lors d'un changement de tri.
+        self.assertIn("cases cochées mais non soumises ne sont pas conservées", corps)
+
+    def test_comparaison_selectionnee_garde_l_ordre_recu(self) -> None:
+        self.ecrire_essai(IDENTIFIANT, mesures={"duree_transcription_s": 2.0})
+        self.ecrire_essai(IDENTIFIANT_ANCIEN, mesures={"duree_transcription_s": 1.0})
+        premier = f"{IDENTIFIANT}:1"
+        second = f"{IDENTIFIANT_ANCIEN}:1"
+
+        for ordre, parametres in (
+            ((premier, second), [(CHAMP_TRI_CLASSEMENT, "temps")]),
+            ((second, premier), [(CHAMP_TRI_CLASSEMENT, "ram")]),
+        ):
+            with self.subTest(ordre=ordre):
+                corps = self.page(
+                    f"/resultats/comparaison/{EMPREINTE_A}",
+                    query_string=[
+                        (CHAMP_SELECTION_COMPARAISON, ordre[0]),
+                        (CHAMP_SELECTION_COMPARAISON, ordre[1]),
+                        *parametres,
+                    ],
+                )
+                positions = [
+                    corps.index(f'href="/resultats/{selection.split(":")[0]}"')
+                    for selection in ordre
+                ]
+                self.assertEqual(positions, sorted(positions))
 
 
 if __name__ == "__main__":

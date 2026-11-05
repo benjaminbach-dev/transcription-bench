@@ -54,6 +54,15 @@ leur valeur JSON brute — les valeurs formatées ne servent qu'à l'affichage :
 listes et objets compris, une clé absente reste distincte d'une valeur
 explicite nulle, et deux valeurs non finies restent distinctes entre elles.
 Aucun diff de texte, aucun WER ni aucune référence ne sont calculés.
+
+**Classement (2.1)** : les listes de résultats de chaque groupe audio se
+classent par temps de transcription (défaut), pic mémoire, occupation CPU du
+moteur ou date d'essai, sur les valeurs **non arrondies** de l'essai. Une valeur
+absente ou incohérente vient après les valeurs valides, et les égalités sont
+départagées par date décroissante (date inconnue en fin), puis identifiant
+d'exécution décroissant et ordre audio croissant. Un critère inconnu ou fourni
+plusieurs fois est refusé par `ValeurRefusee` ; la comparaison sélectionnée, elle,
+garde l'ordre reçu, indépendamment de ce tri.
 """
 
 from __future__ import annotations
@@ -63,9 +72,11 @@ import math
 import re
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from transcription_bench.indicateurs_resultats import ratio_cpu
 from transcription_bench.paths import (
     NOM_DOSSIER_RESULTATS,
     ValeurRefusee,
@@ -98,6 +109,20 @@ MOTIF_EMPREINTE = re.compile(r"[0-9a-f]{64}", re.ASCII)
 #: Séparateur d'une sélection de comparaison : `identifiant:ordre`.
 SEPARATEUR_SELECTION = ":"
 _MOTIF_ORDRE = re.compile(r"[0-9]{1,6}", re.ASCII)
+
+#: Critères de classement bornés des listes de résultats, avec leur libellé.
+TRI_TEMPS = "temps"
+TRI_RAM = "ram"
+TRI_CPU = "cpu"
+TRI_RECENT = "recent"
+#: Tri par défaut : temps de transcription croissant.
+TRI_DEFAUT = TRI_TEMPS
+LIBELLES_TRI: dict[str, str] = {
+    TRI_TEMPS: "Temps de transcription",
+    TRI_RAM: "Mémoire max",
+    TRI_CPU: "CPU du moteur",
+    TRI_RECENT: "Essais récents",
+}
 
 #: Natures de cellule, qui décident du formatage dans le template.
 NATURE_TEXTE = "texte"
@@ -585,18 +610,28 @@ class ConsultationResultats:
             partiel=partiel,
         )
 
-    def groupes_par_empreinte(self) -> tuple[GroupeEmpreinte, ...]:
+    def groupes_par_empreinte(
+        self, tri: str = TRI_DEFAUT
+    ) -> tuple[GroupeEmpreinte, ...]:
         """Transcriptions regroupées par empreinte SHA-256 de l'audio source.
 
         Une transcription n'est groupée que si son `result.json` est
         interprétable et consigne une empreinte valide : un résultat absent, une
         empreinte absente ou d'une autre forme n'apparaît dans aucun groupe et
         n'est donc jamais comparable. Deux fichiers de même nom et d'empreintes
-        différentes forment deux groupes distincts. L'ordre suit les exécutions,
-        des plus récentes aux plus anciennes ; une exécution refusée est ignorée.
-        Lève `LectureResultatsImpossible` si le dossier des résultats existe mais
-        ne peut pas être parcouru.
+        différentes forment deux groupes distincts. L'ordre des groupes suit les
+        exécutions, des plus récentes aux plus anciennes ; une exécution refusée
+        est ignorée. La liste d'entrées de chaque groupe est classée par `tri`
+        (`temps` par défaut) selon `trier_entrees`.
+
+        Lève `ValeurRefusee` pour un critère de classement inconnu, et
+        `LectureResultatsImpossible` si le dossier des résultats existe mais ne
+        peut pas être parcouru.
         """
+        if tri not in LIBELLES_TRI:
+            raise ValeurRefusee(
+                "tri refusé : critère inconnu (temps, ram, cpu ou recent attendu)"
+            )
         groupes: dict[str, list[EntreeEmpreinte]] = {}
         for dossier, contenu in self._executions_interpretables():
             execution = _resume(contenu)
@@ -615,7 +650,7 @@ class ConsultationResultats:
             GroupeEmpreinte(
                 empreinte=empreinte,
                 noms=tuple(sorted({entree.nom for entree in entrees})),
-                entrees=tuple(entrees),
+                entrees=trier_entrees(entrees, tri),
             )
             for empreinte, entrees in groupes.items()
         )
@@ -793,6 +828,115 @@ def analyser_selection(texte: str) -> tuple[str, int]:
     if not _MOTIF_ORDRE.fullmatch(ordre) or int(ordre) < 1:
         raise ValeurRefusee("sélection refusée : ordre d'audio invalide")
     return identifiant, int(ordre)
+
+
+def analyser_tri(valeurs: Sequence[str] | str) -> str:
+    """Critère de classement demandé, borné aux quatre critères connus.
+
+    Une demande absente vaut `TRI_DEFAUT` (temps de transcription). Un critère
+    inconnu, vide ou fourni plusieurs fois est refusé par `ValeurRefusee` : la
+    lecture ne choisit jamais un critère parmi plusieurs et ne devine rien.
+    """
+    demandes = (valeurs,) if isinstance(valeurs, str) else tuple(valeurs)
+    if not demandes:
+        return TRI_DEFAUT
+    if len(demandes) > 1:
+        raise ValeurRefusee("tri refusé : un seul critère de classement attendu")
+    if demandes[0] not in LIBELLES_TRI:
+        raise ValeurRefusee(
+            "tri refusé : critère inconnu (temps, ram, cpu ou recent attendu)"
+        )
+    return demandes[0]
+
+
+def trier_entrees(
+    entrees: Sequence[EntreeEmpreinte], tri: str = TRI_DEFAUT
+) -> tuple[EntreeEmpreinte, ...]:
+    """Entrées classées par `tri`, avec un départage stable et documenté.
+
+    Le tri porte sur les valeurs consignées et **non arrondies** : durées et
+    pics bruts, ratio CPU recalculé. Une valeur absente ou incohérente (`None`,
+    non numérique, non finie, ratio non interprétable) vient après
+    les valeurs valides. Les égalités sont départagées par date d'essai
+    décroissante (date inconnue après les dates connues), puis identifiant
+    d'exécution décroissant et ordre audio croissant. `recent` classe par date
+    décroissante avec le même départage. La séquence reçue n'est pas modifiée.
+
+    Lève `ValeurRefusee` pour un critère hors des quatre admis.
+    """
+    if tri not in LIBELLES_TRI:
+        raise ValeurRefusee(
+            "tri refusé : critère inconnu (temps, ram, cpu ou recent attendu)"
+        )
+    ordonnees = sorted(entrees, key=lambda entree: entree.ordre)
+    # Tris stables successifs, du départage le moins prioritaire au plus
+    # prioritaire : identifiant, date, puis critère (ou date seule pour `recent`).
+    ordonnees.sort(key=lambda entree: entree.execution, reverse=True)
+    ordonnees.sort(key=lambda entree: _horodatage(entree.date_essai), reverse=True)
+    if tri != TRI_RECENT:
+        ordonnees.sort(key=lambda entree: _cle_classement(entree, tri))
+    return tuple(ordonnees)
+
+
+def _horodatage(valeur: Any) -> tuple[int, float]:
+    """Clé de date triable avec `reverse=True` : connue (`1`) avant inconnue.
+
+    Une date connue est convertie en horodatage pour comparer des fuseaux
+    différents ; une date absente, non textuelle ou non ISO reste inconnue
+    (`0`) et passe donc après les dates connues. Aucune date n'est inventée.
+    """
+    if not isinstance(valeur, str):
+        return (0, 0.0)
+    try:
+        date = datetime.fromisoformat(valeur)
+    except ValueError:
+        return (0, 0.0)
+    if date.tzinfo is None:
+        date = date.replace(tzinfo=timezone.utc)
+    try:
+        return (1, date.timestamp())
+    except (OverflowError, OSError, ValueError):
+        return (0, 0.0)
+
+
+def _cle_classement(entree: EntreeEmpreinte, tri: str) -> tuple[int, float]:
+    """Clé du critère : valeurs valides d'abord, absentes ou incohérentes après."""
+    valeur = _valeur_classement(entree, tri)
+    return (1, 0.0) if valeur is None else (0, valeur)
+
+
+def _valeur_classement(entree: EntreeEmpreinte, tri: str) -> float | None:
+    """Valeur non arrondie du critère, ou `None` si elle n'est pas interprétable.
+
+    Le temps de transcription et le pic mémoire doivent être positifs ou nuls ; le ratio CPU vient de `ratio_cpu` et reste `None` quand une
+    capacité consignée manque ou que le ratio dépasse 100 %. Le matériel lu est
+    celui de l'essai, jamais celui du poste qui consulte.
+    """
+    mesures = entree.mesures
+    if mesures is None:
+        return None
+    if tri == TRI_TEMPS:
+        return _mesure_triable(mesures.duree_transcription_s)
+    if tri == TRI_RAM:
+        return _mesure_triable(mesures.pic_memoire_octets)
+    if tri != TRI_CPU:
+        return None
+    coeurs = None if entree.materiel is None else entree.materiel.coeurs_logiques
+    ratio = ratio_cpu(mesures.temps_cpu_s, mesures.duree_transcription_s, coeurs)
+    return None if ratio is None else float(ratio)
+
+
+def _mesure_triable(valeur: Any) -> float | None:
+    """Nombre fini triable, ou `None` : booléens, NaN, infinis et négatifs exclus."""
+    if isinstance(valeur, bool) or not isinstance(valeur, (int, float)):
+        return None
+    try:
+        nombre = float(valeur)
+    except OverflowError:
+        return None
+    if not math.isfinite(nombre) or nombre < 0:
+        return None
+    return nombre
 
 
 def _entree(

@@ -37,8 +37,10 @@ segments, métadonnées, mesures et marques, en lecture seule. La page de
 comparaison (tâche 7.2) regroupe les transcriptions par empreinte SHA-256 du
 fichier audio source et affiche côte à côte celles d'un même fichier, avec les
 réglages effectifs qui diffèrent, les états, les marques et les mesures
-principales. Lecture seule également : aucune route de résultats ne lance
-d'inférence ni ne modifie un fichier.
+principales. La liste des groupes se classe par temps, mémoire, CPU ou date
+(tâche 2.1) selon un critère borné, refusé (400) s'il est inconnu ou répété ; la
+comparaison sélectionnée garde l'ordre reçu. Lecture seule également : aucune
+route de résultats ne lance d'inférence ni ne modifie un fichier.
 """
 
 from __future__ import annotations
@@ -55,12 +57,14 @@ from werkzeug.exceptions import HTTPException
 from engines.registre import MoteurInconnu, creer_registre_fourni
 from transcription_bench.audios import FORMATS_AUDIO, AudioListe, lister_audios
 from transcription_bench.consultation_resultats import (
+    LIBELLES_TRI,
     REPERE_RTF,
     ConsultationResultats,
     LectureResultatsImpossible,
     ResultatIntrouvable,
     ResultatNonInterpretable,
     analyser_selection,
+    analyser_tri,
 )
 from transcription_bench.execution_moteur import (
     ARRET_AUCUN,
@@ -116,6 +120,7 @@ DOSSIER_FEUILLES = Path(__file__).resolve().parent / "ressources"
 NOM_FEUILLE_SUMI = "sumi.min.css"
 NOM_FEUILLE_APP = "app.css"
 CHAMP_SELECTION_COMPARAISON = "transcription"
+CHAMP_TRI_CLASSEMENT = "tri"
 TYPE_FORMULAIRE = "application/x-www-form-urlencoded"
 HOTES_AUTORISES = ("127.0.0.1", "localhost")
 
@@ -205,6 +210,11 @@ MESSAGE_COMPARAISON_REFUSEE = (
     "fichier audio, reconnues par la même empreinte SHA-256. Une sélection ne peut "
     "ni mélanger deux fichiers différents, ni désigner une transcription absente, "
     "ni porter un identifiant invalide. Aucun fichier n'a été modifié."
+)
+
+MESSAGE_TRI_REFUSE = (
+    "Classement refusé : un seul critère parmi temps, ram, cpu et recent est "
+    "accepté dans une même requête. Aucun fichier n'a été modifié."
 )
 
 
@@ -687,9 +697,13 @@ def _enregistrer_routes(
 
     @application.get("/resultats/comparaison")
     def comparaisons() -> str:
-        """Groupes de transcriptions par empreinte SHA-256 de l'audio source."""
+        """Groupes de transcriptions par empreinte, listes classées par `tri`."""
         try:
-            groupes = service_resultats.groupes_par_empreinte()
+            tri = analyser_tri(request.args.getlist(CHAMP_TRI_CLASSEMENT))
+        except ValeurRefusee:
+            return _page_erreur(400, MESSAGE_TRI_REFUSE)
+        try:
+            groupes = service_resultats.groupes_par_empreinte(tri)
         except LectureResultatsImpossible:
             groupes = ()
             erreur_dossier = MESSAGE_RESULTATS_INACCESSIBLES
@@ -700,6 +714,8 @@ def _enregistrer_routes(
             groupes=groupes,
             erreur_dossier=erreur_dossier,
             champ_selection=CHAMP_SELECTION_COMPARAISON,
+            tri=tri,
+            criteres_tri=tuple(LIBELLES_TRI.items()),
         )
 
     @application.get("/resultats/comparaison/<empreinte>")
