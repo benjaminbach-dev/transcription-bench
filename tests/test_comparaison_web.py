@@ -28,6 +28,7 @@ from tests.test_web import SocleWebTest
 from transcription_bench.consultation_resultats import LIBELLES_TRI, TRI_CPU
 from transcription_bench.resultats import (
     ETAT_INTERROMPUE,
+    ETAT_TERMINEE,
     STATUT_ERREUR,
     STATUT_OK,
 )
@@ -211,17 +212,21 @@ class ComparaisonWebTest(SocleWebTest):
         )
 
         self.assertIn("Texte transcrit", corps)
-        # Chaque colonne affiche son texte dans un bloc préformaté.
+        # Chaque carte affiche son texte intégral dans un bloc préformaté, hors
+        # de tout accordéon fermé.
         self.assertEqual(corps.count("<pre>"), 2)
         self.assertIn(
             "<pre>Première ligne du texte A.\nDeuxième ligne du texte A.</pre>",
             corps,
         )
         self.assertIn("<pre>Texte B, autre contenu.</pre>", corps)
-        # La ligne de texte n'est jamais marquée « différent » : aucun diff.
-        debut = corps.index("Texte transcrit")
-        ligne_texte = corps[corps.rfind("<tr>", 0, debut) : corps.index("</tr>", debut)]
-        self.assertNotIn("différent", ligne_texte)
+        self.assertLess(corps.index("<pre>"), corps.index("<details"))
+        # Le texte n'est jamais comparé : aucune carte ne porte « différent ».
+        for texte in ("Première ligne du texte A.", "Texte B, autre contenu."):
+            fin = corps.index("</article>", corps.index(texte))
+            debut = corps.rindex("<article>", 0, corps.index(texte))
+            with self.subTest(texte=texte):
+                self.assertNotIn("différent", corps[debut:fin])
 
     def test_comparaison_echappe_le_texte_transcrit(self) -> None:
         texte_piege = "<script>alert('x')</script> & <b>gras</b>\nseconde ligne"
@@ -263,8 +268,15 @@ class ComparaisonWebTest(SocleWebTest):
 
         self.assertIn("1.500 (repère d'objectif 2, non bloquant)", corps)
         self.assertIn("0.500 (repère d'objectif 2, non bloquant)", corps)
-        self.assertIn("n'exclut aucune transcription", corps)
         self.assertIn("transcrit", corps)
+        # L'explication du repère est regroupée dans l'aide locale.
+        self.assertNotIn("n'exclut aucune transcription", corps)
+        aide = self.client.get("/resultats/aide", base_url=self.base_url())
+        self.assertEqual(aide.status_code, 200)
+        self.assertIn(
+            "n'exclut aucune transcription",
+            html.unescape(aide.get_data(as_text=True)),
+        )
 
     def test_comparaison_signale_partiel_et_marques_absentes(self) -> None:
         premier = run_json(IDENTIFIANT)
@@ -489,6 +501,332 @@ class ComparaisonWebTest(SocleWebTest):
         )
 
         self.verifier_page_erreur(reponse, 422)
+
+
+class CartesComparaisonWebTest(SocleWebTest):
+    """Cartes à trois indicateurs et détails progressifs (tâche 3.1).
+
+    Les données sont synthétiques et écrites dans le dossier temporaire du
+    socle : aucune inférence, aucun réseau, aucune écriture dans les fichiers
+    lus. Les essais observés ne portent aucune marque de mesures simulées.
+    """
+
+    MACHINE = {
+        "os": "Linux",
+        "version_os": "6.1",
+        "architecture": "x86_64",
+        "processeur": None,
+        "coeurs_physiques": 4,
+        "coeurs_logiques": 8,
+        "ram_totale_octets": 16_000_000_000,
+    }
+
+    def page(self, selections) -> str:
+        """Page de comparaison rendue, HTML seul et entités décodées."""
+        reponse = self.client.get(
+            f"/resultats/comparaison/{EMPREINTE_A}",
+            query_string=[
+                (CHAMP_SELECTION_COMPARAISON, selection) for selection in selections
+            ],
+            base_url=self.base_url(),
+        )
+        self.assertEqual(reponse.status_code, 200, selections)
+        corps = reponse.get_data(as_text=True)
+        self.verifier_html_seul(corps)
+        return html.unescape(corps)
+
+    def ecrire_essai(
+        self,
+        identifiant: str = IDENTIFIANT,
+        *,
+        modele: str = "Modèle",
+        mesures: dict | None = None,
+        reglages: dict | None = None,
+        simule: bool = False,
+        etat: str = ETAT_TERMINEE,
+        audios: int = 1,
+        machine: dict | None = None,
+    ) -> None:
+        """Exécution terminée d'un audio transcrit, observée ou simulée."""
+        marques = {
+            "factice": simule,
+            "synthetique": True,
+            "mesures_simulees": simule,
+        }
+        plans = tuple(
+            (f"prise{position}.wav", STATUT_OK) for position in range(1, audios + 1)
+        )
+        run = run_json(
+            identifiant,
+            audios=plans,
+            machine=self.MACHINE if machine is None else machine,
+            etat=etat,
+            **marques,
+        )
+        run["demande"]["modele"]["identifiant"] = modele
+        resultats = []
+        for plan in run["audios"]:
+            options: dict = dict(marques)
+            if mesures is not None:
+                options["mesures_extra"] = mesures
+            if reglages is not None:
+                options["reglages"] = reglages
+            resultats.append(resultat_empreinte(run, plan, **options))
+        ecrire_execution(self.dossier_data, run, tuple(resultats))
+
+    def ecrire_deux_modeles(self) -> None:
+        """Deux essais observés du scénario de la spec : 1 min 37 s et 42 s."""
+        self.ecrire_essai(
+            IDENTIFIANT,
+            modele="Modèle A",
+            mesures={
+                "duree_transcription_s": 97.0,
+                "temps_cpu_s": 3.104,
+                "pic_memoire_octets": 2_400_000_000,
+            },
+        )
+        self.ecrire_essai(
+            IDENTIFIANT_ANCIEN,
+            modele="Modèle B",
+            mesures={
+                "duree_transcription_s": 42.0,
+                "temps_cpu_s": 12.6,
+                "pic_memoire_octets": 3_200_000_000,
+            },
+        )
+
+    def test_erreur_comparee_visible_hors_details_et_echappee(self) -> None:
+        self.ecrire_essai(IDENTIFIANT, modele="Modèle A")
+        run = run_json(IDENTIFIANT_ANCIEN, audios=(("erreur.wav", STATUT_ERREUR),))
+        resultat = resultat_empreinte(run, run["audios"][0], statut=STATUT_ERREUR,
+                                     texte=None, erreur="Échec <test> & conservé")
+        ecrire_execution(self.dossier_data, run, (resultat,))
+
+        corps = self.page([f"{IDENTIFIANT}:1", f"{IDENTIFIANT_ANCIEN}:1"])
+
+        self.assertIn("Erreur consignée pour cet audio : Échec <test> & conservé",
+                      corps[:corps.index("<details")])
+        brut = self.client.get(
+            f"/resultats/comparaison/{EMPREINTE_A}",
+            query_string=[("transcription", f"{IDENTIFIANT}:1"),
+                          ("transcription", f"{IDENTIFIANT_ANCIEN}:1")],
+            base_url=self.base_url(),
+        ).get_data(as_text=True)
+        self.assertIn("Échec &lt;test&gt; &amp; conservé", brut)
+
+    def test_provenance_complete_consultable_dans_la_comparaison(self) -> None:
+        for identifiant, cpu, version in (
+            (IDENTIFIANT, "CPU-A", "1.2"),
+            (IDENTIFIANT_ANCIEN, "CPU-B", "1.3"),
+        ):
+            run = run_json(identifiant, machine={**self.MACHINE, "processeur": cpu})
+            run["moteur"]["versions"] = {"moteur-test": version}
+            run["programme"]["version"] = version
+            ecrire_execution(self.dossier_data, run,
+                              (resultat_empreinte(run, run["audios"][0]),))
+
+        corps = self.page([f"{IDENTIFIANT}:1", f"{IDENTIFIANT_ANCIEN}:1"])
+
+        details = corps[corps.index("<summary>Toutes les mesures et informations</summary>"):]
+        for valeur in ("CPU-A", "CPU-B", "Architecture", "x86_64", "Cœurs logiques",
+                       "Versions du moteur", "moteur-test", "1.2", "1.3", "Python",
+                       "FFmpeg", "Fichier audio : Empreinte SHA-256", "Segments horodatés",
+                       "Timings natifs"):
+            self.assertIn(valeur, details)
+        differences = corps[corps.index("<summary>Ce qui diffère</summary>"):
+                            corps.index("<summary>Toutes les mesures et informations</summary>")]
+        self.assertIn("Processeur", differences)
+        self.assertIn("CPU-A", differences)
+        for libelle in ("PID du moteur", "Lancé à", "Timings natifs", "Segments horodatés"):
+            self.assertNotIn(libelle, differences)
+        self.assertNotIn("Matériel différent", corps[:corps.index("<details")])
+
+    def test_cartes_trois_indicateurs_avant_le_texte(self) -> None:
+        self.ecrire_deux_modeles()
+
+        corps = self.page([f"{IDENTIFIANT}:1", f"{IDENTIFIANT_ANCIEN}:1"])
+
+        self.assertIn('class="grid cols-2"', corps)
+        self.assertEqual(corps.count("<article>"), 2)
+        self.assertIn("Modèle A · Moteur factice", corps)
+        self.assertIn("Modèle B · Moteur factice", corps)
+        # Trois indicateurs de premier niveau, formatés en unités lisibles.
+        self.assertIn("1 min 37 s", corps)
+        self.assertIn("2,4 Go sur 16 Go — 15 %", corps)
+        self.assertIn("< 1 % en moyenne", corps)
+        self.assertIn("42 s", corps)
+        self.assertIn("3,2 Go sur 16 Go — 20 %", corps)
+        self.assertIn("3 % en moyenne", corps)
+        # Ordre de lecture : titre, trois indicateurs, puis texte complet.
+        premiere = corps[corps.index("<article>") : corps.index("</article>")]
+        positions = [
+            premiere.index(libelle)
+            for libelle in (
+                "Transcription",
+                "Mémoire max",
+                "CPU du moteur",
+                "Texte transcrit",
+                "<pre>",
+            )
+        ]
+        self.assertEqual(positions, sorted(positions))
+        # Aucune valeur brute d'octets ne remonte au premier niveau.
+        self.assertNotIn("octets", premiere)
+        self.assertIn("transcription simulée de test", premiere)
+
+    def test_synthese_descriptive_temps_et_ram(self) -> None:
+        self.ecrire_deux_modeles()
+
+        corps = self.page([f"{IDENTIFIANT}:1", f"{IDENTIFIANT_ANCIEN}:1"])
+
+        self.assertIn(
+            "Mesures observées · Plus rapide : Modèle B · Moins de RAM : Modèle A",
+            corps,
+        )
+        self.assertNotIn("Sans distinction", corps)
+        # Le CPU est affiché mais ne désigne aucun vainqueur.
+        self.assertNotIn("CPU le moins", corps)
+
+    def test_synthese_egalite_et_exclusion_des_mesures_simulees(self) -> None:
+        mesures = {"duree_transcription_s": 2.0, "pic_memoire_octets": 900}
+        self.ecrire_essai(IDENTIFIANT, modele="Modèle A", mesures=mesures)
+        self.ecrire_essai(IDENTIFIANT_ANCIEN, modele="Modèle B", mesures=mesures)
+
+        egalite = self.page([f"{IDENTIFIANT}:1", f"{IDENTIFIANT_ANCIEN}:1"])
+
+        self.assertIn("Plus rapide : Modèle A et Modèle B (égalité)", egalite)
+        self.assertIn("Moins de RAM : Modèle A et Modèle B (égalité)", egalite)
+
+        self.ecrire_essai(IDENTIFIANT_TIERS, modele="Modèle C", simule=True)
+        exclues = self.page(
+            [
+                f"{IDENTIFIANT}:1",
+                f"{IDENTIFIANT_ANCIEN}:1",
+                f"{IDENTIFIANT_TIERS}:1",
+            ]
+        )
+
+        # Une mesure simulée ne reçoit aucune distinction de performance réelle.
+        self.assertIn(
+            "Sans distinction : Modèle C (mesures simulées ou résultat partiel)",
+            exclues,
+        )
+        self.assertNotIn("Plus rapide : Modèle C", exclues)
+
+    def test_details_progressifs_differences_puis_toutes_les_mesures(self) -> None:
+        self.ecrire_essai(
+            IDENTIFIANT,
+            modele="Modèle A",
+            reglages={"langue": "fr", "beam_size": 5},
+        )
+        self.ecrire_essai(
+            IDENTIFIANT_ANCIEN,
+            modele="Modèle B",
+            reglages={"langue": "fr", "beam_size": 3},
+        )
+
+        corps = self.page([f"{IDENTIFIANT}:1", f"{IDENTIFIANT_ANCIEN}:1"])
+
+        grille = corps.index('class="grid cols-2"')
+        differences = corps.index("Ce qui diffère")
+        mesures = corps.index("Toutes les mesures et informations")
+        self.assertLess(grille, differences)
+        self.assertLess(differences, mesures)
+
+        # « Ce qui diffère » ne montre que les valeurs distinctes.
+        section = corps[differences:mesures]
+        self.assertIn("Réglage demandé : beam_size", section)
+        self.assertNotIn("Réglage demandé : langue", section)
+        self.assertIn(
+            "Les autres mesures et informations comparées sont communes", section
+        )
+
+        # « Toutes les mesures et informations » garde tout, RTF et son repère.
+        details = corps[mesures:]
+        self.assertIn("Réglage demandé : langue", details)
+        self.assertIn("Durée totale de l'opération", details)
+        self.assertIn("RTF (durée de transcription / durée décodée)", details)
+        self.assertIn("repère d'objectif 2, non bloquant", details)
+        self.assertIn("<table>", details)
+
+    def test_toutes_les_selections_deviennent_des_cartes(self) -> None:
+        self.ecrire_essai(IDENTIFIANT, modele="Modèle A")
+        self.ecrire_essai(IDENTIFIANT_ANCIEN, modele="Modèle B")
+        self.ecrire_essai(IDENTIFIANT_TIERS, modele="Modèle C")
+
+        corps = self.page(
+            [
+                f"{IDENTIFIANT_ANCIEN}:1",
+                f"{IDENTIFIANT_TIERS}:1",
+                f"{IDENTIFIANT}:1",
+            ]
+        )
+
+        self.assertEqual(corps.count("<article>"), 3)
+        grille = corps.index('class="grid cols-2"')
+        positions = [
+            corps.index(f"<h2>Modèle {lettre} · ", grille) for lettre in ("B", "C", "A")
+        ]
+        self.assertEqual(positions, sorted(positions))
+
+    def test_alertes_materiel_visibles_hors_details(self) -> None:
+        self.ecrire_essai(IDENTIFIANT, modele="Modèle A")
+        self.ecrire_essai(
+            IDENTIFIANT_ANCIEN,
+            modele="Modèle B",
+            machine={**self.MACHINE, "ram_totale_octets": 32_000_000_000},
+        )
+
+        corps = self.page([f"{IDENTIFIANT}:1", f"{IDENTIFIANT_ANCIEN}:1"])
+        premier_details = corps.index("<details")
+
+        # Les deux cartes signalent la différence connue, sans ouvrir de détail.
+        self.assertEqual(corps[:premier_details].count("Matériel différent"), 2)
+        self.assertIn("Matériel différent sur RAM totale", corps[:premier_details])
+        self.assertIn(
+            "sans preuve d'identité des machines", corps[:premier_details]
+        )
+
+    def test_materiel_inconnu_et_difference_connue_sur_les_cartes(self) -> None:
+        self.ecrire_essai(IDENTIFIANT, modele="Modèle A")
+        self.ecrire_essai(
+            IDENTIFIANT_ANCIEN,
+            modele="Modèle B",
+            machine={
+                **self.MACHINE,
+                "architecture": None,
+                "ram_totale_octets": 32_000_000_000,
+            },
+        )
+
+        corps = self.page([f"{IDENTIFIANT}:1", f"{IDENTIFIANT_ANCIEN}:1"])
+        visible = corps[: corps.index("<details")]
+
+        # La différence connue n'est pas masquée par le champ inconnu.
+        self.assertIn("Matériel différent sur RAM totale", visible)
+        self.assertIn("matériel non vérifié pour architecture", visible)
+
+    def test_processeur_absent_seul_sans_alerte_materiel(self) -> None:
+        self.ecrire_essai(IDENTIFIANT, modele="Modèle A")
+        self.ecrire_essai(
+            IDENTIFIANT_ANCIEN,
+            modele="Modèle B",
+            machine={**self.MACHINE, "processeur": "Autre processeur fictif"},
+        )
+
+        corps = self.page([f"{IDENTIFIANT}:1", f"{IDENTIFIANT_ANCIEN}:1"])
+
+        self.assertNotIn("Matériel différent", corps)
+        self.assertNotIn("matériel non vérifié", corps)
+
+    def test_annotation_ram_cumulative_pour_audio_non_premier(self) -> None:
+        self.ecrire_essai(IDENTIFIANT, modele="Modèle A", audios=2)
+        self.ecrire_essai(IDENTIFIANT_ANCIEN, modele="Modèle B")
+
+        corps = self.page([f"{IDENTIFIANT}:2", f"{IDENTIFIANT_ANCIEN}:1"])
+
+        self.assertEqual(corps.count("Pic mémoire cumulatif du lot"), 1)
+        self.assertIn("il peut provenir d'un audio précédent", corps)
 
 
 class ClassementGroupesWebTest(SocleWebTest):
@@ -889,7 +1227,7 @@ class ListeParResultatWebTest(SocleWebTest):
         self.assertIn("Threads demandés : 4", corps)
         self.assertIn("Marques", corps)
         self.assertIn("FACTICE", corps)
-        self.assertIn("aucune", corps)
+        self.assertIn("classées à part", corps)
 
     def test_aucun_dedoublonnage_dans_la_liste(self) -> None:
         # Deux essais identiques du même audio restent deux lignes.

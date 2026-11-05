@@ -799,6 +799,268 @@ class DetailExecutionTest(SocleConsultationTest):
             self.service.detail(IDENTIFIANT)
 
 
+class DetailIndicateursEtAlertesTest(SocleConsultationTest):
+    """Indicateurs et alertes visibles du détail individuel (tâche 3.2).
+
+    Les fichiers sont synthétiques et écrits dans le dossier temporaire du
+    socle : aucune inférence, aucun réseau, aucune écriture dans les fichiers
+    lus. Les deux essais d'un même audio partagent la même empreinte.
+    """
+
+    MACHINE = {
+        "os": "Linux",
+        "version_os": "6.1",
+        "architecture": "x86_64",
+        "processeur": "Processeur fictif de test",
+        "coeurs_physiques": 4,
+        "coeurs_logiques": 8,
+        "ram_totale_octets": 16_000_000_000,
+    }
+
+    def ecrire_essai(
+        self,
+        identifiant: str = IDENTIFIANT,
+        *,
+        machine: dict[str, Any] | None = None,
+        audios: int = 1,
+        mesures: dict[str, Any] | None = None,
+        etat: str = ETAT_TERMINEE,
+        modele: str | None = None,
+        empreinte: Any = None,
+    ) -> None:
+        """Exécution synthétique d'un ou plusieurs audios transcrits."""
+        plans = tuple(
+            (f"prise{position}.wav", STATUT_OK) for position in range(1, audios + 1)
+        )
+        options: dict[str, Any] = {"audios": plans, "etat": etat}
+        if machine is not None:
+            options["machine"] = machine
+        run = run_json(identifiant, **options)
+        if modele is not None:
+            run["demande"]["modele"]["identifiant"] = modele
+        resultats = []
+        for plan in run["audios"]:
+            resultat = result_json(
+                plan,
+                execution=identifiant,
+                **({} if mesures is None else {"mesures_extra": mesures}),
+            )
+            if empreinte is not None:
+                resultat["audio"]["empreinte_sha256"] = empreinte
+            resultats.append(resultat)
+        ecrire_execution(self.donnees, run, tuple(resultats))
+
+    def test_indicateurs_trois_valeurs_et_ratios_du_materiel_consigne(self) -> None:
+        self.ecrire_essai(
+            machine=self.MACHINE,
+            mesures={
+                "duree_transcription_s": 2.0,
+                "temps_cpu_s": 1.6,
+                "pic_memoire_octets": 2_400_000_000,
+            },
+        )
+
+        audio = self.service.detail(IDENTIFIANT).audios[0]
+
+        self.assertEqual(audio.indicateurs.duree_transcription_s, 2.0)
+        self.assertEqual(audio.indicateurs.pic_memoire_octets, 2_400_000_000)
+        self.assertEqual(audio.indicateurs.ram_totale_octets, 16_000_000_000)
+        self.assertAlmostEqual(audio.indicateurs.part_ram, 15.0)
+        # 100 × 1,6 s CPU / (2 s × 8 processeurs logiques) = 10 %.
+        self.assertAlmostEqual(audio.indicateurs.occupation_cpu, 10.0)
+        # Premier audio de la demande, aucun autre essai : aucune alerte.
+        self.assertIsNone(audio.annotation_ram)
+        self.assertIsNone(audio.materiel_alerte)
+
+    def test_indicateurs_absents_et_materiel_non_verifie(self) -> None:
+        run = run_json(IDENTIFIANT, machine=None)
+        resultat = result_json(run["audios"][0])
+        del resultat["mesures"]
+        ecrire_execution(self.donnees, run, (resultat,))
+
+        detail = self.service.detail(IDENTIFIANT)
+        audio = detail.audios[0]
+
+        # Aucune mesure n'est remplacée par zéro, et aucun ratio n'est inventé.
+        self.assertIsNone(audio.indicateurs.duree_transcription_s)
+        self.assertIsNone(audio.indicateurs.pic_memoire_octets)
+        self.assertIsNone(audio.indicateurs.part_ram)
+        self.assertIsNone(audio.indicateurs.occupation_cpu)
+        self.assertIn("Matériel non vérifié", audio.materiel_alerte)
+        self.assertEqual(
+            detail.libelle_modele, "aucun modèle, textes et mesures simulés"
+        )
+
+    def test_annotation_ram_du_deuxieme_audio_seulement(self) -> None:
+        self.ecrire_essai(machine=self.MACHINE, audios=2)
+
+        premier, deuxieme = self.service.detail(IDENTIFIANT).audios
+
+        self.assertIsNone(premier.annotation_ram)
+        self.assertIn("cumulatif", deuxieme.annotation_ram)
+        self.assertIn("audio précédent", deuxieme.annotation_ram)
+
+    def test_materiel_different_entre_deux_essais_du_meme_audio(self) -> None:
+        self.ecrire_essai(IDENTIFIANT, machine=self.MACHINE)
+        self.ecrire_essai(
+            IDENTIFIANT_ANCIEN,
+            machine={**self.MACHINE, "ram_totale_octets": 32_000_000_000},
+        )
+
+        audio = self.service.detail(IDENTIFIANT).audios[0]
+
+        self.assertIn("Matériel différent sur RAM totale", audio.materiel_alerte)
+        self.assertNotIn("non vérifié", audio.materiel_alerte)
+
+    def test_difference_connue_signalee_malgre_un_champ_inconnu(self) -> None:
+        self.ecrire_essai(IDENTIFIANT, machine=self.MACHINE)
+        self.ecrire_essai(
+            IDENTIFIANT_ANCIEN,
+            machine={
+                **self.MACHINE,
+                "architecture": None,
+                "ram_totale_octets": 32_000_000_000,
+            },
+        )
+
+        alerte = self.service.detail(IDENTIFIANT).audios[0].materiel_alerte
+
+        # Une différence connue reste signalée même si un autre champ manque,
+        # et l'inconnu du champ concerné reste mentionné.
+        self.assertIn("Matériel différent sur RAM totale", alerte)
+        self.assertIn("matériel non vérifié pour architecture", alerte)
+
+    def test_difference_connue_non_masquee_par_un_autre_essai_inconnu(self) -> None:
+        self.ecrire_essai(IDENTIFIANT, machine=self.MACHINE)
+        self.ecrire_essai(
+            IDENTIFIANT_ANCIEN,
+            machine={**self.MACHINE, "ram_totale_octets": 32_000_000_000},
+        )
+        self.ecrire_essai(
+            "20240103-000000-00000003",
+            machine={**self.MACHINE, "ram_totale_octets": None},
+        )
+
+        alerte = self.service.detail(IDENTIFIANT).audios[0].materiel_alerte
+
+        # La RAM est connue et différente chez un essai, inconnue chez l'autre :
+        # la différence connue prime et reste signalée.
+        self.assertIn("Matériel différent sur RAM totale", alerte)
+        self.assertNotIn("non vérifié", alerte)
+
+    def test_materiel_identique_ne_declenche_aucune_alerte(self) -> None:
+        self.ecrire_essai(IDENTIFIANT, machine=self.MACHINE)
+        self.ecrire_essai(IDENTIFIANT_ANCIEN, machine=dict(self.MACHINE))
+
+        self.assertIsNone(self.service.detail(IDENTIFIANT).audios[0].materiel_alerte)
+
+    def test_nom_du_processeur_informatif_sans_alerte(self) -> None:
+        self.ecrire_essai(
+            IDENTIFIANT, machine={**self.MACHINE, "processeur": None}
+        )
+        self.ecrire_essai(
+            IDENTIFIANT_ANCIEN,
+            machine={**self.MACHINE, "processeur": "Autre processeur fictif"},
+        )
+
+        detail = self.service.detail(IDENTIFIANT)
+
+        # Le nom du processeur est facultatif : son absence seule n'alerte pas,
+        # même quand un autre essai en consigne un différent.
+        self.assertIsNone(detail.audios[0].materiel_alerte)
+        self.assertIn(("Processeur", None), detail.machine)
+
+    def test_champ_requis_absent_rend_le_materiel_non_verifie(self) -> None:
+        self.ecrire_essai(IDENTIFIANT, machine=self.MACHINE)
+        self.ecrire_essai(
+            IDENTIFIANT_ANCIEN,
+            machine={**self.MACHINE, "architecture": None},
+        )
+
+        self.assertIn(
+            "Matériel non vérifié",
+            self.service.detail(IDENTIFIANT).audios[0].materiel_alerte,
+        )
+        # L'essai incomplet est aussi signalé pour lui-même.
+        self.assertIn(
+            "Matériel non vérifié",
+            self.service.detail(IDENTIFIANT_ANCIEN).audios[0].materiel_alerte,
+        )
+
+    def test_audio_different_n_est_pas_compare(self) -> None:
+        self.ecrire_essai(IDENTIFIANT, machine=self.MACHINE)
+        self.ecrire_essai(
+            IDENTIFIANT_ANCIEN,
+            machine={**self.MACHINE, "ram_totale_octets": 32_000_000_000},
+            empreinte="d" * 64,
+        )
+
+        # Deux fichiers audio différents ne se comparent pas : aucune alerte.
+        self.assertIsNone(self.service.detail(IDENTIFIANT).audios[0].materiel_alerte)
+
+    def test_libelle_modele_dernier_segment(self) -> None:
+        self.ecrire_essai(modele="organisation/modele-a")
+
+        self.assertEqual(self.service.detail(IDENTIFIANT).libelle_modele, "modele-a")
+
+    def test_marque_synthetique_seule_ne_simule_ni_moteur_ni_mesures(self) -> None:
+        run = run_json(
+            IDENTIFIANT,
+            factice=False,
+            synthetique=True,
+            mesures_simulees=False,
+        )
+        resultat = result_json(
+            run["audios"][0], factice=False, synthetique=True, mesures_simulees=False
+        )
+        ecrire_execution(self.donnees, run, (resultat,))
+
+        detail = self.service.detail(IDENTIFIANT)
+
+        self.assertIn("SYNTHÉTIQUE", detail.execution.marques)
+        self.assertFalse(detail.simule_mesures)
+        transcription = detail.audios[0].transcription
+        self.assertIn("SYNTHÉTIQUE", transcription.marques)
+        self.assertFalse(transcription.simule_mesures)
+
+        simule = run_json(IDENTIFIANT_ANCIEN, factice=True, mesures_simulees=True)
+        ecrire_execution(
+            self.donnees,
+            simule,
+            (
+                result_json(
+                    simule["audios"][0],
+                    execution=IDENTIFIANT_ANCIEN,
+                    factice=True,
+                    mesures_simulees=True,
+                ),
+            ),
+        )
+        self.assertTrue(self.service.detail(IDENTIFIANT_ANCIEN).simule_mesures)
+
+    def test_lecture_sans_ecriture_avec_alertes(self) -> None:
+        self.ecrire_essai(IDENTIFIANT, machine=self.MACHINE, audios=2)
+        self.ecrire_essai(
+            IDENTIFIANT_ANCIEN,
+            machine={**self.MACHINE, "os": "Windows"},
+        )
+        racine = self.donnees / "results"
+        avant = {
+            chemin: chemin.read_bytes()
+            for chemin in sorted(racine.rglob("*"))
+            if chemin.is_file()
+        }
+
+        self.service.detail(IDENTIFIANT)
+
+        apres = {
+            chemin: chemin.read_bytes()
+            for chemin in sorted(racine.rglob("*"))
+            if chemin.is_file()
+        }
+        self.assertEqual(avant, apres)
+
+
 class ConversionsTest(unittest.TestCase):
     def test_mesures_non_finies_ne_sont_jamais_des_mesures(self) -> None:
         temporaire = tempfile.TemporaryDirectory()

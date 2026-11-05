@@ -1,9 +1,9 @@
-"""Tests de rendu de l'aide locale préparée (tâche 1.2).
+"""Tests de l'aide locale et du regroupement des explications (tâches 1.2 et 3.3).
 
-Le gabarit `aide_resultats.html` étend `base.html`, mais aucune route ne
-l'expose encore : la tâche 3.3 ajoutera `/resultats/aide`. Ces tests le rendent
-directement dans le contexte de l'application, vérifient les conventions et
-l'échappement de « < », sans requête réseau.
+L'aide est servie par la route GET fixe `/resultats/aide` et liée depuis les
+écrans de résultats. Les tests rendent aussi le gabarit directement dans le
+contexte de l'application, vérifient les conventions et l'échappement de « < »,
+sans requête réseau ni écriture dans les résultats.
 """
 
 from __future__ import annotations
@@ -15,6 +15,11 @@ from unittest.mock import patch
 
 from flask import render_template
 
+from tests.test_consultation_resultats import (
+    IDENTIFIANT,
+    IDENTIFIANT_ANCIEN,
+    execution_complete,
+)
 from tests.test_web import SocleWebTest
 
 
@@ -84,19 +89,86 @@ class AideResultatsWebTest(SocleWebTest):
             "1 min 37 s|97.000 s|2,4 Go|2400000000 octets|< 1 %",
         )
 
-    def test_aide_non_routée_ni_liée_avant_tache_3_3(self) -> None:
-        reponse = self.client.get("/resultats", base_url=self.base_url())
+    def test_route_fixe_aide_sans_identifiant(self) -> None:
+        reponse = self.client.get("/resultats/aide", base_url=self.base_url())
         self.assertEqual(reponse.status_code, 200)
         corps = reponse.get_data(as_text=True)
-        self.assertNotIn("/resultats/aide", corps)
+        self.verifier_html_seul(corps)
+
+        # Route fixe, distincte de la route dynamique du détail : elle ne lit
+        # aucun résultat et ne crée ni modifie aucun fichier.
+        self.assertIn("Comprendre les indicateurs", html.unescape(corps))
+        self.assertFalse(self.dossier_data.exists())
         self.assertNotIn("/resultats/aide", self.rendre_aide())
 
-        # La route fixe relève de la tâche 3.3 : seule la route dynamique du
-        # détail existe pour l'instant et répond 404 pour cet identifiant.
-        self.assertEqual(
-            self.client.get("/resultats/aide", base_url=self.base_url()).status_code,
-            404,
+    def test_aide_liée_depuis_les_ecrans_de_resultats(self) -> None:
+        execution_complete(self.dossier_data)
+        execution_complete(self.dossier_data, IDENTIFIANT_ANCIEN)
+        comparaison = (
+            f"/resultats/comparaison/{'c' * 64}"
+            f"?transcription={IDENTIFIANT}:1&transcription={IDENTIFIANT_ANCIEN}:1"
         )
+        chemins = (
+            "/resultats",
+            "/resultats/comparaison",
+            f"/resultats/{IDENTIFIANT}",
+            comparaison,
+        )
+        for chemin in chemins:
+            with self.subTest(chemin=chemin):
+                reponse = self.client.get(chemin, base_url=self.base_url())
+                self.assertEqual(reponse.status_code, 200, chemin)
+                self.assertIn('href="/resultats/aide"', reponse.get_data(as_text=True))
+
+
+    def test_explications_regroupees_dans_l_aide(self) -> None:
+        execution_complete(self.dossier_data, IDENTIFIANT)
+        execution_complete(self.dossier_data, IDENTIFIANT_ANCIEN)
+        comparaison = (
+            f"/resultats/comparaison/{'c' * 64}"
+            f"?transcription={IDENTIFIANT}:1"
+            f"&transcription={IDENTIFIANT_ANCIEN}:1"
+        )
+
+        comparaison_html = html.unescape(
+            self.client.get(
+                comparaison,
+                base_url=self.base_url(),
+            ).get_data(as_text=True)
+        )
+        detail_html = html.unescape(
+            self.client.get(
+                f"/resultats/{IDENTIFIANT}", base_url=self.base_url()
+            ).get_data(as_text=True)
+        )
+        aide_html = html.unescape(
+            self.client.get("/resultats/aide", base_url=self.base_url())
+            .get_data(as_text=True)
+        )
+
+        # Les explications générales ne sont plus répétées avant les textes.
+        for page in (comparaison_html, detail_html):
+            for phrase in (
+                "JSON complet",
+                "NaN",
+                "n'exclut aucune transcription",
+                "Aucune de ces absences n'est remplacée par zéro",
+                "Le nom du processeur est informatif",
+            ):
+                self.assertNotIn(phrase, page)
+        # Elles sont regroupées dans l'aide locale.
+        for phrase in (
+            "empreinte SHA-256",
+            "JSON complet",
+            "NaN",
+            "n'exclut aucune transcription",
+            "aucune inférence",
+            "score global",
+            "Le nom du processeur est informatif",
+            "Aucune de ces absences n'est remplacée par zéro",
+        ):
+            self.assertIn(phrase, aide_html)
+
 
 
 if __name__ == "__main__":

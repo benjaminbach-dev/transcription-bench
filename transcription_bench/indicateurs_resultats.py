@@ -18,17 +18,21 @@ en Mo et Go **décimaux** (1 Mo = 10⁶ octets, 1 Go = 10⁹ octets) ; les
 pourcentages sont entiers. Une petite valeur strictement positive s'affiche avec
 une borne (« < 0,1 s », « < 0,1 Mo », « < 1 % ») et n'est jamais arrondie à zéro.
 Les valeurs négatives, non finies ou d'un autre type affichent « indisponible ».
-Aucun de ces calculs ne réécrit un fichier de résultat.
+Une **date courte** résume un horodatage ISO pour les cartes, sans convertir son
+fuseau ; l'horodatage complet reste affiché dans les détails. Aucun de ces
+calculs ne réécrit un fichier de résultat.
 """
 
 from __future__ import annotations
 
 import math
+from datetime import datetime
 from typing import Any
 
 #: Libellés de premier niveau : absence distincte d'une valeur brute invalide.
 NON_MESURE = "non mesuré"
 INDISPONIBLE = "indisponible"
+DATE_NON_CONSIGNEE = "date non consignée"
 
 #: Unités décimales SI, jamais binaires : 1 Mo = 10⁶ octets, 1 Go = 10⁹ octets.
 OCTETS_PAR_MO = 10**6
@@ -147,6 +151,23 @@ def formater_pourcentage_premier_niveau(valeur: Any) -> str:
     # Neutraliser le bruit binaire d'un ratio exact (29 -> 28,999999999999996)
     # avant la troncature ; la valeur brute servant au tri reste inchangée.
     return f"{math.floor(round(nombre, 9))} %"
+
+
+def formater_date_courte(valeur: Any) -> str:
+    """Date courte « JJ/MM/AAAA HH:MM » d'un horodatage ISO consigné.
+
+    Le fuseau de la valeur consignée n'est pas converti : la date affichée est
+    celle de l'essai, pas celle du poste qui consulte. L'horodatage complet reste
+    accessible dans les détails. Une valeur absente, non textuelle ou non ISO
+    affiche « date non consignée », jamais une date inventée.
+    """
+    if not isinstance(valeur, str):
+        return DATE_NON_CONSIGNEE
+    try:
+        date = datetime.fromisoformat(valeur)
+    except ValueError:
+        return DATE_NON_CONSIGNEE
+    return f"{date:%d/%m/%Y %H:%M}"
 
 
 def _ratio(calcul: float) -> float | None:

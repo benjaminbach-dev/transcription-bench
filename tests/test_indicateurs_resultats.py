@@ -20,8 +20,10 @@ from tests.test_consultation_resultats import (
     run_json,
 )
 from transcription_bench.indicateurs_resultats import (
+    DATE_NON_CONSIGNEE,
     INDISPONIBLE,
     NON_MESURE,
+    formater_date_courte,
     formater_duree_premier_niveau,
     formater_memoire_premier_niveau,
     formater_pourcentage_premier_niveau,
@@ -211,6 +213,26 @@ class FormatPourcentagePremierNiveauTest(unittest.TestCase):
                 self.assertEqual(
                     formater_pourcentage_premier_niveau(valeur), attendu
                 )
+
+
+class FormatDateCourteTest(unittest.TestCase):
+    """Date courte des cartes : ISO consigné, jamais de date inventée."""
+
+    def test_date_iso_avec_fuseau_sans_conversion(self) -> None:
+        self.assertEqual(
+            formater_date_courte("2024-01-02T03:04:05+00:00"), "02/01/2024 03:04"
+        )
+        self.assertEqual(
+            formater_date_courte("2024-12-31T23:59:59-05:00"), "31/12/2024 23:59"
+        )
+        self.assertEqual(
+            formater_date_courte("2024-01-02T03:04:05"), "02/01/2024 03:04"
+        )
+
+    def test_valeurs_absentes_ou_invalides_sans_date_inventee(self) -> None:
+        for valeur in (None, "", "pas une date", 42, True, [], {}):
+            with self.subTest(valeur=valeur):
+                self.assertEqual(formater_date_courte(valeur), DATE_NON_CONSIGNEE)
 
 
 class RatiosDepuisCapacitesConsigneesTest(SocleConsultationTest):

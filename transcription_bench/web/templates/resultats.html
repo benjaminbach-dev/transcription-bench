@@ -4,11 +4,12 @@
 {% block titre %}Résultats — transcription-bench{% endblock %}
 {% block contenu %}
 <h1>Résultats</h1>
-<p class="prose"><a href="{{ url_for('resultats') }}">Actualiser</a></p>
+<p class="prose"><a href="{{ url_for('comparaisons') }}">Comparer des transcriptions d'un même audio</a> — <a href="{{ url_for('aide_resultats') }}">Comprendre les indicateurs</a> — <a href="{{ url_for('resultats') }}">Actualiser</a></p>
 {% if erreur_dossier %}
 <p class="callout danger prose" role="status">{{ erreur_dossier }}</p>
 {% endif %}
-<p class="prose">Exécutions enregistrées dans <strong>{{ dossier }}</strong>, de la plus récente à la plus ancienne. Cette page ne fait que relire les fichiers de résultats : elle ne lance aucune inférence et ne modifie aucun fichier. Une exécution non terminée affiche ses résultats partiels, et les audios sans résultat sont signalés comme non traités.</p>
+<p class="prose">Exécutions enregistrées, de la plus récente à la plus ancienne ; chaque ligne ouvre le détail de ses audios.</p>
+<p class="prose small">Dossier des résultats : <strong>{{ dossier }}</strong>.</p>
 {% if executions %}
 <div class="overflow-auto">
 <table>
@@ -48,13 +49,8 @@
 </table>
 </div>
 </details>
-<p class="prose">Une durée totale « indisponible » n'a jamais été mesurée : elle n'est pas remplacée par zéro. Une exécution abandonnée après un arrêt brutal du serveur n'a par exemple aucune durée totale ni durée de processus.</p>
-<p class="prose">Les marques <strong>FACTICE</strong>, <strong>SYNTHÉTIQUE</strong> et <strong>MESURES SIMULÉES</strong> viennent du moteur factice ou de données synthétiques : leurs textes et leurs mesures ne sont jamais représentatifs d'un PC et ne disent rien de la qualité médicale d'une transcription.</p>
 {% elif not erreur_dossier %}
 <p class="callout prose">Aucune exécution enregistrée pour l'instant. Une exécution apparaît ici dès que la page des exécutions en a lancé une ; les résultats déjà produits restent consultables même si le modèle local est supprimé ensuite.</p>
 {% endif %}
-<h2>Comparaison côte à côte</h2>
-<p class="prose">La comparaison de transcriptions regroupe les résultats par empreinte SHA-256 du fichier audio source, et non par leur nom : deux fichiers de même nom mais d'empreintes différentes ne sont jamais comparés, et un même contenu déposé sous deux noms reste dans un seul groupe.</p>
-<p class="prose"><a href="{{ url_for('comparaisons') }}">Comparer des transcriptions d'un même audio</a></p>
 <p class="prose"><a href="{{ url_for('accueil') }}">Retour à l'accueil</a></p>
 {% endblock %}

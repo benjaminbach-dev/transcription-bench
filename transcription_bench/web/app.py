@@ -33,14 +33,23 @@ page `/operation` affiche l'instantané du créneau et permet d'arrêter
 l'exécution active. Aucune route ne transmet d'objet Flask au travail de fond.
 La page des résultats (tâche 7.1) liste les exécutions enregistrées, des plus
 récentes aux plus anciennes, et ouvre le détail d'une transcription : texte,
-segments, métadonnées, mesures et marques, en lecture seule. La page de
+segments, métadonnées, mesures et marques, en lecture seule. Le détail
+individuel (tâche 3.2) suit la même tête de lecture qu'une carte de comparaison
+— trois indicateurs puis texte complet — avec l'annotation du pic mémoire
+cumulatif, une mention de matériel différent ou non vérifié et les états
+partiels visibles hors de tout accordéon fermé. La page de
 comparaison (tâche 7.2) regroupe les transcriptions par empreinte SHA-256 du
 fichier audio source et affiche côte à côte celles d'un même fichier, avec les
 réglages effectifs qui diffèrent, les états, les marques et les mesures
 principales. La liste des groupes se classe par temps, mémoire, CPU ou date
 (tâche 2.1) selon un critère borné, refusé (400) s'il est inconnu ou répété ; la
-comparaison sélectionnée garde l'ordre reçu. Lecture seule également : aucune
-route de résultats ne lance d'inférence ni ne modifie un fichier.
+comparaison sélectionnée garde l'ordre reçu. Une comparaison (tâche 3.1)
+affiche une carte par transcription, avec trois indicateurs de premier niveau
+(durée, mémoire max rapportée à la RAM consignée, occupation CPU moyenne), une
+synthèse descriptive temps/RAM, puis le texte complet ; « Ce qui diffère » et
+« Toutes les mesures et informations » restent accessibles par détails. Lecture
+seule également : aucune route de résultats ne lance d'inférence ni ne modifie
+un fichier.
 """
 
 from __future__ import annotations
@@ -84,6 +93,7 @@ from transcription_bench.gestion_modeles import (
     empreinte_verification,
 )
 from transcription_bench.indicateurs_resultats import (
+    formater_date_courte,
     formater_duree_premier_niveau,
     formater_memoire_premier_niveau,
     formater_pourcentage_premier_niveau,
@@ -281,6 +291,7 @@ def create_app(config: ConfigApplication, services: ServicesApplication) -> Flas
     # Initialiser Jinja après la configuration : FLASK_DEBUG ne doit pas
     # activer son rechargement automatique. Les formats détaillés restent inchangés.
     application.jinja_env.globals.update(
+        formater_date_courte=formater_date_courte,
         formater_duree_premier_niveau=formater_duree_premier_niveau,
         formater_memoire_premier_niveau=formater_memoire_premier_niveau,
         formater_pourcentage_premier_niveau=formater_pourcentage_premier_niveau,
@@ -694,6 +705,15 @@ def _enregistrer_routes(
         return render_template(
             "resultat.html", detail=detail, repere_rtf=REPERE_RTF
         )
+
+    @application.get("/resultats/aide")
+    def aide_resultats() -> str:
+        """Aide locale fixe : indicateurs, ratios, formats, fichiers et limites.
+
+        Route GET fixe, distincte de la route dynamique `/resultats/<identifiant>` :
+        aucune donnée de résultat n'est lue et aucune entrée de menu n'est ajoutée.
+        """
+        return render_template("aide_resultats.html", repere_rtf=REPERE_RTF)
 
     @application.get("/resultats/comparaison")
     def comparaisons() -> str:

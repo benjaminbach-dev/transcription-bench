@@ -2,39 +2,110 @@
 {% import "formats.html" as formats %}
 {% block page_courante %}parent:comparaisons{% endblock %}
 {% block titre %}Comparaison {{ comparaison.empreinte }} — transcription-bench{% endblock %}
+
+{#- Valeur d'une cellule de détail : le formatage reste celui des macros
+    existantes, et le RTF garde son repère non bloquant en détail. -#}
+{% macro valeur_detail(ligne, cellule) -%}
+{%- if not cellule.presente -%}non consigné
+{%- elif ligne.nature == "duree" -%}{{ formats.duree(cellule.valeur) }}
+{%- elif ligne.nature == "octets" -%}{{ formats.octets(cellule.valeur) }}
+{%- elif ligne.nature == "rtf" -%}{{ formats.nombre(cellule.valeur) }}{% if cellule.valeur is not none %} (repère d'objectif {{ repere_rtf }}, non bloquant){% endif %}
+{%- else -%}{{ formats.afficher(cellule.valeur) }}
+{%- endif -%}
+{%- endmacro %}
+
 {% block contenu %}
-<h1>Comparaison côte à côte</h1>
-<p class="prose"><a href="{{ url_for('comparaisons') }}">Retour aux groupes d'audios</a> — <a href="{{ url_for('resultats') }}">Liste des résultats</a></p>
-<p class="prose">Empreinte SHA-256 du fichier audio source : <strong>{{ comparaison.empreinte }}</strong> — nom(s) consigné(s) : {{ comparaison.noms | join(', ') }}. Toutes les colonnes portent la même empreinte : un fichier de même nom mais d'empreinte différente n'est jamais comparé ici. Cette page ne fait que relire les résultats : elle ne lance aucune inférence, ne modifie aucun fichier et n'établit ni score ni référence.</p>
+<h1>Comparaison</h1>
+<p class="prose"><a href="{{ url_for('comparaisons') }}">Retour aux groupes d'audios</a></p>
 {% if comparaison.factice %}
 <p class="callout warning prose" role="status"><strong>Comparaison portant des marques factices : au moins une transcription vient du moteur factice ou de données simulées.</strong> Ses textes et ses mesures ne sont pas représentatifs d'un PC et ne disent rien de la qualité médicale d'une transcription.</p>
 {% endif %}
 {% if comparaison.partiel %}
 <p class="callout warning prose" role="status"><strong>Résultats partiels : au moins une exécution comparée n'est pas terminée.</strong> Ses transcriptions déjà enregistrées sont affichées telles quelles ; les audios sans résultat ne sont pas comparés et une mesure absente n'est jamais remplacée par zéro.</p>
 {% endif %}
+<p class="prose">Mesures observées · {% if comparaison.synthese.plus_rapides %}Plus rapide : {{ comparaison.synthese.plus_rapides | join(' et ') }}{% if comparaison.synthese.plus_rapides | length > 1 %} (égalité){% endif %}{% else %}Plus rapide : non attribué{% endif %} · {% if comparaison.synthese.moins_de_ram %}Moins de RAM : {{ comparaison.synthese.moins_de_ram | join(' et ') }}{% if comparaison.synthese.moins_de_ram | length > 1 %} (égalité){% endif %}{% else %}Moins de RAM : non attribué{% endif %}{% if comparaison.synthese.exclues %} · Sans distinction : {{ comparaison.synthese.exclues | join(', ') }} (mesures simulées ou résultat partiel){% endif %} · <a href="{{ url_for('aide_resultats') }}">Comprendre les indicateurs</a></p>
+
+<div class="grid cols-2">
+{% for carte in comparaison.cartes %}
+<article>
+<header>
+<h2>{{ carte.libelle }}{% if carte.entree.moteur %} · {{ carte.entree.moteur }}{% endif %}</h2>
+<p class="prose small">Audio {{ carte.entree.ordre }} — {{ carte.entree.nom }} · {{ formats.date_courte(carte.entree.date_essai) }}{% if carte.entree.libelle_statut != 'transcrit' %} · {{ carte.entree.libelle_statut }}{% endif %}{% if carte.entree.partiel %} · résultats partiels{% endif %}</p>
+{% if carte.entree.reglages_distinctifs %}
+<p class="prose small">Réglages distinctifs : {% for libelle, valeur in carte.entree.reglages_distinctifs %}{{ libelle }} : {{ formats.afficher(valeur) }}{% if not loop.last %} · {% endif %}{% endfor %}</p>
+{% endif %}
+{% if carte.entree.marques %}
+<p class="prose small"><strong>Marques : {{ carte.entree.marques | join(', ') }}</strong></p>
+{% endif %}
+</header>
+{% if carte.erreur %}
+<p class="callout danger prose">Erreur consignée pour cet audio : {{ carte.erreur }}</p>
+{% endif %}
+{{ formats.indicateurs(carte.indicateurs) }}
+{% if carte.annotation_ram %}
+<p class="prose small">{{ carte.annotation_ram }}</p>
+{% endif %}
+{% if carte.materiel_alerte %}
+<p class="prose small">{{ carte.materiel_alerte }}</p>
+{% endif %}
+<h3>Texte transcrit</h3>
+{% if carte.texte is not none %}
+<pre>{{ carte.texte }}</pre>
+{% else %}
+<p class="prose">Aucun texte transcrit pour cet audio.</p>
+{% endif %}
+<footer>
+<p class="prose small"><a href="{{ url_for('resultat_detail', identifiant=carte.entree.execution) }}">Détail complet de l'essai</a></p>
+</footer>
+</article>
+{% endfor %}
+</div>
+
+{% set lignes_differentes = comparaison.lignes | selectattr("differents") | rejectattr("nature", "equalto", "transcription") | rejectattr("nature", "equalto", "detail") | list %}
+<details>
+<summary>Ce qui diffère</summary>
+{% if lignes_differentes %}
+{% for ligne in lignes_differentes %}
+<dl class="prose">
+<dt>{{ ligne.libelle }}</dt>
+{% for carte in comparaison.cartes %}
+<dd><strong>{{ carte.libelle }}</strong> : {{ valeur_detail(ligne, ligne.cellules[loop.index0]) }}</dd>
+{% endfor %}
+</dl>
+{% endfor %}
+<p class="prose">Les autres mesures et informations comparées sont communes ; les données techniques complémentaires restent dans « Toutes les mesures et informations ».</p>
+{% else %}
+<p class="prose">Aucune mesure ni information comparée ne diffère sur les valeurs brutes des fichiers. Les valeurs communes restent visibles dans « Toutes les mesures et informations ».</p>
+{% endif %}
+</details>
+
+<details>
+<summary>Toutes les mesures et informations</summary>
+<p class="prose small">Empreinte SHA-256 : <strong>{{ comparaison.empreinte }}</strong> — nom(s) consigné(s) : {{ comparaison.noms | join(', ') }}.</p>
+<p class="prose">Le texte transcrit reste dans chaque carte, sans diff textuel ni score.</p>
 <div class="overflow-auto">
 <table>
 <thead>
 <tr>
 <th>Élément comparé</th>
-{% for colonne in comparaison.colonnes %}
-<th><a href="{{ url_for('resultat_detail', identifiant=colonne.execution) }}">{{ colonne.execution }}</a><br>Audio {{ colonne.ordre }} — {{ colonne.nom }}<br>{{ colonne.libelle_statut }}</th>
+{% for carte in comparaison.cartes %}
+<th><a href="{{ url_for('resultat_detail', identifiant=carte.entree.execution) }}">{{ carte.entree.execution }}</a><br>Audio {{ carte.entree.ordre }} — {{ carte.entree.nom }}<br>{{ carte.entree.libelle_statut }} · {{ formats.afficher(carte.entree.date_essai) }}</th>
 {% endfor %}
 </tr>
 </thead>
 <tbody>
-{% for ligne in comparaison.lignes %}
+{% for ligne in comparaison.lignes %}{% if ligne.nature != "transcription" %}
 <tr>
 <th>{{ ligne.libelle }}{% if ligne.differents %} — différent{% endif %}</th>
 {% for cellule in ligne.cellules %}
-<td>{% if not cellule.presente %}non consigné{% elif ligne.nature == "transcription" %}{% if cellule.valeur is none %}aucun texte transcrit pour cet audio{% else %}<pre>{{ cellule.valeur }}</pre>{% endif %}{% elif ligne.nature == "duree" %}{{ formats.duree(cellule.valeur) }}{% elif ligne.nature == "octets" %}{{ formats.octets(cellule.valeur) }}{% elif ligne.nature == "rtf" %}{{ formats.nombre(cellule.valeur) }}{% if cellule.valeur is not none %} (repère d'objectif {{ repere_rtf }}, non bloquant){% endif %}{% else %}{{ formats.afficher(cellule.valeur) }}{% endif %}</td>
+<td>{{ valeur_detail(ligne, cellule) }}</td>
 {% endfor %}
 </tr>
-{% endfor %}
+{% endif %}{% endfor %}
 </tbody>
 </table>
 </div>
-<p class="prose">Une ligne marquée « différent » contient au moins une valeur distincte d'une colonne à l'autre. Cette comparaison porte sur la valeur brute des fichiers : les réglages demandés et les réglages effectifs y sont comparés sur leur JSON complet, listes et objets compris, et une valeur formatée pour l'affichage ne décide jamais d'une différence. Deux nombres non finis (<code>NaN</code>, <code>Infinity</code>, <code>-Infinity</code>) ou une valeur nulle peuvent donc être affichés de la même façon (« indisponible » ou <code>null</code>) tout en restant différents sur les données brutes : la ligne est alors marquée « différent » sans que l'affichage permette de le deviner. La ligne « Texte transcrit » fait exception : chaque texte est affiché tel quel dans un bloc préformaté, sans diff textuel, sans alignement caractère par caractère et sans score. Une cellule « non consigné » signifie que la clé est absente du fichier de résultat ; « indisponible » signifie qu'elle est consignée mais nulle ou non finie. Aucune des deux n'est remplacée par zéro.</p>
-<p class="prose">Le RTF affiché est recalculé sur la durée décodée. Le repère d'objectif est {{ repere_rtf }} : il n'exclut aucune transcription et n'en marque aucune en échec, même lorsque le RTF le dépasse largement. La durée totale de l'opération comprend le décodage, le chargement du modèle et l'écriture des résultats.</p>
-<p class="prose"><a href="{{ url_for('comparaisons') }}">Retour aux groupes d'audios</a> — <a href="{{ url_for('resultats') }}">Liste des résultats</a> — <a href="{{ url_for('accueil') }}">Retour à l'accueil</a></p>
+</details>
+
+<p class="prose"><a href="{{ url_for('comparaisons') }}">Retour aux groupes d'audios</a> — <a href="{{ url_for('resultats') }}">Liste des résultats</a> — <a href="{{ url_for('aide_resultats') }}">Comprendre les indicateurs</a> — <a href="{{ url_for('accueil') }}">Retour à l'accueil</a></p>
 {% endblock %}

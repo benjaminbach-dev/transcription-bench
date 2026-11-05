@@ -12,14 +12,22 @@
 
 ## 3. Comparaison et détail progressif
 
-- [ ] 3.1 Remplacer le tableau des transcriptions par des cartes à trois indicateurs et texte complet, synthèse descriptive temps/RAM, différences puis toutes les informations ; adapter les tests de rendu sans perdre les sélections multiples déjà permises ni le RTF avec son repère en détail.
-- [ ] 3.2 Appliquer la même priorité au détail individuel et afficher les annotations RAM cumulative, matériel différent/inconnu selon les quatre champs requis (nom CPU seul absent sans alerte) et états partiels ; tester que textes, marques et avertissements restent hors accordéons fermés et que durée du lot n'est jamais durée de l'audio.
-- [ ] 3.3 Regrouper les explications répétées dans l'aide locale et mettre en avant le lien existant Résultats vers groupes/classement et ajouter seulement la route GET fixe `/resultats/aide`, sans modifier le menu ni les routes existantes ; mettre à jour le guide concerné et ses tests de cohérence, vérifier la lecture éditoriale sans jargon avant les textes.
+- [x] 3.1 Remplacer le tableau des transcriptions par des cartes à trois indicateurs et texte complet, synthèse descriptive temps/RAM, différences puis toutes les informations ; adapter les tests de rendu sans perdre les sélections multiples déjà permises ni le RTF avec son repère en détail.
+- [x] 3.2 Appliquer la même priorité au détail individuel et afficher les annotations RAM cumulative, matériel différent/inconnu selon les quatre champs requis (nom CPU seul absent sans alerte) et états partiels ; tester que textes, marques et avertissements restent hors accordéons fermés et que durée du lot n'est jamais durée de l'audio.
+- [x] 3.3 Regrouper les explications répétées dans l'aide locale et mettre en avant le lien existant Résultats vers groupes/classement et ajouter seulement la route GET fixe `/resultats/aide`, sans modifier le menu ni les routes existantes ; mettre à jour le guide concerné et ses tests de cohérence, vérifier la lecture éditoriale sans jargon avant les textes.
 
 ## 4. Vérification intégrée
 
-- [ ] 4.1 Exécuter les tests ciblés consultation/comparaison/résultats/habillage/hors-ligne avec données synthétiques, sans réseau ni moteur réel ; vérifier absence de nouvelle classe/CSS/script et `git diff --check`.
+- [x] 4.1 Exécuter les tests ciblés consultation/comparaison/résultats/habillage/hors-ligne avec données synthétiques, sans réseau ni moteur réel ; vérifier absence de nouvelle classe/CSS/script et `git diff --check`.
 - [ ] 4.2 Faire observer par navigator les écrans finaux à 1280 × 800 et 360 px, clair/sombre réel et clavier : noms, trois métriques et début des textes visibles sur bureau pour le cas courant sans encart d'alerte, empilement et absence de débordement mobile, cas longs/absents/factices/partiels/égalités ; consigner ce qui n'a pas pu être observé sans le cocher comme validé.
+
+## Vérifications du lot final — 2026-11-05
+
+- Implémentation 3.1 à 3.3 par un worker séquentiel, relecture et corrections du principal après chaque tâche ; revue advisor après réception des constats navigator, puis contrôle des corrections. Aucun moteur réel, installation, téléchargement ni nouvelle mesure système.
+- Navigator Sonnet / medium, données entièrement fabriquées sur un serveur HTTP loopback temporaire : clair à 1280 × 800 et 360 × 800, cas courant/long/absent/factice/partiel/égalité/matériel différent/erreur ; clavier et détails ouverts/fermés observés. Les jeux sans marques servent uniquement à observer le rendu normal, jamais de preuve de mesure réelle.
+- Après corrections de densité sans CSS : à 1280 × 800, début des deux textes à y = 710,1 sans défiler ; à 360 × 800, titre de première carte à y = 444,9–540,3 et bloc complet des trois indicateurs à y = 641,3–785,8, sans débordement horizontal (largeur de page 360). Erreur comparée visible hors détails et échappée ; matériel et versions consultables ; PID, lancement, timings et segments restent dans les informations complètes, pas dans le résumé des différences.
+- **4.2 reste non cochée : thème sombre réel non observé**, l'outil navigateur disponible n'exposant pas l'émulation de `prefers-color-scheme`. Aucune injection CSS n'est présentée comme validation du sombre. Ce reliquat n'est ni une dérogation aux exigences ni une validation de l'autre change Sumi. Une configuration/outillage adapté ou un contrôle utilisateur réel reste nécessaire.
+- Détail individuel : segments, mesures détaillées et ordinateur/version ouverts et vérifiés ; les autres sections ne sont pas revendiquées comme explorées exhaustivement. Les passes finales sont ciblées : pas de nouveau balayage intégral de tous les scénarios après chaque petite correction.
 
 ## Workflow follow-up
 

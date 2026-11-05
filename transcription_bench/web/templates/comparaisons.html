@@ -29,12 +29,12 @@
 {% block titre %}Comparaison par audio — transcription-bench{% endblock %}
 {% block contenu %}
 <h1>Comparaison par audio</h1>
-<p class="prose"><a href="{{ url_for('resultats') }}">Retour à la liste des résultats</a> — <a href="{{ url_for('comparaisons') }}">Actualiser</a></p>
+<p class="prose"><a href="{{ url_for('resultats') }}">Retour à la liste des résultats</a> — <a href="{{ url_for('aide_resultats') }}">Comprendre les indicateurs</a> — <a href="{{ url_for('comparaisons') }}">Actualiser</a></p>
 {% if erreur_dossier %}
 <p class="callout danger prose" role="status">{{ erreur_dossier }}</p>
 {% endif %}
-<p class="prose">Les transcriptions sont regroupées par l'empreinte SHA-256 du fichier audio source, relue dans chaque résultat, et jamais par son nom. Un fichier remplacé par un autre portant le même nom forme donc un autre groupe, et un même contenu déposé sous deux noms différents reste dans un seul groupe. Une transcription dont l'empreinte est absente ou invalide n'est jamais regroupée : elle reste consultable dans l'historique global des exécutions et dans le détail de la sienne. Cette page ne fait que relire les fichiers de résultats : elle ne lance aucune inférence et ne modifie aucun fichier.</p>
-<p class="prose">Les résultats de chaque audio se classent par temps de transcription (défaut), mémoire max, CPU du moteur ou date d'essai, sur les valeurs consignées non arrondies. Changer de classement recharge la page : les cases cochées mais non soumises ne sont pas conservées (page sans JavaScript). Les résultats partiels restent consultables et classables, mais aucune mesure partielle ni simulée ne reçoit de distinction de performance.</p>
+<p class="prose">Résultats regroupés par empreinte SHA-256 du fichier audio source ; chaque groupe se classe et se sélectionne séparément.</p>
+<p class="prose small">Changer de classement recharge la page : les cases cochées mais non soumises ne sont pas conservées, la page restant sans JavaScript.</p>
 {% if groupes %}
 {% for groupe in groupes %}
 <article id="groupe-{{ groupe.empreinte }}">
@@ -53,7 +53,7 @@
 {% endif %}
 {% if groupe.entrees_simulees %}
 <h3>Mesures simulées de cet audio</h3>
-<p class="prose">Les résultats ci-dessous portent des mesures simulées : ils restent consultables et comparables, mais sont classés à part des résultats observés et ne reçoivent aucune distinction de performance.</p>
+<p class="prose small">Mesures simulées : consultables et comparables, mais classées à part et sans distinction de performance.</p>
 {{ tableau_resultats(groupe.entrees_simulees) }}
 {% endif %}
 <p class="prose">Cochez au moins deux transcriptions de ce groupe, puis lancez la comparaison.</p>

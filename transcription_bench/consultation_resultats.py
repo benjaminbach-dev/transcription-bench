@@ -76,6 +76,33 @@ outre toute distinction de performance à une mesure simulée ou à une exécuti
 partielle. Une transcription sans empreinte valide reste absente des groupes,
 mais `lister` conserve toutes les exécutions de l'historique global, avec lien
 vers leur détail.
+
+**Cartes et synthèse (3.1)** : la comparaison sélectionnée expose, dans l'ordre
+reçu, une carte par transcription : titre court (modèle, complété de
+l'identifiant d'essai si deux cartes partagent le même modèle), trois
+indicateurs de premier niveau (durée de transcription, pic mémoire du moteur
+rapporté à la RAM totale consignée, occupation CPU moyenne rapportée aux
+processeurs logiques consignés), annotation du pic mémoire cumulatif pour un
+audio qui n'est pas le premier de sa demande, puis le texte complet. Une
+synthèse décrit séparément les résultats observés les plus rapides et les moins
+consommateurs de RAM, égalités comprises ; une mesure simulée ou un résultat
+partiel est exclu de ces distinctions et nommé, et le CPU ne désigne aucun
+vainqueur. `lignes` reste la matière exhaustive des détails, RTF et son repère
+en détail compris.
+
+**Détail individuel (3.2)** : le détail d'une exécution suit la même tête de
+lecture qu'une carte de comparaison — trois indicateurs de premier niveau puis
+le texte complet — avec les mêmes alertes visibles. Chaque audio transcrit
+porte l'annotation de son pic mémoire cumulatif quand il n'est pas le premier de
+sa demande, et une mention « matériel différent » ou « matériel non vérifié »
+calculée sur les quatre champs requis (système d'exploitation, architecture,
+processeurs logiques, RAM totale) comparés aux autres essais du même audio — et,
+dans la comparaison, aux seules cartes comparées —, champ par champ : une
+différence connue reste signalée même si un autre champ manque. Le nom du
+processeur reste informatif et son absence seule ne déclenche rien. Les états
+partiels, les erreurs et les marques restent hors de tout accordéon fermé. La
+durée du lot n'est jamais présentée comme la durée d'un audio : la durée totale
+de l'opération reste une mesure de l'exécution, dans ses propres détails.
 """
 
 from __future__ import annotations
@@ -89,7 +116,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from transcription_bench.indicateurs_resultats import ratio_cpu
+from transcription_bench.indicateurs_resultats import formater_date_courte, ratio_cpu, ratio_ram
 from transcription_bench.paths import (
     NOM_DOSSIER_RESULTATS,
     ValeurRefusee,
@@ -139,6 +166,7 @@ LIBELLES_TRI: dict[str, str] = {
 
 #: Natures de cellule, qui décident du formatage dans le template.
 NATURE_TEXTE = "texte"
+NATURE_DETAIL = "detail"
 NATURE_DUREE = "duree"
 NATURE_OCTETS = "octets"
 #: Texte transcrit, affiché tel quel dans un bloc préformaté, sans diff.
@@ -212,6 +240,17 @@ CHAMPS_MACHINE: tuple[tuple[str, str], ...] = (
     ("coeurs_physiques", "Cœurs physiques"),
     ("coeurs_logiques", "Cœurs logiques"),
     ("ram_totale_octets", "RAM totale (octets)"),
+)
+
+#: Champs du matériel consigné qui décident d'une mention « matériel différent »
+#: ou « matériel non vérifié ». Le nom du processeur reste informatif : son
+#: absence seule ne déclenche aucune alerte, et une différence connue reste
+#: consultable dans les détails.
+CHAMPS_MATERIEL_REQUIS: tuple[tuple[str, str], ...] = (
+    ("os", "système d'exploitation"),
+    ("architecture", "architecture"),
+    ("coeurs_logiques", "processeurs logiques"),
+    ("ram_totale_octets", "RAM totale"),
 )
 CHAMPS_PROGRAMME: tuple[tuple[str, str], ...] = (
     ("nom", "Programme"),
@@ -296,6 +335,49 @@ class MesuresAudioVue:
     temps_cpu_s: float | None
     rtf: float | None
     pic_memoire_octets: int | None
+
+
+@dataclass(frozen=True)
+class IndicateursAudio:
+    """Trois indicateurs de premier niveau d'un audio (tâches 3.1 et 3.2).
+
+    Les valeurs brutes viennent de l'audio consigné et les ratios du matériel de
+    son essai, jamais du poste qui consulte. `part_ram` et `occupation_cpu`
+    valent `None` quand le ratio n'est pas interprétable (capacité absente,
+    dénominateur nul ou ratio > 100 %), sans écraser la mesure brute
+    disponible. Le formatage reste fait par le gabarit.
+    """
+
+    duree_transcription_s: float | int | None = None
+    pic_memoire_octets: int | None = None
+    ram_totale_octets: int | None = None
+    temps_cpu_s: float | int | None = None
+    part_ram: float | None = None
+    occupation_cpu: float | None = None
+
+
+def _indicateurs_audio(
+    mesures: MesuresAudioVue | None, materiel: MaterielVue | None
+) -> IndicateursAudio:
+    """Indicateurs d'un audio, ratios compris, sans aucune valeur inventée.
+
+    Utilisé par les cartes de comparaison et par le détail individuel : une même
+    règle de lecture produit les deux vues. Une mesure absente reste `None` et
+    aucune capacité locale n'est substituée au matériel consigné.
+    """
+    duree = None if mesures is None else mesures.duree_transcription_s
+    pic = None if mesures is None else mesures.pic_memoire_octets
+    temps_cpu = None if mesures is None else mesures.temps_cpu_s
+    ram_totale = None if materiel is None else materiel.ram_totale_octets
+    coeurs = None if materiel is None else materiel.coeurs_logiques
+    return IndicateursAudio(
+        duree_transcription_s=duree,
+        pic_memoire_octets=pic,
+        ram_totale_octets=ram_totale,
+        temps_cpu_s=temps_cpu,
+        part_ram=ratio_ram(pic, ram_totale),
+        occupation_cpu=ratio_cpu(temps_cpu, duree, coeurs),
+    )
 
 
 @dataclass(frozen=True)
@@ -391,10 +473,28 @@ class TranscriptionVue:
     famille: str | None
     erreur: str | None
 
+    @property
+    def simule_mesures(self) -> bool:
+        """Vrai si une marque de mesures simulées est consignée pour ce résultat.
+
+        Seules `FACTICE` et `MESURES SIMULÉES` comptent : `SYNTHÉTIQUE` seul ne
+        dit rien du moteur ni des mesures, qui peuvent être réels.
+        """
+        return any(marque in MARQUES_MESURES_SIMULEES for marque in self.marques)
+
 
 @dataclass(frozen=True)
 class AudioVue:
-    """Audio d'une exécution : transcription disponible ou motif d'absence."""
+    """Audio d'une exécution : transcription disponible ou motif d'absence.
+
+    `indicateurs` porte les trois valeurs de premier niveau de cet audio (durée
+    de transcription, pic mémoire, occupation CPU), jamais la durée du lot.
+    `annotation_ram` signale un pic mémoire cumulatif quand cet audio n'est pas
+    le premier de sa demande. `materiel_alerte` est la mention courte « matériel
+    différent » ou « matériel non vérifié » calculée sur les quatre champs requis
+    du matériel consigné ; `None` quand rien n'est à signaler et que le nom du
+    processeur manque seul.
+    """
 
     ordre: int
     nom: str
@@ -405,6 +505,9 @@ class AudioVue:
     partiel: bool
     motif_indisponible: str | None
     transcription: TranscriptionVue | None
+    indicateurs: IndicateursAudio = IndicateursAudio()
+    annotation_ram: str | None = None
+    materiel_alerte: str | None = None
 
 
 @dataclass(frozen=True)
@@ -429,6 +532,17 @@ class DetailExecutionVue:
     mesures: MesuresVue
     audios: tuple[AudioVue, ...]
     partiel: bool
+    libelle_modele: str = "modèle non consigné"
+
+    @property
+    def simule_mesures(self) -> bool:
+        """Vrai si l'exécution porte une marque de mesures simulées.
+
+        `SYNTHÉTIQUE` seul n'en fait pas partie : un audio synthétique peut être
+        transcrit par un moteur réel, avec des mesures réelles.
+        """
+        marques = self.execution.marques or ()
+        return any(marque in MARQUES_MESURES_SIMULEES for marque in marques)
 
 
 @dataclass(frozen=True)
@@ -543,7 +657,8 @@ class CelluleComparaison:
 class LigneComparaison:
     """Ligne de la table de comparaison, une cellule par transcription.
 
-    `nature` vaut `texte`, `transcription`, `duree`, `octets` ou `rtf` :
+    `nature` vaut `texte`, `transcription`, `duree`, `octets`, `rtf` ou
+    `detail` (provenance technique exclue du résumé des différences) :
     le formatage reste fait par le template, qui ne reçoit aucune chaîne déjà
     formatée pour une mesure. Pour `transcription`, la cellule porte le texte
     transcrit, affiché dans un bloc préformaté et jamais comparé. `differents`
@@ -557,11 +672,80 @@ class LigneComparaison:
 
 
 @dataclass(frozen=True)
+class CarteComparaison:
+    """Carte de premier niveau d'une transcription comparée (tâche 3.1).
+
+    `libelle` est le titre court de la carte : le modèle consigné, complété de
+    l'identifiant d'essai quand deux cartes portent le même modèle. Les trois
+    indicateurs sont les valeurs **brutes** de l'essai, accompagnées des ratios
+    calculés sur le matériel consigné : le formatage reste fait par le gabarit.
+    `part_ram` et `occupation_cpu` valent `None` quand le ratio n'est pas
+    interprétable (capacité absente, dénominateur nul ou ratio > 100 %), sans
+    jamais écraser la mesure brute disponible.
+
+    `annotation_ram` signale, pour un audio qui n'est pas le premier de sa
+    demande, que le pic mémoire est cumulatif et peut provenir d'un audio
+    précédent. `materiel_alerte` porte la mention « matériel différent » ou
+    « matériel non vérifié » calculée sur les quatre champs requis, comparés
+    **aux seules cartes comparées** et jamais à tout l'historique des essais :
+    les valeurs restent ainsi visibles sans ouvrir les détails. `texte` est le
+    texte transcrit tel quel, jamais comparé.
+    """
+
+    entree: EntreeEmpreinte
+    libelle: str
+    texte: str | None
+    duree_transcription_s: float | int | None
+    pic_memoire_octets: int | None
+    ram_totale_octets: int | None
+    temps_cpu_s: float | int | None
+    part_ram: float | None
+    occupation_cpu: float | None
+    annotation_ram: str | None
+    materiel_alerte: str | None = None
+    erreur: str | None = None
+
+    @property
+    def indicateurs(self) -> IndicateursAudio:
+        """Mêmes trois indicateurs, sous la forme partagée par les gabarits."""
+        return IndicateursAudio(
+            duree_transcription_s=self.duree_transcription_s,
+            pic_memoire_octets=self.pic_memoire_octets,
+            ram_totale_octets=self.ram_totale_octets,
+            temps_cpu_s=self.temps_cpu_s,
+            part_ram=self.part_ram,
+            occupation_cpu=self.occupation_cpu,
+        )
+
+
+@dataclass(frozen=True)
+class SyntheseComparaison:
+    """Synthèse descriptive des mesures observées, sans score global.
+
+    `plus_rapides` et `moins_de_ram` nomment les cartes de tête, égalités
+    comprises ; un tuple vide signifie qu'aucune distinction n'est attribuée
+    faute d'au moins deux mesures comparables. `exclues` nomme les cartes sans
+    distinction de performance réelle : mesures simulées ou résultat partiel.
+    Le CPU n'est jamais présenté comme un vainqueur.
+    """
+
+    plus_rapides: tuple[str, ...] = ()
+    moins_de_ram: tuple[str, ...] = ()
+    exclues: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class ComparaisonVue:
     """Comparaison côte à côte de transcriptions d'un même fichier audio.
 
     `factice` et `partiel` signalent que la comparaison porte au moins une
     transcription factice ou issue d'une exécution non terminée.
+
+    `cartes` porte, dans l'ordre reçu, les cartes de premier niveau : titre,
+    trois indicateurs, annotation RAM conditionnelle et texte complet. `lignes`
+    reste la matière exhaustive des détails (« Ce qui diffère » puis « Toutes
+    les mesures et informations »), et `synthese` la description courte des
+    temps et des pics mémoire observés.
     """
 
     empreinte: str
@@ -570,6 +754,8 @@ class ComparaisonVue:
     lignes: tuple[LigneComparaison, ...]
     factice: bool
     partiel: bool
+    cartes: tuple[CarteComparaison, ...] = ()
+    synthese: SyntheseComparaison = field(default_factory=SyntheseComparaison)
 
 
 @dataclass(frozen=True)
@@ -579,6 +765,7 @@ class _Colonne:
     entree: EntreeEmpreinte
     transcription: TranscriptionVue
     mesures: MesuresVue
+    contexte: Mapping[str, Any] = field(default_factory=dict)
 
 
 class ConsultationResultats:
@@ -634,6 +821,12 @@ class ConsultationResultats:
         `ResultatIntrouvable` s'il n'y a pas d'exécution enregistrée sous ce
         nom, et `ResultatNonInterpretable` si son `run.json` n'est pas
         interprétable. Aucun fichier n'est modifié dans tous les cas.
+
+        Les audios portent leurs trois indicateurs, l'annotation du pic mémoire
+        cumulatif et une mention de matériel calculée sur les quatre champs
+        requis, comparés aux autres essais du même audio quand ils existent :
+        cette lecture supplémentaire, en lecture seule, ne rend jamais la page
+        illisible et n'écrit aucun fichier.
         """
         lecture = self._lire(identifiant)
         if lecture is None:
@@ -646,6 +839,8 @@ class ConsultationResultats:
         mesure = _mapping(contenu.get("mesures"))
         effectifs = _mapping(contenu.get("effectifs"))
         partiel = contenu["etat"] != ETAT_TERMINEE
+        materiel = _materiel(contenu)
+        autres = self._materiels_par_empreinte(identifiant)
         return DetailExecutionVue(
             execution=execution,
             fin=_texte(contenu.get("fin")),
@@ -666,10 +861,42 @@ class ConsultationResultats:
             ),
             mesures=_mesures_execution(mesure),
             audios=tuple(
-                _audio(dossier, plan, partiel=partiel) for plan in contenu["audios"]
+                _audio(dossier, plan, partiel=partiel, materiel=materiel, autres=autres)
+                for plan in contenu["audios"]
             ),
             partiel=partiel,
+            libelle_modele=_libelle_modele(execution.modele),
         )
+
+    def _materiels_par_empreinte(
+        self, sauf: str | None = None
+    ) -> dict[str, tuple[MaterielVue, ...]]:
+        """Matériel consigné des autres essais, par empreinte d'audio source.
+
+        Sert au détail individuel pour signaler un matériel différent ou non
+        vérifié sur le même audio. L'essai `sauf` est ignoré : son matériel est
+        déjà connu de l'appelant. Une empreinte absente ou invalide n'est jamais
+        devinée ; un dossier des résultats illisible rend seulement la
+        comparaison indisponible, sans faire échouer la page et sans écriture.
+        """
+        try:
+            executions = tuple(self._executions_interpretables())
+        except LectureResultatsImpossible:
+            return {}
+        materiels: dict[str, list[MaterielVue]] = {}
+        for dossier, contenu in executions:
+            if dossier.name == sauf:
+                continue
+            materiel = _materiel(contenu)
+            for plan in contenu["audios"]:
+                transcription, _motif = _lire_transcription(dossier, plan)
+                if transcription is None:
+                    continue
+                empreinte = transcription.empreinte_sha256
+                if empreinte is None:
+                    continue
+                materiels.setdefault(empreinte, []).append(materiel)
+        return {cle: tuple(valeurs) for cle, valeurs in materiels.items()}
 
     def groupes_par_empreinte(
         self, tri: str = TRI_DEFAUT
@@ -750,6 +977,7 @@ class ConsultationResultats:
             for identifiant, ordre in choix
         )
         entrees = tuple(colonne.entree for colonne in colonnes)
+        cartes = _cartes_comparaison(colonnes)
         return ComparaisonVue(
             empreinte=empreinte_valide,
             noms=tuple(sorted({entree.nom for entree in entrees})),
@@ -757,6 +985,8 @@ class ConsultationResultats:
             lignes=_lignes_comparaison(colonnes),
             factice=any("FACTICE" in entree.marques for entree in entrees),
             partiel=any(entree.partiel for entree in entrees),
+            cartes=cartes,
+            synthese=_synthese_comparaison(cartes),
         )
 
     # -- lecture -------------------------------------------------------------
@@ -809,6 +1039,7 @@ class ConsultationResultats:
             ),
             transcription=transcription,
             mesures=_mesures_execution(_mapping(contenu.get("mesures"))),
+            contexte=contenu,
         )
 
     def _entrees_resultats(self) -> tuple[Path, ...]:
@@ -1370,7 +1601,287 @@ def _lignes_comparaison(colonnes: Sequence[_Colonne]) -> tuple[LigneComparaison,
         )
         for libelle, nature, extraire in _MESURES_COMPAREES
     )
+    # Provenance de l'essai déjà lu : matériel, versions et fichiers restent
+    # consultables ici, sans imposer de quitter la comparaison. Les clés
+    # absentes restent distinctes des valeurs explicitement nulles.
+    for section, champs in (
+        ("machine", CHAMPS_MACHINE),
+        ("programme", CHAMPS_PROGRAMME + (("ffmpeg", "FFmpeg"),)),
+        ("moteur", (("versions", "Versions du moteur"),
+                    ("empreinte_verrou", "Empreinte du verrou du moteur"))),
+        ("processus_moteur", CHAMPS_PROCESSUS),
+    ):
+        bruts = [_mapping(colonne.contexte.get(section)) for colonne in colonnes]
+        affiches = [
+            {cle: _valeur_reglage(valeur) for cle, valeur in brut.items()}
+            for brut in bruts
+        ]
+        for cle, libelle in champs:
+            nature = NATURE_DETAIL if section == "processus_moteur" else NATURE_TEXTE
+            lignes.append(_ligne(libelle, nature,
+                                 _cellules_reglages(affiches, bruts, cle)))
+    for attribut, prefixe in (("audio", "Fichier audio"),
+                             ("modele", "Modèle")):
+        libelles = dict.fromkeys(
+            libelle for colonne in colonnes
+            for libelle, _valeur in getattr(colonne.transcription, attribut)
+        )
+        for libelle in libelles:
+            if attribut == "modele" and libelle != "Clé locale":
+                continue  # Identifiants, révision et variante déjà comparés.
+            if attribut == "audio" and libelle in (
+                "Durée indicative (s)", "Durée décodée (s)"
+            ):
+                continue  # Ces durées figurent déjà dans les mesures.
+            lignes.append(_ligne(
+                f"{prefixe} : {libelle}", NATURE_TEXTE,
+                _cellules([_champ(getattr(colonne.transcription, attribut), libelle)
+                           for colonne in colonnes]),
+            ))
+    for libelle, extraire in (
+        ("Segments horodatés", lambda c: [
+            {"debut_s": s.debut_s, "fin_s": s.fin_s, "texte": s.texte}
+            for s in c.transcription.segments]),
+        ("Timings natifs", lambda c: [vars(t) for t in c.transcription.timings_natifs]),
+    ):
+        valeurs = [extraire(colonne) for colonne in colonnes]
+        cellules = tuple(
+            CelluleComparaison(True, _valeur_reglage(valeur), valeur)
+            for valeur in valeurs
+        )
+        # Les segments contiennent du texte : consultation seulement, jamais
+        # un diff des transcriptions ou de leur découpage.
+        lignes.append(
+            LigneComparaison(libelle, NATURE_DETAIL, cellules, False)
+            if libelle == "Segments horodatés"
+            else _ligne(libelle, NATURE_DETAIL, cellules)
+        )
     return tuple(lignes)
+
+
+def _cartes_comparaison(
+    colonnes: Sequence[_Colonne],
+) -> tuple[CarteComparaison, ...]:
+    """Cartes de premier niveau, dans l'ordre reçu de la sélection.
+
+    Chaque carte reçoit les trois indicateurs de son audio, les ratios calculés
+    sur le matériel **consigné** de son essai et son texte complet. Les réglages
+    distinctifs sont calculés entre les cartes comparées, sur leurs valeurs
+    brutes, comme pour les listes par audio ; un réglage commun n'est pas répété.
+    La mention de matériel compare les quatre champs requis aux seules autres
+    cartes comparées, jamais à tout l'historique. Aucun fichier n'est modifié et
+    aucune valeur locale n'est substituée.
+    """
+    entrees = _entrees_reglages_distinctifs(
+        tuple(colonne.entree for colonne in colonnes)
+    )
+    libelles = _libelles_carte(entrees)
+    materiels = tuple(entree.materiel for entree in entrees)
+    cartes: list[CarteComparaison] = []
+    for position, (colonne, entree, libelle) in enumerate(
+        zip(colonnes, entrees, libelles, strict=True)
+    ):
+        indicateurs = _indicateurs_audio(entree.mesures, entree.materiel)
+        autres = tuple(
+            materiel
+            for index, materiel in enumerate(materiels)
+            if index != position
+        )
+        cartes.append(
+            CarteComparaison(
+                entree=entree,
+                libelle=libelle,
+                texte=colonne.transcription.texte,
+                erreur=colonne.transcription.erreur,
+                duree_transcription_s=indicateurs.duree_transcription_s,
+                pic_memoire_octets=indicateurs.pic_memoire_octets,
+                ram_totale_octets=indicateurs.ram_totale_octets,
+                temps_cpu_s=indicateurs.temps_cpu_s,
+                part_ram=indicateurs.part_ram,
+                occupation_cpu=indicateurs.occupation_cpu,
+                annotation_ram=_annotation_ram(entree.ordre),
+                materiel_alerte=_alerte_materiel(entree.materiel, autres),
+            )
+        )
+    return tuple(cartes)
+
+
+def _libelle_modele(modele: str | None) -> str:
+    """Titre court d'un modèle : son dernier segment, sans chemin d'identifiant.
+
+    Un identifiant de modèle peut contenir un préfixe (`orga/modele`) : seul le
+    dernier segment est affiché en titre, l'identifiant complet restant dans les
+    détails. Un modèle absent n'est jamais inventé.
+    """
+    if not modele:
+        return "modèle non consigné"
+    return modele.rsplit("/", 1)[-1]
+
+
+def _libelles_carte(entrees: Sequence[EntreeEmpreinte]) -> tuple[str, ...]:
+    """Titres courts des cartes : modèle consigné, désambiguïsé si répété.
+
+    Deux cartes du même modèle sont distinguées par la date courte ; si les
+    dates se confondent ou manquent, l'identifiant de l'essai reste nécessaire.
+    Aucun nom de modèle n'est inventé quand il est absent.
+    """
+    bases = [_libelle_modele(entree.modele) for entree in entrees]
+    dates = [formater_date_courte(entree.date_essai) for entree in entrees]
+    libelles = []
+    for base, date, entree in zip(bases, dates, entrees, strict=True):
+        if bases.count(base) == 1:
+            libelles.append(base)
+        elif entree.date_essai and sum(
+            autre_base == base and autre_date == date
+            for autre_base, autre_date in zip(bases, dates, strict=True)
+        ) == 1 and date != "date non consignée":
+            libelles.append(f"{base} ({date})")
+        else:
+            audio = (
+                f", audio {entree.ordre}"
+                if sum(autre.execution == entree.execution for autre in entrees) > 1
+                else ""
+            )
+            libelles.append(f"{base} (essai {entree.execution}{audio})")
+    return tuple(libelles)
+
+
+def _annotation_ram(ordre: int) -> str | None:
+    """Annotation du pic mémoire cumulatif, ou `None` pour le premier audio.
+
+    Le premier audio de la demande n'en porte pas ; tout autre audio voit son
+    pic signalé comme cumulatif, même si un audio précédent a échoué, car le
+    pic est relevé sur le processus du moteur et inclut son chargement. Un ordre
+    non vérifiable indique que le pic n'est pas isolé par audio.
+    """
+    if ordre == 1:
+        return None
+    if ordre > 1:
+        return (
+            "Pic mémoire cumulatif du lot : il peut provenir d'un audio précédent "
+            "et inclut le chargement du modèle."
+        )
+    return "Pic mémoire non isolé par audio : il n'est pas attribuable à ce seul audio."
+
+
+def _alerte_materiel(
+    materiel: MaterielVue | None, autres: Sequence[MaterielVue | None]
+) -> str | None:
+    """Mention courte de matériel différent ou non vérifié pour un audio.
+
+    Seuls les quatre champs requis (système d'exploitation, architecture,
+    processeurs logiques, RAM totale) décident, **champ par champ** : le nom du
+    processeur reste informatif, son absence seule ne déclenche donc aucune
+    alerte, et une différence connue sur ce seul champ reste consultable dans
+    les détails.
+
+    Un champ connu des deux côtés et différent donne une différence signalée,
+    même si un autre champ requis manque : une valeur inconnue ne masque jamais
+    une différence connue. Un champ dont la valeur manque chez cet essai ou chez
+    un essai comparé, sans différence connue sur ce champ, donne une mention
+    « non vérifié » (des métadonnées identiques ne prouvent jamais l'identité
+    d'une machine). Sans essai comparé, seuls les champs manquants de cet essai
+    sont signalés : aucune comparaison n'est inventée.
+    """
+    differents: list[str] = []
+    inconnus: list[str] = []
+    for champ, libelle in CHAMPS_MATERIEL_REQUIS:
+        valeur = None if materiel is None else getattr(materiel, champ)
+        if valeur is None:
+            inconnus.append(libelle)
+            continue
+        different = False
+        inconnu = False
+        for autre in autres:
+            autre_valeur = None if autre is None else getattr(autre, champ)
+            if autre_valeur is None:
+                inconnu = True
+            elif autre_valeur != valeur:
+                different = True
+        # Une différence connue prime sur l'inconnu du même champ : elle reste
+        # signalée même si un autre essai ne consigne pas cette valeur.
+        if different:
+            differents.append(libelle)
+        elif inconnu:
+            inconnus.append(libelle)
+    return _mention_materiel(differents, inconnus)
+
+
+def _mention_materiel(
+    differents: Sequence[str], inconnus: Sequence[str]
+) -> str | None:
+    """Formulation courte de la mention de matériel, ou `None` sans écart."""
+    if not differents and not inconnus:
+        return None
+    morceaux: list[str] = []
+    if differents:
+        morceaux.append(f"Matériel différent sur {_liste_francaise(differents)}")
+    if inconnus:
+        morceaux.append(
+            "matériel non vérifié pour "
+            f"{_liste_francaise(inconnus)} (valeur absente chez cet essai ou "
+            "chez un autre essai de cet audio)"
+        )
+    mention = " ; ".join(morceaux) + "."
+    mention = mention[0].upper() + mention[1:]
+    if differents:
+        mention += (
+            " Les valeurs consignées restent affichées, sans preuve d'identité "
+            "des machines."
+        )
+    return mention
+
+
+def _liste_francaise(elements: Sequence[str]) -> str:
+    """Éléments joints en français : « a », « a et b », « a, b et c »."""
+    if len(elements) == 1:
+        return elements[0]
+    return f"{', '.join(elements[:-1])} et {elements[-1]}"
+
+
+def _synthese_comparaison(
+    cartes: Sequence[CarteComparaison],
+) -> SyntheseComparaison:
+    """Synthèse des temps et des pics mémoire observés, sans score global.
+
+    Seules les mesures réelles de résultats complets concourent : une mesure
+    simulée (`FACTICE`, `MESURES SIMULÉES`) ou un résultat partiel est exclu de
+    toute distinction et nommé comme tel, sans déduire aucune performance de sa
+    valeur. Une mesure absente n'est jamais remplacée par zéro et moins de deux
+    valeurs comparables n'attribuent aucune tête. Le CPU ne désigne aucun
+    vainqueur : moins l'occuper n'est pas aller plus vite.
+    """
+    temps: list[tuple[str, float]] = []
+    ram: list[tuple[str, float]] = []
+    exclues: list[str] = []
+    for carte in cartes:
+        entree = carte.entree
+        if entree.simule or entree.partiel:
+            exclues.append(carte.libelle)
+            continue
+        valeur_temps = valeur_distinction(entree, TRI_TEMPS)
+        valeur_ram = valeur_distinction(entree, TRI_RAM)
+        if valeur_temps is not None:
+            temps.append((carte.libelle, valeur_temps))
+        if valeur_ram is not None:
+            ram.append((carte.libelle, valeur_ram))
+    return SyntheseComparaison(
+        plus_rapides=_tetes_de_mesure(temps),
+        moins_de_ram=_tetes_de_mesure(ram),
+        exclues=tuple(exclues),
+    )
+
+
+def _tetes_de_mesure(mesures: Sequence[tuple[str, float]]) -> tuple[str, ...]:
+    """Libellés des valeurs minimales, égalités comprises.
+
+    Moins de deux mesures comparables n'attribuent aucune tête : une valeur
+    unique n'est pas une comparaison, et une mesure absente ne concourt pas.
+    """
+    if len(mesures) < 2:
+        return ()
+    minimum = min(valeur for _libelle, valeur in mesures)
+    return tuple(libelle for libelle, valeur in mesures if valeur == minimum)
 
 
 def _ligne(
@@ -1554,9 +2065,22 @@ def _resume(contenu: Mapping[str, Any]) -> ExecutionListee:
 
 
 def _audio(
-    dossier_execution: Path, plan: Mapping[str, Any], *, partiel: bool
+    dossier_execution: Path,
+    plan: Mapping[str, Any],
+    *,
+    partiel: bool,
+    materiel: MaterielVue | None = None,
+    autres: Mapping[str, Sequence[MaterielVue]] | None = None,
 ) -> AudioVue:
-    """Audio d'une exécution : transcription relue, ou motif d'absence."""
+    """Audio d'une exécution : transcription relue, ou motif d'absence.
+
+    Les trois indicateurs viennent des mesures de cet audio et du matériel de
+    son essai ; la durée du lot n'est jamais présentée comme celle de l'audio.
+    L'annotation du pic mémoire suit l'ordre de l'audio dans sa demande, et la
+    mention de matériel compare les quatre champs requis aux autres essais du
+    même audio (`autres`, par empreinte) : aucune valeur locale n'est
+    substituée et rien n'est écrit.
+    """
     transcription, motif = _lire_transcription(dossier_execution, plan)
     if transcription is None and plan["statut"] == STATUT_NON_TRAITE:
         motif = MOTIF_NON_TRAITE
@@ -1564,6 +2088,20 @@ def _audio(
     # après lui, il peut donc être en retard d'un instant sur une exécution en
     # cours. Sans résultat, c'est le statut du suivi qui est affiché.
     statut = plan["statut"] if transcription is None else transcription.statut
+    indicateurs = _indicateurs_audio(
+        None if transcription is None else transcription.mesures, materiel
+    )
+    annotation_ram = None
+    materiel_alerte = None
+    if transcription is not None:
+        annotation_ram = _annotation_ram(plan["ordre"])
+        empreinte = transcription.empreinte_sha256
+        candidats = (
+            ()
+            if autres is None or empreinte is None
+            else autres.get(empreinte, ())
+        )
+        materiel_alerte = _alerte_materiel(materiel, candidats)
     return AudioVue(
         ordre=plan["ordre"],
         nom=plan["nom"],
@@ -1574,6 +2112,9 @@ def _audio(
         partiel=partiel and transcription is not None,
         motif_indisponible=motif,
         transcription=transcription,
+        indicateurs=indicateurs,
+        annotation_ram=annotation_ram,
+        materiel_alerte=materiel_alerte,
     )
 
 

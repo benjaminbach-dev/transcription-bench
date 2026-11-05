@@ -224,9 +224,11 @@ Vérification : non éprouvé à froid.
 
 ## 10. Lire un résultat
 
-*Faites ceci.* Ouvrez la page **Résultats**, puis cliquez sur l'identifiant de votre exécution.
+*Faites ceci.* Ouvrez la page **Résultats**, puis cliquez sur l'identifiant de votre exécution. Pour comprendre les trois repères, ouvrez **Comprendre les indicateurs** depuis la page.
 
-*Vous devez voir.* Pour chaque audio : le texte transcrit, puis les mesures (temps de chargement, de décodage…). Les mesures dépendent de votre ordinateur : elles ne disent rien de la qualité du texte ni des performances d'un autre poste.
+*Vous devez voir.* Pour chaque audio : le modèle et le moteur en titre, trois mesures (**Transcription**, **Mémoire max**, **CPU du moteur**), puis le texte transcrit en entier. Les mesures détaillées, les segments horodatés et les informations de l'exécution suivent dans des blocs que vous pouvez ouvrir ; la date courte s'affiche au-dessus des audios, et l'horodatage complet reste dans **Résumé de l'exécution**. Les mesures dépendent de votre ordinateur : elles ne disent rien de la qualité du texte ni des performances d'un autre poste.
+
+Une marque **SYNTHÉTIQUE** seule signale un audio ou un texte de test : elle ne dit rien du moteur ni des mesures. Les marques **FACTICE** ou **MESURES SIMULÉES** signalent, elles, un moteur factice ou des valeurs simulées.
 
 Relisez toujours le texte en écoutant l'audio. Une phrase fluide peut être fausse.
 
@@ -242,7 +244,7 @@ On compare deux transcriptions d'un même audio, obtenues avec deux modèles (ou
 2. Ouvrez la page **Comparaisons** (ou, dans **Résultats**, le lien **Comparer des transcriptions d'un même audio**).
 3. Dans le groupe de votre audio, cochez les deux transcriptions dans **Sélection**, puis cliquez sur **Comparer les transcriptions sélectionnées**.
 
-*Vous devez voir.* Les deux textes côte à côte ; les éléments comparés qui diffèrent sont signalés « différent » dans la première colonne du tableau.
+*Vous devez voir.* Une carte par transcription, avec le modèle et le moteur en titre, les trois mesures puis le texte entier ; une ligne de synthèse indique les mesures observées, le résultat le plus rapide et celui qui consomme le moins de mémoire, avec les égalités et les mesures simulées ou partielles écartées. Les blocs **Ce qui diffère** puis **Toutes les mesures et informations** donnent les valeurs distinctes, puis l'ensemble des mesures et métadonnées, y compris le rapport de vitesse et son repère. Le lien **Comprendre les indicateurs** explique les calculs et les limites.
 
 *Ce que cela ne dit pas.* Le texte le plus fluide n'est pas forcément le plus exact, et l'outil ne désigne aucun « meilleur » modèle. La comparaison sert à repérer des différences ; c'est à vous de juger, en réécoutant l'audio.
 
@@ -282,6 +284,7 @@ Pour chaque cas : ce que vous voyez, la cause probable, que faire.
 
 - Audio : un fichier d'enregistrement (voix) à transcrire.
 - Empreinte SHA-256 : un identifiant unique calculé à partir du contenu d'un fichier ; deux audios identiques ont la même empreinte. Elle permet de regrouper les transcriptions d'un même audio.
+- Mesures simulées : valeurs produites par le moteur factice ou de test, jamais représentatives d'un ordinateur réel. Une marque synthétique seule ne signifie pas que les mesures sont simulées.
 - CI : contrôles automatiques exécutés sur des machines Windows et Linux de test, sans rapport avec votre ordinateur.
 - Exécution : une transcription d'un ou plusieurs audios avec un modèle donné.
 - Hors ligne : sans connexion Internet. Une fois le moteur et le modèle installés, la transcription se fait hors ligne ; les autres cas où Internet est utilisé sont listés dans le tableau de la section « Ce que fait l'outil, et ce qu'il envoie sur Internet ».

@@ -1111,6 +1111,313 @@ class ComparerTest(SocleConsultationTest):
         self.assertEqual(avant, apres)
 
 
+class CartesEtSyntheseTest(SocleConsultationTest):
+    """Cartes de premier niveau et synthèse temps/RAM (tâche 3.1).
+
+    Les valeurs sont synthétiques et écrites dans le dossier temporaire du
+    socle : aucune inférence, aucun réseau, aucune écriture dans les fichiers
+    lus. Les essais observés ne portent aucune marque de mesures simulées.
+    """
+
+    MACHINE = {
+        "os": "Linux",
+        "version_os": "6.1",
+        "architecture": "x86_64",
+        "processeur": None,
+        "coeurs_physiques": 4,
+        "coeurs_logiques": 8,
+        "ram_totale_octets": 8_000_000_000,
+    }
+
+    def ecrire_essai(
+        self,
+        identifiant: str = IDENTIFIANT,
+        *,
+        modele: str = "Modèle",
+        mesures: dict[str, Any] | None = None,
+        reglages: dict[str, Any] | None = None,
+        machine: dict[str, Any] | None = None,
+        audios: int = 1,
+        etat: str = ETAT_TERMINEE,
+        simule: bool = False,
+    ) -> None:
+        """Exécution terminée d'un audio transcrit, observée ou simulée."""
+        marques = {
+            "factice": simule,
+            "synthetique": True,
+            "mesures_simulees": simule,
+        }
+        plans = tuple(
+            (f"prise{position}.wav", STATUT_OK) for position in range(1, audios + 1)
+        )
+        options_run: dict[str, Any] = dict(marques, etat=etat)
+        if machine is not None:
+            options_run["machine"] = machine
+        run = run_json(identifiant, audios=plans, **options_run)
+        run["demande"]["modele"]["identifiant"] = modele
+        resultats = []
+        for plan in run["audios"]:
+            options: dict[str, Any] = dict(marques)
+            if mesures is not None:
+                options["mesures_extra"] = mesures
+            if reglages is not None:
+                options["reglages"] = reglages
+            resultats.append(resultat_empreinte(run, plan, **options))
+        ecrire_execution(self.donnees, run, tuple(resultats))
+
+    def comparer(self, *selections: tuple[str, int]):
+        return self.service.comparer(EMPREINTE_A, list(selections))
+
+    def test_alerte_materiel_uniquement_entre_les_cartes_comparees(self) -> None:
+        machine = {**self.MACHINE, "ram_totale_octets": 16_000_000_000}
+        self.ecrire_essai(IDENTIFIANT, modele="Modèle A", machine=machine)
+        self.ecrire_essai(IDENTIFIANT_ANCIEN, modele="Modèle B", machine=machine)
+        # Essai historique sur un matériel différent, non sélectionné : il ne
+        # participe jamais à la comparaison des cartes.
+        self.ecrire_essai(
+            IDENTIFIANT_TIERS,
+            modele="Modèle C",
+            machine={**machine, "ram_totale_octets": 32_000_000_000},
+        )
+
+        identiques = self.comparer((IDENTIFIANT, 1), (IDENTIFIANT_ANCIEN, 1))
+
+        self.assertEqual(
+            [carte.materiel_alerte for carte in identiques.cartes], [None, None]
+        )
+
+        differentes = self.comparer((IDENTIFIANT, 1), (IDENTIFIANT_TIERS, 1))
+
+        for carte in differentes.cartes:
+            self.assertIn("Matériel différent sur RAM totale", carte.materiel_alerte)
+
+    def test_alerte_materiel_des_quatre_champs_requis(self) -> None:
+        machine = {**self.MACHINE, "ram_totale_octets": 16_000_000_000}
+        self.ecrire_essai(IDENTIFIANT, modele="Modèle A", machine=machine)
+        self.ecrire_essai(
+            IDENTIFIANT_ANCIEN,
+            modele="Modèle B",
+            machine={**machine, "architecture": "ARM64"},
+        )
+
+        vue = self.comparer((IDENTIFIANT, 1), (IDENTIFIANT_ANCIEN, 1))
+
+        for carte in vue.cartes:
+            self.assertIn("Matériel différent sur architecture", carte.materiel_alerte)
+
+    def test_alerte_materiel_difference_connue_et_champ_inconnu(self) -> None:
+        machine = {**self.MACHINE, "ram_totale_octets": 16_000_000_000}
+        self.ecrire_essai(IDENTIFIANT, modele="Modèle A", machine=machine)
+        self.ecrire_essai(
+            IDENTIFIANT_ANCIEN,
+            modele="Modèle B",
+            machine={
+                **machine,
+                "architecture": None,
+                "ram_totale_octets": 32_000_000_000,
+            },
+        )
+
+        vue = self.comparer((IDENTIFIANT, 1), (IDENTIFIANT_ANCIEN, 1))
+
+        for carte in vue.cartes:
+            # Une différence connue reste signalée même si un champ manque.
+            self.assertIn("Matériel différent sur RAM totale", carte.materiel_alerte)
+            self.assertIn(
+                "matériel non vérifié pour architecture", carte.materiel_alerte
+            )
+
+    def test_alerte_materiel_processeur_absent_seul_sans_alerte(self) -> None:
+        machine = {**self.MACHINE, "processeur": None}
+        self.ecrire_essai(IDENTIFIANT, modele="Modèle A", machine=machine)
+        self.ecrire_essai(
+            IDENTIFIANT_ANCIEN,
+            modele="Modèle B",
+            machine={**machine, "processeur": "Autre processeur fictif"},
+        )
+
+        vue = self.comparer((IDENTIFIANT, 1), (IDENTIFIANT_ANCIEN, 1))
+
+        self.assertEqual([carte.materiel_alerte for carte in vue.cartes], [None, None])
+
+    def test_carte_trois_indicateurs_texte_et_ratios_du_materiel_consigne(self) -> None:
+        self.ecrire_essai(
+            IDENTIFIANT,
+            modele="organisation/Modèle A",
+            machine={**self.MACHINE, "ram_totale_octets": 16_000_000_000},
+            mesures={
+                "duree_transcription_s": 97.0,
+                "temps_cpu_s": 3.104,
+                "pic_memoire_octets": 2_400_000_000,
+            },
+        )
+        self.ecrire_essai(
+            IDENTIFIANT_ANCIEN,
+            modele="Modèle B",
+            machine={**self.MACHINE, "ram_totale_octets": 16_000_000_000},
+            mesures={
+                "duree_transcription_s": 42.0,
+                "temps_cpu_s": 12.6,
+                "pic_memoire_octets": 3_200_000_000,
+            },
+        )
+
+        vue = self.comparer((IDENTIFIANT, 1), (IDENTIFIANT_ANCIEN, 1))
+
+        self.assertEqual(
+            [carte.libelle for carte in vue.cartes], ["Modèle A", "Modèle B"]
+        )
+        premiere, seconde = vue.cartes
+        # Trois indicateurs bruts de chaque audio, ratios sur le matériel consigné.
+        self.assertEqual(premiere.duree_transcription_s, 97.0)
+        self.assertEqual(premiere.pic_memoire_octets, 2_400_000_000)
+        self.assertEqual(premiere.ram_totale_octets, 16_000_000_000)
+        self.assertAlmostEqual(premiere.part_ram, 15.0)
+        self.assertAlmostEqual(premiere.occupation_cpu, 0.4)
+        # 100 × 12,6 s CPU / (42 s × 8 processeurs logiques) = 3,75 %.
+        self.assertAlmostEqual(seconde.occupation_cpu, 3.75)
+        self.assertAlmostEqual(seconde.part_ram, 20.0)
+        # Texte complet et absence d'annotation sur le premier audio de la demande.
+        self.assertEqual(premiere.texte, "transcription simulée de test")
+        self.assertIsNone(premiere.annotation_ram)
+        self.assertIsNone(seconde.annotation_ram)
+        # Synthèse : temps et RAM observés, sans distinction CPU.
+        self.assertEqual(vue.synthese.plus_rapides, ("Modèle B",))
+        self.assertEqual(vue.synthese.moins_de_ram, ("Modèle A",))
+        self.assertEqual(vue.synthese.exclues, ())
+
+    def test_deux_audios_du_meme_essai_ont_des_libelles_distincts(self) -> None:
+        self.ecrire_essai(IDENTIFIANT, modele="Modèle A", audios=2)
+
+        vue = self.comparer((IDENTIFIANT, 1), (IDENTIFIANT, 2))
+
+        self.assertNotEqual(vue.cartes[0].libelle, vue.cartes[1].libelle)
+        self.assertIn("audio 1", vue.cartes[0].libelle)
+        self.assertIn("audio 2", vue.cartes[1].libelle)
+        self.assertEqual(vue.synthese.plus_rapides,
+                         tuple(carte.libelle for carte in vue.cartes))
+
+    def test_carte_audio_non_premier_annotee_pic_cumulatif(self) -> None:
+        self.ecrire_essai(IDENTIFIANT, modele="Modèle A", audios=2)
+        self.ecrire_essai(IDENTIFIANT_ANCIEN, modele="Modèle B")
+
+        vue = self.comparer((IDENTIFIANT, 2), (IDENTIFIANT_ANCIEN, 1))
+
+        deuxieme, premier = vue.cartes
+        self.assertEqual(deuxieme.entree.ordre, 2)
+        self.assertIn("cumulatif", deuxieme.annotation_ram)
+        self.assertIn("audio précédent", deuxieme.annotation_ram)
+        self.assertIsNone(premier.annotation_ram)
+
+    def test_carte_sans_capacite_garde_la_mesure_brute_sans_ratio(self) -> None:
+        self.ecrire_essai(
+            IDENTIFIANT,
+            modele="Modèle A",
+            machine={
+                "os": "Linux",
+                "architecture": "x86_64",
+                "coeurs_logiques": None,
+                "ram_totale_octets": None,
+            },
+            mesures={
+                "duree_transcription_s": 2.0,
+                "temps_cpu_s": 1.5,
+                "pic_memoire_octets": 1000,
+            },
+        )
+        self.ecrire_essai(IDENTIFIANT_ANCIEN, modele="Modèle B")
+
+        vue = self.comparer((IDENTIFIANT, 1), (IDENTIFIANT_ANCIEN, 1))
+
+        carte = vue.cartes[0]
+        self.assertIsNone(carte.part_ram)
+        self.assertIsNone(carte.occupation_cpu)
+        # La mesure brute disponible reste exposée, jamais remplacée par zéro.
+        self.assertEqual(carte.temps_cpu_s, 1.5)
+        self.assertEqual(carte.pic_memoire_octets, 1000)
+        self.assertIsNone(carte.ram_totale_octets)
+
+    def test_synthese_egalites_sans_distinction_sur_mesures_identiques(self) -> None:
+        mesures = {
+            "duree_transcription_s": 2.0,
+            "temps_cpu_s": 1.0,
+            "pic_memoire_octets": 900,
+        }
+        self.ecrire_essai(IDENTIFIANT, modele="Modèle A", mesures=mesures)
+        self.ecrire_essai(IDENTIFIANT_ANCIEN, modele="Modèle B", mesures=mesures)
+
+        vue = self.comparer((IDENTIFIANT, 1), (IDENTIFIANT_ANCIEN, 1))
+
+        self.assertEqual(vue.synthese.plus_rapides, ("Modèle A", "Modèle B"))
+        self.assertEqual(vue.synthese.moins_de_ram, ("Modèle A", "Modèle B"))
+        self.assertEqual(vue.synthese.exclues, ())
+
+    def test_synthese_exclut_simulees_et_partielles(self) -> None:
+        self.ecrire_essai(
+            IDENTIFIANT,
+            modele="Modèle A",
+            mesures={"duree_transcription_s": 2.0, "pic_memoire_octets": 900},
+        )
+        self.ecrire_essai(
+            IDENTIFIANT_ANCIEN,
+            modele="Modèle B",
+            simule=True,
+            mesures={"duree_transcription_s": 0.5, "pic_memoire_octets": 10},
+        )
+
+        vue = self.comparer((IDENTIFIANT, 1), (IDENTIFIANT_ANCIEN, 1))
+
+        # Une mesure simulée, même la plus rapide, ne reçoit aucune distinction ;
+        # une seule mesure réelle ne forme pas une comparaison.
+        self.assertEqual(vue.synthese.plus_rapides, ())
+        self.assertEqual(vue.synthese.moins_de_ram, ())
+        self.assertEqual(vue.synthese.exclues, ("Modèle B",))
+
+        partie = self.comparer((IDENTIFIANT_ANCIEN, 1), (IDENTIFIANT, 1))
+        self.assertEqual(partie.synthese.exclues, ("Modèle B",))
+
+        self.ecrire_essai(
+            IDENTIFIANT_TIERS,
+            modele="Modèle C",
+            etat=ETAT_INTERROMPUE,
+            mesures={"duree_transcription_s": 0.5, "pic_memoire_octets": 10},
+        )
+        avec_partiel = self.comparer(
+            (IDENTIFIANT, 1), (IDENTIFIANT_TIERS, 1)
+        )
+        self.assertEqual(avec_partiel.synthese.exclues, ("Modèle C",))
+        self.assertEqual(avec_partiel.synthese.plus_rapides, ())
+
+    def test_cartes_meme_modele_desambiguise_et_reglages_distinctifs(self) -> None:
+        self.ecrire_essai(
+            IDENTIFIANT,
+            modele="Modèle A",
+            reglages={"langue": "fr", "beam_size": 5},
+        )
+        self.ecrire_essai(
+            IDENTIFIANT_ANCIEN,
+            modele="Modèle A",
+            reglages={"langue": "fr", "beam_size": 3},
+        )
+
+        vue = self.comparer((IDENTIFIANT, 1), (IDENTIFIANT_ANCIEN, 1))
+
+        self.assertEqual(
+            [carte.libelle for carte in vue.cartes],
+            [
+                f"Modèle A (essai {IDENTIFIANT})",
+                f"Modèle A (essai {IDENTIFIANT_ANCIEN})",
+            ],
+        )
+        # Seul le réglage dont la valeur brute diffère est distinctif ; le réglage
+        # commun n'est pas répété.
+        for carte in vue.cartes:
+            libelles = [
+                libelle for libelle, _valeur in carte.entree.reglages_distinctifs
+            ]
+            self.assertEqual(libelles, ["Réglage demandé : beam_size"])
+
+
 class AnalyserSelectionTest(unittest.TestCase):
     def test_selection_valide(self) -> None:
         self.assertEqual(analyser_selection(f"{IDENTIFIANT}:2"), (IDENTIFIANT, 2))
