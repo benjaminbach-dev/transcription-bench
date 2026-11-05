@@ -25,6 +25,7 @@ from tests.test_consultation_resultats import (
     run_json,
 )
 from tests.test_web import SocleWebTest
+from transcription_bench.consultation_resultats import LIBELLES_TRI, TRI_CPU
 from transcription_bench.resultats import (
     ETAT_INTERROMPUE,
     STATUT_ERREUR,
@@ -765,7 +766,7 @@ class ClassementGroupesWebTest(SocleWebTest):
         # Le critère demandé devient le critère courant, et le temps redevient
         # un lien : la page ne propose jamais de recharger le critère affiché.
         ram = self.page(query_string=[(CHAMP_TRI_CLASSEMENT, "ram")])
-        self.assertIn("<strong>Mémoire max</strong>", ram)
+        self.assertIn("<strong>Moins de RAM</strong>", ram)
         self.assertIn(
             f'href="/resultats/comparaison?{CHAMP_TRI_CLASSEMENT}=temps'
             f'#groupe-{EMPREINTE_A}"',
@@ -799,6 +800,163 @@ class ClassementGroupesWebTest(SocleWebTest):
                     for selection in ordre
                 ]
                 self.assertEqual(positions, sorted(positions))
+
+
+class ListeParResultatWebTest(SocleWebTest):
+    """Lignes de résultats et sous-listes simulées par audio (tâche 2.2).
+
+    Les données sont synthétiques et écrites dans le dossier temporaire du
+    socle : aucune inférence, aucun réseau, aucune écriture dans les fichiers
+    lus.
+    """
+
+    def page(self, chemin: str = "/resultats/comparaison", **options) -> str:
+        """Page rendue avec succès, HTML seul et entités décodées."""
+        options.setdefault("base_url", self.base_url())
+        reponse = self.client.get(chemin, **options)
+        self.assertEqual(reponse.status_code, 200, chemin)
+        corps = reponse.get_data(as_text=True)
+        self.verifier_html_seul(corps)
+        return html.unescape(corps)
+
+    def ecrire_essai(
+        self,
+        identifiant: str = IDENTIFIANT,
+        *,
+        empreinte: object = EMPREINTE_A,
+        simule: bool = False,
+        cree_le: str | None = DATE_RECENTE,
+        mesures: dict | None = None,
+        **options: object,
+    ) -> None:
+        """Exécution synthétique, avec ou sans mesures simulées."""
+        marques = {
+            "factice": False,
+            "synthetique": True,
+            "mesures_simulees": False,
+        }
+        if simule:
+            marques = {
+                "factice": True,
+                "synthetique": True,
+                "mesures_simulees": True,
+            }
+        run = run_json(identifiant, cree_le=cree_le, **marques)
+        options_resultat: dict = dict(marques)
+        if mesures is not None:
+            options_resultat["mesures_extra"] = mesures
+        options_resultat.update(options)
+        ecrire_execution(
+            self.dossier_data,
+            run,
+            (
+                resultat_empreinte(
+                    run, run["audios"][0], empreinte, **options_resultat
+                ),
+            ),
+        )
+
+    def test_lignes_avec_etat_marques_date_et_reglages_distinctifs(self) -> None:
+        self.ecrire_essai(
+            IDENTIFIANT,
+            cree_le=DATE_RECENTE,
+            threads={"demandes": 4, "appliques": None},
+        )
+        self.ecrire_essai(IDENTIFIANT_ANCIEN, simule=True, cree_le=DATE_ANCIENNE)
+
+        corps = self.page()
+
+        # Deux sous-listes distinctes : les mesures simulées ne sont pas
+        # mélangées aux résultats observés.
+        self.assertIn("Résultats observés", corps)
+        self.assertIn("Mesures simulées de cet audio", corps)
+        self.assertLess(
+            corps.index("Résultats observés"),
+            corps.index("Mesures simulées de cet audio"),
+        )
+        self.assertLess(
+            corps.index(f'href="/resultats/{IDENTIFIANT}"'),
+            corps.index("Mesures simulées de cet audio"),
+        )
+        self.assertLess(
+            corps.index("Mesures simulées de cet audio"),
+            corps.index(f'href="/resultats/{IDENTIFIANT_ANCIEN}"'),
+        )
+        # État, date et réglages distinctifs restent visibles pour chaque ligne.
+        self.assertIn("terminée", corps)
+        self.assertIn(DATE_RECENTE, corps)
+        self.assertIn(DATE_ANCIENNE, corps)
+        self.assertIn("Threads demandés : 4", corps)
+        self.assertIn("Marques", corps)
+        self.assertIn("FACTICE", corps)
+        self.assertIn("aucune", corps)
+
+    def test_aucun_dedoublonnage_dans_la_liste(self) -> None:
+        # Deux essais identiques du même audio restent deux lignes.
+        self.ecrire_essai(IDENTIFIANT_ANCIEN)
+        self.ecrire_essai(IDENTIFIANT)
+
+        corps = self.page()
+
+        self.assertEqual(len(MOTIF_SELECTION.findall(corps)), 2)
+        self.assertEqual(corps.count(f'value="{IDENTIFIANT}:1"'), 1)
+        self.assertEqual(corps.count(f'value="{IDENTIFIANT_ANCIEN}:1"'), 1)
+        self.assertEqual(corps.count(f'href="/resultats/{IDENTIFIANT}"'), 1)
+        self.assertEqual(
+            corps.count(f'href="/resultats/{IDENTIFIANT_ANCIEN}"'), 1
+        )
+        self.assertEqual(corps.count("Résultats observés"), 1)
+
+    def test_classement_cpu_non_qualifie_d_efficacite(self) -> None:
+        self.ecrire_essai(IDENTIFIANT)
+
+        corps = self.page()
+
+        self.assertIn(
+            f'href="/resultats/comparaison?tri=cpu#groupe-{EMPREINTE_A}"', corps
+        )
+        for libelle in LIBELLES_TRI.values():
+            self.assertIn(libelle, corps)
+        self.assertEqual(LIBELLES_TRI[TRI_CPU], "CPU le moins occupé")
+        # Un CPU peu occupé n'est ni une efficacité ni un vainqueur annoncé.
+        minuscule = corps.lower()
+        for terme in ("efficac", "effort", "difficulté", "meilleur"):
+            self.assertNotIn(terme, minuscule)
+
+    def test_historique_global_complet_sans_empreinte_valide(self) -> None:
+        self.ecrire_essai(IDENTIFIANT, cree_le=DATE_RECENTE)
+        self.ecrire_essai(
+            IDENTIFIANT_TIERS, empreinte=None, cree_le=DATE_ANCIENNE
+        )
+        self.ecrire_essai(
+            IDENTIFIANT_QUATRIEME,
+            empreinte="pas-une-empreinte",
+            cree_le="2024-01-03T00:00:00+00:00",
+        )
+
+        comparaisons = self.page()
+
+        # Sans empreinte valide, aucune transcription comparable : le résultat
+        # n'apparaît dans aucun groupe et n'est jamais regroupé de force.
+        self.assertIn(f'href="/resultats/{IDENTIFIANT}"', comparaisons)
+        self.assertNotIn(IDENTIFIANT_TIERS, comparaisons)
+        self.assertNotIn(IDENTIFIANT_QUATRIEME, comparaisons)
+
+        # L'historique global reste complet, avec lien de détail et ordre
+        # décroissant, y compris pour ces exécutions.
+        historique = self.page("/resultats")
+        for identifiant in (
+            IDENTIFIANT,
+            IDENTIFIANT_TIERS,
+            IDENTIFIANT_QUATRIEME,
+        ):
+            self.assertIn(f'href="/resultats/{identifiant}"', historique)
+        self.assertLess(
+            historique.index(IDENTIFIANT_QUATRIEME), historique.index(IDENTIFIANT_TIERS)
+        )
+        self.assertLess(
+            historique.index(IDENTIFIANT_TIERS), historique.index(IDENTIFIANT)
+        )
 
 
 if __name__ == "__main__":

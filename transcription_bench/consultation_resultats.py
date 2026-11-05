@@ -63,6 +63,19 @@ départagées par date décroissante (date inconnue en fin), puis identifiant
 d'exécution décroissant et ordre audio croissant. Un critère inconnu ou fourni
 plusieurs fois est refusé par `ValeurRefusee` ; la comparaison sélectionnée, elle,
 garde l'ordre reçu, indépendamment de ce tri.
+
+**Liste par audio (2.2)** : chaque transcription d'un groupe est une ligne
+distincte, sans dédoublonnage : état, marques, date d'essai et réglages
+distinctifs de ce résultat. Un réglage est distinctif quand sa valeur **brute**
+diffère d'au moins une autre entrée de la même sous-liste ; une sous-liste d'une
+seule entrée montre tous ses réglages consignés. Les résultats portant des
+mesures simulées (`FACTICE`, `MESURES SIMULÉES`) forment une sous-liste séparée
+dans chaque groupe audio : ils restent consultables et classables, mais ne
+concourent jamais avec les mesures observées. `valeur_distinction` refuse en
+outre toute distinction de performance à une mesure simulée ou à une exécution
+partielle. Une transcription sans empreinte valide reste absente des groupes,
+mais `lister` conserve toutes les exécutions de l'historique global, avec lien
+vers leur détail.
 """
 
 from __future__ import annotations
@@ -71,7 +84,7 @@ import json
 import math
 import re
 from collections.abc import Callable, Iterator, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -119,8 +132,8 @@ TRI_RECENT = "recent"
 TRI_DEFAUT = TRI_TEMPS
 LIBELLES_TRI: dict[str, str] = {
     TRI_TEMPS: "Temps de transcription",
-    TRI_RAM: "Mémoire max",
-    TRI_CPU: "CPU du moteur",
+    TRI_RAM: "Moins de RAM",
+    TRI_CPU: "CPU le moins occupé",
     TRI_RECENT: "Essais récents",
 }
 
@@ -146,6 +159,15 @@ LIBELLES_STATUTS_AUDIO: dict[str, str] = {
     STATUT_ERREUR: "erreur",
     STATUT_NON_TRAITE: "non traité",
 }
+
+#: Marques consignées, reprises telles quelles dans toutes les vues.
+MARQUE_FACTICE = "FACTICE"
+MARQUE_SYNTHETIQUE = "SYNTHÉTIQUE"
+MARQUE_MESURES_SIMULEES = "MESURES SIMULÉES"
+#: Marques qui signalent des mesures simulées, seules à ne jamais concourir avec
+#: des mesures observées. `SYNTHÉTIQUE` seul ne suffit pas : un audio synthétique
+#: peut être transcrit par un moteur réel, avec des mesures réelles.
+MARQUES_MESURES_SIMULEES = frozenset({MARQUE_FACTICE, MARQUE_MESURES_SIMULEES})
 
 MOTIF_NON_TRAITE = (
     "Audio non traité : aucun résultat n'a été enregistré (exécution non "
@@ -424,10 +446,19 @@ class EntreeEmpreinte:
     sont renseignés à la lecture pour un tri ou un ratio ultérieur ; aucune
     valeur n'est réécrite dans les fichiers de résultat.
 
-    Les quatre nouveaux champs ont une valeur par défaut pour qu'une entrée
+    Les quatre champs de contexte ont une valeur par défaut pour qu'une entrée
     construite hors de ce module reste valide. À la lecture, `mesures` et
     `materiel` sont des objets dont les champs inconnus valent `None` ; une
     entrée construite manuellement peut aussi laisser ces objets à `None`.
+
+    `reglages` reprend les réglages consignés de ce résultat, formatés pour
+    l'affichage, tandis que `reglages_bruts` garde leurs valeurs JSON : c'est la
+    valeur brute, et elle seule, qui décide quels réglages sont distinctifs dans
+    une sous-liste. `reglages_distinctifs` est le sous-ensemble affiché : il est
+    calculé à la lecture du groupe concerné, jamais réécrit dans les fichiers.
+
+    `simule` est vrai dès qu'une marque de mesures simulées est consignée :
+    aucune déduction n'est faite depuis la famille, le moteur ou le modèle.
     """
 
     execution: str
@@ -445,6 +476,19 @@ class EntreeEmpreinte:
     materiel: MaterielVue | None = None
     date_essai: str | None = None
     etat: str | None = None
+    reglages: tuple[Paire, ...] = ()
+    reglages_bruts: Mapping[str, Any] = field(default_factory=dict)
+    reglages_distinctifs: tuple[Paire, ...] = ()
+
+    @property
+    def simule(self) -> bool:
+        """Vrai si le résultat ou son exécution porte des mesures simulées.
+
+        La réponse vient uniquement des marques consignées : `FACTICE` ou
+        `MESURES SIMULÉES`. `SYNTHÉTIQUE` seul ne suffit pas, et rien n'est
+        déduit du moteur, de la famille ou des valeurs mesurées.
+        """
+        return any(marque in MARQUES_MESURES_SIMULEES for marque in self.marques)
 
 
 @dataclass(frozen=True)
@@ -453,11 +497,28 @@ class GroupeEmpreinte:
 
     `noms` réunit les noms d'audios consignés par ces transcriptions : un même
     contenu déposé sous plusieurs noms apparaît donc dans un seul groupe.
+
+    `entrees` conserve **toutes** les transcriptions du groupe, sans
+    dédoublonnage : les résultats observés d'abord, puis ceux qui portent des
+    mesures simulées, chacune des deux parties classée par le critère demandé.
+    Les propriétés `entrees_reelles` et `entrees_simulees` donnent ces deux
+    sous-listes dérivées : les mesures simulées y sont séparées des mesures
+    observées et ne concourent jamais avec elles.
     """
 
     empreinte: str
     noms: tuple[str, ...]
     entrees: tuple[EntreeEmpreinte, ...]
+
+    @property
+    def entrees_reelles(self) -> tuple[EntreeEmpreinte, ...]:
+        """Résultats observés, dans l'ordre de classement de leur sous-liste."""
+        return tuple(entree for entree in self.entrees if not entree.simule)
+
+    @property
+    def entrees_simulees(self) -> tuple[EntreeEmpreinte, ...]:
+        """Résultats à mesures simulées, classés à part des résultats réels."""
+        return tuple(entree for entree in self.entrees if entree.simule)
 
 
 @dataclass(frozen=True)
@@ -621,8 +682,10 @@ class ConsultationResultats:
         n'est donc jamais comparable. Deux fichiers de même nom et d'empreintes
         différentes forment deux groupes distincts. L'ordre des groupes suit les
         exécutions, des plus récentes aux plus anciennes ; une exécution refusée
-        est ignorée. La liste d'entrées de chaque groupe est classée par `tri`
-        (`temps` par défaut) selon `trier_entrees`.
+        est ignorée. Chaque groupe conserve toutes ses transcriptions, sans
+        dédoublonnage : les résultats observés d'abord, puis les mesures
+        simulées, chacun des deux ensembles classé par `tri` (`temps` par défaut)
+        selon `trier_entrees`.
 
         Lève `ValeurRefusee` pour un critère de classement inconnu, et
         `LectureResultatsImpossible` si le dossier des résultats existe mais ne
@@ -650,7 +713,7 @@ class ConsultationResultats:
             GroupeEmpreinte(
                 empreinte=empreinte,
                 noms=tuple(sorted({entree.nom for entree in entrees})),
-                entrees=trier_entrees(entrees, tri),
+                entrees=_entrees_du_groupe(entrees, tri),
             )
             for empreinte, entrees in groupes.items()
         )
@@ -878,6 +941,31 @@ def trier_entrees(
     return tuple(ordonnees)
 
 
+def valeur_distinction(entree: EntreeEmpreinte, tri: str) -> float | None:
+    """Valeur utilisable pour une distinction de performance réelle.
+
+    Une mesure simulée (`FACTICE`, `MESURES SIMULÉES`) ou un résultat partiel ne
+    reçoit **jamais** de distinction de performance réelle, quelle que soit la
+    valeur consignée : `None` est alors renvoyé. Ces entrées restent consultables
+    et classables par ailleurs, et leur état reste visible. Sinon, la valeur est
+    celle, non arrondie, du critère de mesure demandé.
+
+    Lève `ValeurRefusee` pour un critère inconnu ou pour `recent` : une date
+    d'essai n'est pas une mesure de performance.
+    """
+    if tri not in LIBELLES_TRI:
+        raise ValeurRefusee(
+            "distinction refusée : critère inconnu (temps, ram ou cpu attendu)"
+        )
+    if tri == TRI_RECENT:
+        raise ValeurRefusee(
+            "distinction refusée : une date n'est pas une mesure de performance"
+        )
+    if entree.simule or entree.partiel:
+        return None
+    return _valeur_classement(entree, tri)
+
+
 def _horodatage(valeur: Any) -> tuple[int, float]:
     """Clé de date triable avec `reverse=True` : connue (`1`) avant inconnue.
 
@@ -949,8 +1037,11 @@ def _entree(
     """Entrée de comparaison d'une transcription déjà relue.
 
     Les mesures sont celles de cet audio et le matériel celui de l'essai :
-    rien n'est déduit du poste courant ni d'un autre audio de l'exécution.
+    rien n'est déduit du poste courant ni d'un autre audio de l'exécution. Les
+    réglages consignés de ce résultat sont repris pour l'affichage et pour le
+    calcul ultérieur des réglages distinctifs de sa sous-liste.
     """
+    reglages, reglages_bruts = _reglages_entree(transcription)
     return EntreeEmpreinte(
         execution=execution.identifiant,
         ordre=plan["ordre"],
@@ -968,6 +1059,108 @@ def _entree(
         materiel=materiel,
         date_essai=execution.cree_le,
         etat=execution.etat,
+        reglages=reglages,
+        reglages_bruts=reglages_bruts,
+    )
+
+
+def _entrees_du_groupe(
+    entrees: Sequence[EntreeEmpreinte], tri: str
+) -> tuple[EntreeEmpreinte, ...]:
+    """Entrées d'un groupe : résultats observés puis mesures simulées.
+
+    Chaque partie est classée par `tri` et ne mélange jamais mesures simulées et
+    mesures observées. Les réglages distinctifs sont calculés **dans** chaque
+    partie : un réglage n'est donc jamais déclaré distinctif à cause d'une entrée
+    de l'autre sous-liste. Les entrées sont conservées toutes, sans
+    dédoublonnage.
+    """
+    classees = trier_entrees(entrees, tri)
+    reelles = _entrees_reglages_distinctifs(
+        tuple(entree for entree in classees if not entree.simule)
+    )
+    simulees = _entrees_reglages_distinctifs(
+        tuple(entree for entree in classees if entree.simule)
+    )
+    return reelles + simulees
+
+
+def _reglages_entree(
+    transcription: TranscriptionVue,
+) -> tuple[tuple[Paire, ...], dict[str, Any]]:
+    """Réglages consignés d'un résultat, avec leurs valeurs brutes.
+
+    La famille, la variante GGUF, les threads et la langue imposée précèdent les
+    réglages demandés, défauts compris ; les autres réglages effectifs restent
+    consultables dans le détail. Une clé absente n'apparaît pas, mais une clé
+    explicitement nulle ou non finie est conservée. Les valeurs affichées sont formatées comme ailleurs,
+    mais la comparaison des réglages distinctifs porte sur les valeurs brutes,
+    jamais sur ces chaînes.
+    """
+    paires: list[Paire] = []
+    bruts: dict[str, Any] = {}
+    for libelle, valeur in (
+        ("Famille", transcription.famille),
+        ("Variante GGUF", _champ(transcription.modele, "Variante GGUF")),
+        ("Threads demandés", _champ(transcription.threads, "Threads demandés")),
+        ("Threads appliqués", _champ(transcription.threads, "Threads appliqués")),
+        ("Langue imposée", transcription.langue_imposee),
+    ):
+        if valeur is None:
+            continue
+        paires.append((libelle, valeur))
+        bruts[libelle] = valeur
+    for nom, valeur in transcription.reglages:
+        libelle = f"Réglage demandé : {nom}"
+        paires.append((libelle, valeur))
+        bruts[libelle] = transcription.reglages_bruts.get(nom)
+    return tuple(paires), bruts
+
+
+def _entrees_reglages_distinctifs(
+    entrees: Sequence[EntreeEmpreinte],
+) -> tuple[EntreeEmpreinte, ...]:
+    """Entrées avec leurs réglages distinctifs, calculés dans leur sous-liste.
+
+    Une sous-liste d'une seule entrée n'a rien à comparer : tous ses réglages
+    consignés sont utiles et deviennent distinctifs. Dès deux entrées, seuls les
+    réglages dont la valeur **brute** diffère d'au moins une autre entrée sont
+    retenus : un réglage commun n'est pas répété. Une clé absente compte comme
+    distincte d'une valeur explicite nulle, et deux valeurs non finies restent
+    distinctes entre elles ; l'affichage formaté ne décide jamais.
+    """
+    if len(entrees) <= 1:
+        return tuple(
+            replace(entree, reglages_distinctifs=entree.reglages)
+            for entree in entrees
+        )
+    libelles = sorted(
+        {libelle for entree in entrees for libelle, _valeur in entree.reglages}
+    )
+    differents = {
+        libelle
+        for libelle in libelles
+        if len({_forme_reglage(entree, libelle) for entree in entrees}) > 1
+    }
+    return tuple(
+        replace(
+            entree,
+            reglages_distinctifs=tuple(
+                (libelle, valeur)
+                for libelle, valeur in entree.reglages
+                if libelle in differents
+            ),
+        )
+        for entree in entrees
+    )
+
+
+def _forme_reglage(entree: EntreeEmpreinte, libelle: str) -> str:
+    """Forme comparable d'un réglage : « absente », ou JSON brut trié."""
+    if libelle not in entree.reglages_bruts:
+        return "absente"
+    return json.dumps(
+        entree.reglages_bruts[libelle], ensure_ascii=False, sort_keys=True
     )
 
 
@@ -1546,11 +1739,11 @@ def _marques(contenu: Mapping[str, Any]) -> tuple[str, ...]:
     """Marques explicitement consignées, reprises sans être déduites."""
     marques = []
     if contenu.get("factice") is True:
-        marques.append("FACTICE")
+        marques.append(MARQUE_FACTICE)
     if contenu.get("synthetique") is True:
-        marques.append("SYNTHÉTIQUE")
+        marques.append(MARQUE_SYNTHETIQUE)
     if contenu.get("mesures_simulees") is True:
-        marques.append("MESURES SIMULÉES")
+        marques.append(MARQUE_MESURES_SIMULEES)
     return tuple(marques)
 
 

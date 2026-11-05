@@ -24,15 +24,21 @@ from tests.test_consultation_resultats import (
 )
 from tests.test_execution_moteur import SocleExecutionTest
 from transcription_bench.consultation_resultats import (
+    MARQUE_FACTICE,
+    MARQUE_MESURES_SIMULEES,
+    MARQUE_SYNTHETIQUE,
     TRI_CPU,
     TRI_DEFAUT,
     TRI_RAM,
     TRI_RECENT,
     TRI_TEMPS,
     ConsultationResultats,
+    EntreeEmpreinte,
+    GroupeEmpreinte,
     ResultatIntrouvable,
     analyser_selection,
     analyser_tri,
+    valeur_distinction,
 )
 from transcription_bench.paths import ValeurRefusee
 from transcription_bench.resultats import (
@@ -46,6 +52,10 @@ from transcription_bench.resultats import (
 
 EMPREINTE_A = "a" * 64
 EMPREINTE_B = "b" * 64
+
+
+IDENTIFIANT_TIERS = "20240103-040506-55667788"
+IDENTIFIANT_QUATRIEME = "20240104-050607-8899aabb"
 
 
 def resultat_empreinte(
@@ -375,6 +385,253 @@ class GroupesParEmpreinteTest(SocleConsultationTest):
 
         self.assertEqual(len(groupes), 1)
         self.assertEqual(groupes[0].entrees[0].execution, IDENTIFIANT)
+
+
+class ListeParResultatTest(SocleConsultationTest):
+    """Lignes de résultats, sous-listes simulées et distinctions (tâche 2.2)."""
+
+    def ecrire_essai(
+        self,
+        identifiant: str = IDENTIFIANT,
+        *,
+        empreinte: Any = EMPREINTE_A,
+        simule: bool = False,
+        synthetique: bool = False,
+        etat: str = ETAT_TERMINEE,
+        mesures: dict[str, Any] | None = None,
+        **options: Any,
+    ) -> None:
+        """Exécution synthétique, marquée ou non comme simulée.
+
+        `simule=False` écrit des marques de mesures observées ; `synthetique`
+        reste indépendant, car un audio synthétique peut être transcrit avec des
+        mesures réelles.
+        """
+        marques = {
+            "factice": False,
+            "synthetique": synthetique,
+            "mesures_simulees": False,
+        }
+        if simule:
+            marques = {
+                "factice": True,
+                "synthetique": True,
+                "mesures_simulees": True,
+            }
+        run = run_json(identifiant, etat=etat, **marques)
+        options_resultat: dict[str, Any] = dict(marques)
+        if mesures is not None:
+            options_resultat["mesures_extra"] = mesures
+        options_resultat.update(options)
+        ecrire_execution(
+            self.donnees,
+            run,
+            (
+                resultat_empreinte(
+                    run, run["audios"][0], empreinte, **options_resultat
+                ),
+            ),
+        )
+
+    def groupe(self, tri: str = TRI_DEFAUT) -> GroupeEmpreinte:
+        groupes = self.service.groupes_par_empreinte(tri)
+        self.assertEqual(len(groupes), 1)
+        return groupes[0]
+
+    def entree(self, identifiant: str, tri: str = TRI_DEFAUT) -> EntreeEmpreinte:
+        for candidat in self.groupe(tri).entrees:
+            if candidat.execution == identifiant:
+                return candidat
+        raise AssertionError(f"entrée absente : {identifiant!r}")
+
+    def test_simulations_separees_avec_tri_conserve_dans_chaque_sous_liste(
+        self,
+    ) -> None:
+        self.ecrire_essai(
+            IDENTIFIANT_ANCIEN,
+            mesures={"duree_transcription_s": 2.0, "pic_memoire_octets": 400},
+        )
+        self.ecrire_essai(
+            IDENTIFIANT,
+            mesures={"duree_transcription_s": 1.0, "pic_memoire_octets": 300},
+        )
+        self.ecrire_essai(
+            IDENTIFIANT_TIERS,
+            simule=True,
+            mesures={"duree_transcription_s": 0.5, "pic_memoire_octets": 500},
+        )
+        self.ecrire_essai(
+            IDENTIFIANT_QUATRIEME,
+            simule=True,
+            mesures={"duree_transcription_s": 3.0, "pic_memoire_octets": 100},
+        )
+
+        groupe = self.groupe()
+
+        # Les mesures simulées sont dans une sous-liste distincte, chacune
+        # classée par le critère demandé et jamais fusionnée avec les réelles.
+        self.assertEqual(
+            [entree.execution for entree in groupe.entrees_reelles],
+            [IDENTIFIANT, IDENTIFIANT_ANCIEN],
+        )
+        self.assertEqual(
+            [entree.execution for entree in groupe.entrees_simulees],
+            [IDENTIFIANT_TIERS, IDENTIFIANT_QUATRIEME],
+        )
+        self.assertEqual(
+            groupe.entrees, groupe.entrees_reelles + groupe.entrees_simulees
+        )
+        self.assertTrue(all(not e.simule for e in groupe.entrees_reelles))
+        self.assertTrue(all(e.simule for e in groupe.entrees_simulees))
+        self.assertIn(MARQUE_FACTICE, self.entree(IDENTIFIANT_TIERS).marques)
+        self.assertIn(MARQUE_MESURES_SIMULEES, self.entree(IDENTIFIANT_TIERS).marques)
+        self.assertEqual(self.entree(IDENTIFIANT).marques, ())
+
+        # Le tri par mémoire s'applique aussi dans chaque sous-liste :
+        # l'ordre des simulations change, celui des résultats observés reste.
+        ram = self.groupe(TRI_RAM)
+        self.assertEqual(
+            [entree.execution for entree in ram.entrees_reelles],
+            [IDENTIFIANT, IDENTIFIANT_ANCIEN],
+        )
+        self.assertEqual(
+            [entree.execution for entree in ram.entrees_simulees],
+            [IDENTIFIANT_QUATRIEME, IDENTIFIANT_TIERS],
+        )
+
+    def test_synthetique_seul_n_est_pas_une_mesure_simulee(self) -> None:
+        self.ecrire_essai(IDENTIFIANT, synthetique=True)
+
+        groupe = self.groupe()
+        entree = groupe.entrees[0]
+
+        self.assertIn(MARQUE_SYNTHETIQUE, entree.marques)
+        self.assertNotIn(MARQUE_FACTICE, entree.marques)
+        self.assertFalse(entree.simule)
+        self.assertEqual(groupe.entrees_simulees, ())
+        self.assertEqual([e.execution for e in groupe.entrees_reelles], [IDENTIFIANT])
+
+    def test_reglages_distinctifs_par_valeurs_brutes(self) -> None:
+        # Les deux valeurs s'affichent « [0] » : seule la valeur brute, une
+        # liste contre la chaîne qui la représente, révèle la différence.
+        self.ecrire_essai(
+            IDENTIFIANT_ANCIEN, reglages={"langue": "fr", "temperature": [0]}
+        )
+        self.ecrire_essai(
+            IDENTIFIANT, reglages={"langue": "fr", "temperature": "[0]"}
+        )
+
+        groupe = self.groupe()
+
+        for entree in groupe.entrees_reelles:
+            libelles = [libelle for libelle, _valeur in entree.reglages_distinctifs]
+            # Le réglage commun n'est pas répété ; la valeur brute différente
+            # reste distinctive malgré un affichage identique.
+            self.assertEqual(libelles, ["Réglage demandé : temperature"])
+            self.assertEqual(
+                dict(entree.reglages_distinctifs)["Réglage demandé : temperature"],
+                "[0]",
+            )
+
+    def test_reglage_nul_ou_non_fini_reste_distinctif(self) -> None:
+        for gauche, droite in (
+            ({"temperature": None}, {}),
+            ({"temperature": float("nan")}, {"temperature": float("inf")}),
+        ):
+            with self.subTest(gauche=gauche, droite=droite):
+                self.ecrire_essai(IDENTIFIANT_ANCIEN, reglages=gauche)
+                self.ecrire_essai(IDENTIFIANT, reglages=droite)
+                ancien = self.entree(IDENTIFIANT_ANCIEN)
+                self.assertIn(
+                    "Réglage demandé : temperature",
+                    dict(ancien.reglages_distinctifs),
+                )
+                if droite:
+                    self.assertIn(
+                        "Réglage demandé : temperature",
+                        dict(self.entree(IDENTIFIANT).reglages_distinctifs),
+                    )
+                else:
+                    self.assertEqual(self.entree(IDENTIFIANT).reglages_distinctifs, ())
+
+    def test_reglages_distinctifs_calcules_dans_chaque_sous_liste(self) -> None:
+        threads_reels = {"demandes": 4, "appliques": None}
+        threads_simules = {"demandes": 8, "appliques": None}
+        self.ecrire_essai(IDENTIFIANT_ANCIEN, threads=threads_reels)
+        self.ecrire_essai(IDENTIFIANT, threads=threads_reels)
+        self.ecrire_essai(IDENTIFIANT_TIERS, simule=True, threads=threads_simules)
+        self.ecrire_essai(IDENTIFIANT_QUATRIEME, simule=True, threads=threads_simules)
+
+        groupe = self.groupe()
+
+        # Les threads sont communs dans chaque sous-liste : ils ne sont pas
+        # déclarés distinctifs à cause de l'autre sous-liste.
+        for entree in groupe.entrees:
+            libelles = [libelle for libelle, _valeur in entree.reglages_distinctifs]
+            self.assertNotIn("Threads demandés", libelles)
+            self.assertEqual(libelles, [])
+
+    def test_entree_seule_montre_tous_ses_reglages_consignes(self) -> None:
+        self.ecrire_essai(IDENTIFIANT)
+
+        entree = self.groupe().entrees[0]
+
+        self.assertEqual(entree.reglages_distinctifs, entree.reglages)
+        libelles = [libelle for libelle, _valeur in entree.reglages_distinctifs]
+        self.assertIn("Famille", libelles)
+        self.assertIn("Threads demandés", libelles)
+        self.assertIn("Langue imposée", libelles)
+        self.assertIn("Réglage demandé : langue", libelles)
+
+    def test_aucun_dedoublonnage_des_essais_identiques(self) -> None:
+        self.ecrire_essai(IDENTIFIANT_ANCIEN)
+        self.ecrire_essai(IDENTIFIANT)
+
+        groupe = self.groupe()
+
+        # Deux essais identiques restent deux lignes : aucun représentant
+        # n'est choisi silencieusement, et tout leur est commun.
+        self.assertEqual(len(groupe.entrees_reelles), 2)
+        self.assertEqual(
+            {entree.execution for entree in groupe.entrees_reelles},
+            {IDENTIFIANT, IDENTIFIANT_ANCIEN},
+        )
+        for entree in groupe.entrees_reelles:
+            self.assertEqual(entree.reglages_distinctifs, ())
+
+    def test_valeur_distinction_exclut_mesures_simulees_et_partielles(self) -> None:
+        mesures = {
+            "duree_transcription_s": 2.0,
+            "temps_cpu_s": 1.0,
+            "pic_memoire_octets": 500,
+        }
+        self.ecrire_essai(IDENTIFIANT, mesures=mesures)
+        self.ecrire_essai(IDENTIFIANT_ANCIEN, simule=True, mesures=mesures)
+        self.ecrire_essai(
+            IDENTIFIANT_TIERS, etat=ETAT_INTERROMPUE, mesures=mesures
+        )
+
+        reel = self.entree(IDENTIFIANT)
+        simulation = self.entree(IDENTIFIANT_ANCIEN)
+        partiel = self.entree(IDENTIFIANT_TIERS)
+
+        self.assertFalse(reel.simule)
+        self.assertFalse(reel.partiel)
+        self.assertEqual(valeur_distinction(reel, TRI_TEMPS), 2.0)
+        self.assertEqual(valeur_distinction(reel, TRI_RAM), 500.0)
+        # 100 × 1 s CPU / (2 s × 8 processeurs logiques) = 6,25 %.
+        self.assertEqual(valeur_distinction(reel, TRI_CPU), 6.25)
+
+        for exclue in (simulation, partiel):
+            with self.subTest(entree=exclue.execution):
+                self.assertIsNone(valeur_distinction(exclue, TRI_TEMPS))
+                self.assertIsNone(valeur_distinction(exclue, TRI_RAM))
+                self.assertIsNone(valeur_distinction(exclue, TRI_CPU))
+
+        with self.assertRaises(ValeurRefusee):
+            valeur_distinction(reel, TRI_RECENT)
+        with self.assertRaises(ValeurRefusee):
+            valeur_distinction(reel, "inconnu")
 
 
 class ClassementTest(SocleConsultationTest):
