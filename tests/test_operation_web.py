@@ -123,7 +123,9 @@ class PageOperationTest(SocleWebTest):
 
         self.assertIn("<h1>Exécutions</h1>", corps)
         self.assertIn("Actualiser", corps)
-        self.assertIn("Nouvelle demande", corps)
+        # Design D4 : une seule préparation Modèle/Audio/Moteur remplace les
+        # formulaires répétés par modèle (tâche 4.1).
+        self.assertIn("Préparation d'une exécution", corps)
         # Design D5 : aucune opération enregistrée n'affiche pas un grand panneau
         # technique vide ; la préparation vient en premier plan.
         self.assertNotIn('id="operation"', corps)

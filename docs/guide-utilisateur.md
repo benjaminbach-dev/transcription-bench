@@ -211,16 +211,17 @@ Vérification : non éprouvé à froid. Ce modèle a été exécuté sous Linux 
 
 *Faites ceci.*
 
-1. Ouvrez la page **Exécutions**.
-2. Dans **Nouvelle demande**, trouvez le bloc de votre modèle ; cochez un ou plusieurs audios ; laissez **Threads demandés** à la valeur proposée.
-3. Cliquez sur **Lancer l'exécution** (le bouton **Vérifier la demande (aucun lancement)** sert seulement à contrôler la demande).
-4. Suivez l'avancement dans **Exécutions**, section **Opération longue** : l'état se met à jour automatiquement toutes les 3 secondes tant que l'opération est active. Si le suivi automatique s'interrompt, le lien **Actualiser** recharge l'état ; le journal technique reste replié et s'ouvre sur demande.
+1. Ouvrez la page **Exécutions**, section **Préparation d'une exécution**. Un seul panneau présente **Modèle**, **Audio** et **Moteur**, puis les actions ; un modèle exécutable et un audio lisible y sont déjà choisis.
+2. Choisissez votre modèle dans **Modèle** et votre fichier dans **Audio**, qui ne propose qu'un seul audio dans le cas courant. Pour traiter plusieurs audios, ouvrez **Plusieurs audios, dans cet ordre (facultatif)** et cochez-les : ils remplacent l'audio unique et sont traités l'un après l'autre, dans l'ordre de cette liste (le même ordre est rappelé dans la préparation appliquée). Si vous changez un choix, la préparation se met à jour automatiquement et garde les réglages avancés encore applicables ; sans JavaScript, cliquez sur **Appliquer les choix**, et les réglages saisis reviennent alors à leurs valeurs par défaut. Dans les deux cas, la page recharge la préparation sans rien lancer ; si la famille du modèle change, les réglages de l'ancienne famille reviennent à leurs valeurs par défaut et la page le signale.
+3. Vérifiez la ligne **Préparation appliquée** : elle nomme le modèle, le moteur et les audios qui seront réellement lancés. Les **Réglages avancés (facultatif)**, dont **Threads demandés**, restent fermés et leurs valeurs par défaut suffisent.
+4. Cliquez sur **Lancer l'exécution**, placé avant les réglages avancés (le bouton **Vérifier la demande (aucun lancement)** sert seulement à contrôler la demande).
+5. Suivez l'avancement dans **Exécutions**, section **Opération longue** : l'état se met à jour automatiquement toutes les 3 secondes tant que l'opération est active. Si le suivi automatique s'interrompt, le lien **Actualiser** recharge l'état ; le journal technique reste replié et s'ouvre sur demande.
 
 *Vous devez voir.* L'état passe à « en cours », puis à « terminée ». Une seule transcription tourne à la fois. Le temps nécessaire dépend de la longueur de l'audio et de votre ordinateur (non mesuré pour ce guide).
 
-*Si ce n'est pas le cas.* Voir « transcription vide ou exécution interrompue » dans le [dépannage](#13-dépannage). Le bouton **Arrêter l'exécution** (page **Exécutions**) interrompt une exécution : les résultats déjà obtenus sont conservés.
+*Si ce n'est pas le cas.* Si la page affiche **Aucun modèle exécutable** ou **Aucun audio lisible**, son explication indique la page à ouvrir : **Modèles** pour un modèle prêt, **Audios** pour un fichier lisible. Si un choix a expiré (modèle supprimé, audio déplacé), un message le signale, les choix valides restent affichés et les autres reviennent aux valeurs par défaut ; un refus au lancement ramène aussi à cette page en conservant les choix encore valides, sans annoncer un lancement qui n'a pas eu lieu. Voir aussi « transcription vide ou exécution interrompue » dans le [dépannage](#13-dépannage). Le bouton **Arrêter l'exécution** (page **Exécutions**) interrompt une exécution : les résultats déjà obtenus sont conservés.
 
-Vérification : non éprouvé à froid.
+Vérification : non éprouvé à froid. Le panneau unique, l'audio unique par défaut, le lot ordonné, les choix par défaut et le repli sans JavaScript sont couverts par des tests automatiques, pas par un essai sur un poste réel. La mise à jour automatique des sélections est vérifiée par un harnais Node sur une page simulée, pas par une observation de navigateur ; le parcours au clavier et la densité de la page restent à observer en 6.1.
 
 ## 10. Lire un résultat
 

@@ -7,12 +7,11 @@
  * l'interface HTML reste complète : le lien Actualiser recharge la page et
  * toutes les actions restent des formulaires protégés.
  *
- * Seul comportement implémenté à ce stade : le suivi borné de l'opération
- * longue dans Exécutions (design D5). Il interroge `GET /executions/etat`
- * toutes les 3 s tant qu'une opération est active, une seule requête à la
- * fois, suspendu quand l'onglet est masqué et arrêté à l'état terminal. Il ne
- * remplace ni le formulaire ni les contrôles : seuls des textes et le lien de
- * résultat sont mis à jour, jamais du balisage, sans déplacer le focus.
+ * Seulement deux comportements, tous deux facultatifs : la mise à jour des
+ * sélections compatibles de la préparation (design D4, tâche 4.2) et le suivi
+ * borné de l'opération longue dans Exécutions (design D5, tâche 3.3). Aucun ne
+ * déclenche de mutation : la préparation recharge la même requête GET, sans
+ * jeton ni réglage, et le suivi ne fait que lire `GET /executions/etat`.
  */
 "use strict";
 
@@ -66,6 +65,148 @@
     }
     return adresse.pathname;
   }
+
+  /*
+   * Préparation unique (design D4, tâche 4.2) : changer Modèle, Audio ou Moteur
+   * recharge la préparation sans attendre le bouton « Appliquer les choix » et
+   * sans rien lancer, installer ni télécharger. Le formulaire GET rendu par
+   * Jinja est soumis tel quel — méthode `get`, même action, aucun jeton —
+   * exactement comme le repli sans JavaScript : le serveur reste seul juge des
+   * valeurs retenues et revalide tout. Avant la soumission, les réglages
+   * avancés affichés (`threads`, `reglage_*`) sont recopiés dans les copies
+   * prévues du formulaire GET : seules ces valeurs non sensibles sont
+   * conservées, jamais le jeton, et le serveur décide s'il peut les garder.
+   * Le moteur affiché est ensuite aligné sur la référence choisie (`data-moteur`), et le choix d'un
+   * moteur prend la première référence réellement compatible
+   * (`data-reference`) : aucune combinaison n'est inventée et aucun format de
+   * poids n'est converti. Si ces attributs manquent, rien n'est modifié et le
+   * bouton HTML reste disponible.
+   */
+  var ANCRE_PREPARATION = "#preparation";
+
+  /* Option d'un sélecteur par sa valeur, ou `null` si elle n'y figure pas. */
+  function optionDeValeur(selecteur, valeur) {
+    var options = selecteur.options;
+    if (!options) {
+      return null;
+    }
+    for (var position = 0; position < options.length; position += 1) {
+      if (options[position].value === valeur) {
+        return options[position];
+      }
+    }
+    return null;
+  }
+
+  function demarrerPreparation() {
+    var formulaire = document.querySelector("[data-preparation-choix]");
+    if (formulaire === null) {
+      return;
+    }
+    var modele = formulaire.querySelector("[data-choix-modele]");
+    var moteur = formulaire.querySelector("[data-choix-moteur]");
+    if (modele === null) {
+      return;
+    }
+    var choix = optionDeValeur(modele, modele.value);
+    if (choix === null || choix.getAttribute("data-moteur") === null) {
+      return;
+    }
+
+    /*
+     * Recopie les réglages avancés encore affichés dans les copies cachées du
+     * formulaire GET (design D4) : la valeur de la préparation appliquée est
+     * reprise pour `threads` et pour chaque `reglage_*` déclaré, jamais le jeton
+     * anti-CSRF ni un autre champ. Une copie sans valeur disponible reste
+     * désactivée : elle n'est pas transmise et le serveur remplace alors la
+     * valeur par son défaut en l'annonçant.
+     */
+    function copierReglages() {
+      var lancement = document.querySelector("[data-preparation-lancement]");
+      var valeurs = {};
+      if (lancement !== null) {
+        var controles = lancement.querySelectorAll("[data-valeur-reglage]");
+        for (var position = 0; position < controles.length; position += 1) {
+          var controle = controles[position];
+          if (controle.type === "radio" && !controle.checked) {
+            continue;
+          }
+          valeurs[controle.name] = controle.value;
+        }
+      }
+      var copies = formulaire.querySelectorAll("[data-copie-reglage]");
+      for (var copie = 0; copie < copies.length; copie += 1) {
+        var cible = copies[copie];
+        if (!Object.prototype.hasOwnProperty.call(valeurs, cible.name)) {
+          cible.disabled = true;
+          continue;
+        }
+        cible.value = valeurs[cible.name];
+        cible.disabled = false;
+      }
+    }
+
+    /* Recharge la même requête GET en gardant la vue sur la préparation. */
+    function appliquer() {
+      copierReglages();
+      var action = formulaire.getAttribute("action");
+      if (
+        typeof action === "string" &&
+        action !== "" &&
+        action.indexOf("#") === -1
+      ) {
+        formulaire.setAttribute("action", action + ANCRE_PREPARATION);
+      }
+      formulaire.submit();
+    }
+
+    function surModele() {
+      if (moteur === null) {
+        appliquer();
+        return;
+      }
+      var option = optionDeValeur(modele, modele.value);
+      var identifiant = option === null ? null : option.getAttribute("data-moteur");
+      if (identifiant === null || optionDeValeur(moteur, identifiant) === null) {
+        return;
+      }
+      moteur.value = identifiant;
+      appliquer();
+    }
+
+    function surMoteur() {
+      var option = optionDeValeur(moteur, moteur.value);
+      var reference = option === null ? null : option.getAttribute("data-reference");
+      var courant = optionDeValeur(modele, modele.value);
+      if (reference === null || optionDeValeur(modele, reference) === null) {
+        return;
+      }
+      /* Le modèle affiché est déjà servi par ce moteur : ne pas en changer. */
+      if (courant !== null && courant.getAttribute("data-moteur") === moteur.value) {
+        return;
+      }
+      modele.value = reference;
+      appliquer();
+    }
+
+    modele.addEventListener("change", surModele);
+    if (moteur !== null) {
+      moteur.addEventListener("change", surMoteur);
+    }
+    var audios = formulaire.querySelectorAll("[data-choix-audio]");
+    for (var position = 0; position < audios.length; position += 1) {
+      audios[position].addEventListener("change", appliquer);
+    }
+    var bouton = document.querySelector("[data-action-appliquer]");
+    if (bouton !== null) {
+      /* Sans intérêt une fois la sélection automatique : repli sans script. */
+      bouton.hidden = true;
+    }
+  }
+
+  /* Lancée avant le suivi, qui peut sortir tôt quand aucune opération n'est
+     affichée : la préparation reste améliorée sur une page sans opération. */
+  demarrerPreparation();
 
   var racine = document.querySelector("[data-suivi-operation]");
   if (racine === null) {

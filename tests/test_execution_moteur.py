@@ -1981,7 +1981,8 @@ class RoutesExecutionTest(SocleExecutionTest):
         page = self.client.get("/executions", base_url=self.base_url())
         corps = page.get_data(as_text=True)
         self.assertEqual(page.status_code, 200)
-        self.assertIn('formaction="/executions/lancer"', corps)
+        self.assertIn('action="/executions/lancer"', corps)
+        self.assertIn('formaction="/executions/verifier"', corps)
         self.assertIn("Lancer l'exécution", corps)
         self.assertIn("dossier de travail de l'exécution", corps)
 
@@ -2009,7 +2010,13 @@ class RoutesExecutionTest(SocleExecutionTest):
         self.assertEqual(self.poster("/executions/lancer").status_code, 303)
         try:
             attendre_fichier(paliers / "palier-1")
-            self.assertEqual(self.poster("/executions/lancer").status_code, 409)
+            generation = self.creneau.instantane().generation
+            refusee = self.poster("/executions/lancer", threads="3")
+            self.assertEqual(refusee.status_code, 409)
+            corps = refusee.get_data(as_text=True)
+            self.assertIn('name="threads" value="3"', corps)
+            self.assertIn('data-preparation-lancement', corps)
+            self.assertEqual(self.creneau.instantane().generation, generation)
             self.assertEqual(self.poster("/dossiers/verifier").status_code, 409)
         finally:
             self.liberer_paliers(paliers, 1)
@@ -2074,7 +2081,10 @@ class RoutesExecutionTest(SocleExecutionTest):
         corps = html.unescape(reponse.get_data(as_text=True))
         # Message propre au moteur non prêt, pas la phrase du jeton ou de l'adresse.
         self.assertIn("moteur demandé n'est pas prêt", corps)
-        self.assertNotIn("jeton", corps.lower())
+        self.assertNotIn("jeton invalide", corps.lower())
+        # Le jeton caché du formulaire restitué est légitime : les choix sont
+        # conservés malgré ce refus métier, sans le confondre avec un refus CSRF.
+        self.assertIn('data-preparation-lancement', corps)
         self.assertIsNone(self.creneau.thread_travailleur)
         self.assertIsNone(service.derniere_execution())
         self.assertFalse(service.en_cours())

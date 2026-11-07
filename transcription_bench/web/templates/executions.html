@@ -1,5 +1,9 @@
 {% extends "base.html" %}
 {% import "formats.html" as formats %}
+{# Valeur d'un réglage avancé telle que le formulaire la transmet (oui/non). #}
+{% macro valeur_formulaire(valeur) -%}
+{%- if valeur is sameas true -%}oui{%- elif valeur is sameas false -%}non{%- else -%}{{ valeur }}{%- endif -%}
+{%- endmacro %}
 {% block page_courante %}executions{% endblock %}
 {% block titre %}Exécutions — transcription-bench{% endblock %}
 {% block contenu %}
@@ -114,82 +118,145 @@ aucun réglage déclaré par cette famille : aucun réglage n'est proposé.
 </details>
 </article>
 {% endif %}
-<h2>Nouvelle demande</h2>
-<p class="prose"><strong>Lancement dans le créneau global.</strong> {{ message_lancement }}</p>
+<h2 id="preparation">Préparation d'une exécution</h2>
+{# Design D4 : une préparation unique Modèle/Audio/Moteur. Deux formulaires
+   techniques seulement — une sélection GET, sans jeton ni réglage, puis le
+   lancement POST protégé. Les sélecteurs ne sont jamais dupliqués : le POST ne
+   porte que la préparation explicitement appliquée ci-dessous, recalculée et
+   revalidée côté serveur. Aucun champ caché n'est actif hors de ce POST. Le
+   script local ne lit que les valeurs déjà rendues ici (référence du modèle,
+   moteur joint à chaque option) et soumet cette même requête GET : il ne
+   fabrique aucun choix, ne transmet aucun jeton et ne lance rien. #}
+{% if erreur_preparation %}
+<p class="callout warning prose" role="alert">{{ erreur_preparation }}</p>
+{% endif %}
 {% if not modeles %}
-<p class="callout prose">Aucun modèle proposable : la page des modèles permet de vérifier un dépôt et de le télécharger explicitement. Seul un moteur déclaré peut proposer un modèle.</p>
-{% else %}
-<p class="prose">Le formulaire est répété pour chaque modèle exécutable, car les réglages proposés sont ceux de sa famille. Seuls les réglages déclarés par l'adaptateur apparaissent, avec leur valeur par défaut. Un modèle dont la famille n'est pas exécutable est affiché pour information et n'est pas sélectionnable.</p>
-{% for modele in modeles %}
-<article>
-<header>
-<h3>{{ modele.nom_moteur }} — {{ modele.identifiant }}</h3>
-</header>
-{% if modele.synthetique %}
-<p class="prose">Modèle synthétique du moteur factice : aucun fichier de modèle, aucun poids. Le moteur factice ne charge rien et produira des textes et mesures simulés, jamais représentatifs d'un PC. Moteur {{ modele.moteur }} ; famille {{ modele.libelle_famille }}.</p>
-{% else %}
-<p class="prose">Moteur {{ modele.moteur }} ; famille {{ modele.libelle_famille }}{% if not modele.qualifiee %} (non validée sur PC){% endif %}{% if modele.fichier_gguf %} ; variante GGUF {{ modele.fichier_gguf }}{% endif %}. Commit {{ modele.commit }}.</p>
-{% endif %}
-{% if not modele.executable %}
-<p class="callout warning prose"><strong>Non exécutable :</strong> {{ modele.motif_non_executable }}. Ce modèle est affiché pour information : il ne peut pas être sélectionné et une demande qui le cite est refusée.</p>
-{% elif not audios %}
-<p class="callout warning prose">Aucun audio lisible dans le dossier d'entrée : la page des audios liste les fichiers présents et les erreurs de lecture, et aucun formulaire n'est proposé pour ce modèle.</p>
-{% else %}
-{% if modele.fenetre_fixe_secondes is none %}
-<p class="prose">Mécanisme natif d'audio long pris en charge jusqu'à la durée déclarée par la famille ; au-delà, repli en fenêtres fixes de 30 s sans recouvrement. La méthode effectivement utilisée est consignée pour chaque audio.</p>
-{% else %}
-<p class="prose">Famille sans mécanisme natif d'audio long pris en charge par le runner : les audios seront découpés en fenêtres fixes de {{ "%.0f"|format(modele.fenetre_fixe_secondes) }} s sans recouvrement, et la durée de fenêtre sera consignée pour chaque audio.</p>
-{% endif %}
-<form method="post" action="{{ url_for('verifier_demande_execution') }}">
-<input type="hidden" name="jeton_csrf" value="{{ jeton_csrf }}">
-<input type="hidden" name="modele" value="{{ modele.reference }}">
-<fieldset>
-<legend>Audios</legend>
-{% for audio in audios %}
-<p class="prose"><label><input type="checkbox" name="audios" value="{{ audio.nom }}"> {{ audio.nom }}{% if audio.duree_indicative is not none %} (durée indicative {{ "%.2f"|format(audio.duree_indicative) }} s){% endif %}</label></p>
+<p class="callout prose">Aucun modèle proposable : <a href="{{ url_for('modeles') }}">la page des modèles</a> permet de vérifier un dépôt et de le télécharger explicitement. Seul un moteur déclaré peut proposer un modèle.</p>
+{% elif not modeles_executables %}
+<p class="callout prose">Aucun modèle exécutable : aucun lancement n'est proposé. <a href="{{ url_for('modeles') }}">La page des modèles</a> liste les modèles locaux prêts et permet d'en ajouter un.</p>
+<ul class="prose">
+{% for modele in modeles_non_executables %}
+<li><strong>Non exécutable :</strong> {{ modele.identifiant }} (moteur {{ modele.nom_moteur }}) — {{ modele.motif_non_executable }}. Ce modèle est affiché pour information : une demande qui le cite est refusée.</li>
 {% endfor %}
-<p class="prose">La durée indicative vient de l'en-tête du fichier ; la durée de référence du RTF sera la durée réellement décodée.</p>
-</fieldset>
+</ul>
+{% elif not audios %}
+<p class="callout prose">Aucun audio lisible dans le dossier d'entrée : <a href="{{ url_for('audios') }}">la page des audios</a> liste les fichiers présents et les erreurs de lecture. Aucun lancement n'est proposé tant qu'aucun audio lisible n'est disponible.</p>
+{% else %}
+<form method="get" action="{{ url_for('executions') }}" data-preparation-choix>
+<p class="prose"><label for="champ-modele">Modèle</label> <select id="champ-modele" name="modele" data-choix-modele>
+{% for modele in modeles_executables %}
+<option value="{{ modele.reference }}" data-moteur="{{ modele.moteur }}"{% if preparation.reference and modele.reference == preparation.reference %} selected{% endif %}>{{ modele.identifiant }}{% if modele.fichier_gguf %} (GGUF {{ modele.fichier_gguf }}){% endif %} — {{ modele.nom_moteur }}</option>
+{% endfor %}
+</select></p>
+{# Design D4 / tâche 4.3 : un audio unitaire par défaut, contrôle simple. Le
+   mode lot reste facultatif et replié au second plan ; ses cases portent un
+   autre nom (`audios_lot`) pour ne jamais envoyer deux fois le même audio, et
+   aucune case n'est active sans un choix explicite. L'ordre de traitement est
+   celui de cette liste, rappelé dans la préparation appliquée : aucun ordre de
+   clic n'est promis. #}
+<p class="prose"><label for="champ-audio">Audio</label> <select id="champ-audio" name="audios" data-choix-audio>
+{% for audio in audios %}
+<option value="{{ audio.nom }}"{% if preparation.audios and audio.nom == preparation.audios[0] %} selected{% endif %}>{{ audio.nom }}{% if audio.duree_indicative is not none %} (durée indicative {{ formater_duree_premier_niveau(audio.duree_indicative) }}){% endif %}</option>
+{% endfor %}
+</select></p>
+<details{% if lot_actif %} open{% endif %}>
+<summary>Plusieurs audios, dans cet ordre (facultatif)</summary>
+<ol class="prose">
+{% for audio in audios_lot_ordonnes %}
+<li><label><input type="checkbox" name="audios_lot" value="{{ audio.nom }}" data-choix-audio{% if lot_actif and audio.nom in preparation.audios %} checked{% endif %}> {{ audio.nom }}{% if audio.duree_indicative is not none %} (durée indicative {{ formater_duree_premier_niveau(audio.duree_indicative) }}){% endif %}</label></li>
+{% endfor %}
+</ol>
+<p class="prose small">Cocher au moins un audio remplace l'audio unique ci-dessus ; l'ordre de traitement suit celui de cette liste, et la préparation appliquée le rappelle.</p>
+</details>
+<p class="prose"><label for="champ-moteur">Moteur</label> <select id="champ-moteur" name="moteur" data-choix-moteur>
+{% for identifiant, nom_moteur, reference in moteurs_proposes %}
+<option value="{{ identifiant }}" data-reference="{{ reference }}"{% if identifiant == preparation.moteur %} selected{% endif %}>{{ nom_moteur }}</option>
+{% endfor %}
+</select></p>
+{# Design D4 : seules les valeurs non sensibles de la préparation déjà
+   affichée peuvent voyager en GET pour être conservées : sa référence
+   (`source`), les threads demandés et les seuls réglages qu'elle a déclarés.
+   Ces copies sont désactivées sans script : le repli HTML ne transmet donc
+   aucune valeur saisie et le remplacement par les défauts est annoncé. Le
+   script les active après les avoir copiées de la préparation appliquée. #}
+{% if preparation.applicable %}
+<input type="hidden" name="source" value="{{ preparation.reference }}">
+<input type="hidden" name="threads" value="{{ preparation.threads }}" data-copie-reglage disabled>
+{% for reglage, valeur in preparation.reglages %}
+{% if reglage.type_valeur != 'texte' %}
+<input type="hidden" name="{{ prefixe_reglage }}{{ reglage.nom }}" value="{{ valeur_formulaire(valeur) }}" data-copie-reglage disabled>
+{% endif %}
+{% endfor %}
+{% endif %}
+<p class="prose" data-action-appliquer><button type="submit" class="secondary">Appliquer les choix</button> <span class="small">Changer un choix recharge ici cette préparation sans rien lancer ; sans JavaScript, ce bouton fait de même et les réglages saisis reviennent à leurs défauts, ce qui est annoncé.</span></p>
+</form>
+{% if preparation.applicable %}
+<section aria-labelledby="preparation-appliquee">
+<h3 id="preparation-appliquee">Préparation appliquée</h3>
+<p class="prose">Modèle : <strong>{{ preparation.modele.identifiant }}</strong>{% if preparation.modele.fichier_gguf %} (variante GGUF {{ preparation.modele.fichier_gguf }}){% endif %} · moteur {{ preparation.modele.nom_moteur }} · audio{% if preparation.audios | length > 1 %}s, dans cet ordre de traitement{% endif %} : {{ preparation.audios | join(', ') }}.</p>
+{% if audio_unitaire_ignore %}
+<p class="prose small">Mode lot appliqué : l'audio unique « {{ audio_unitaire_ignore }} » n'est pas retenu ; l'ordre ci-dessus est celui du traitement.</p>
+{% endif %}
+{% if preparation.modele.synthetique %}
+<p class="prose small"><strong>Modèle synthétique</strong> : textes et mesures simulés, jamais représentatifs d'un PC.</p>
+{% endif %}
+{% if preparation.reinitialisation %}
+<p class="prose small">{{ preparation.reinitialisation }}</p>
+{% endif %}
+<form method="post" action="{{ url_for('lancer_execution') }}" data-preparation-lancement>
+<input type="hidden" name="jeton_csrf" value="{{ jeton_csrf }}">
+<input type="hidden" name="modele" value="{{ preparation.reference }}">
+<input type="hidden" name="moteur" value="{{ preparation.moteur }}">
+{% for nom_audio in preparation.audios %}
+<input type="hidden" name="audios" value="{{ nom_audio }}">
+{% endfor %}
+{# Une seule série d'actions : Lancer d'abord, puis la vérification
+   secondaire ; les réglages avancés restent fermés et facultatifs. #}
+<p class="prose"><button type="submit">Lancer l'exécution</button></p>
+<p class="prose"><button type="submit" class="secondary" formaction="{{ url_for('verifier_demande_execution') }}">Vérifier la demande (aucun lancement)</button></p>
 <details>
 <summary>Réglages avancés (facultatif)</summary>
-<p class="prose"><label>Threads demandés <input type="number" name="threads" value="{{ threads_defaut }}" min="1" step="1"></label></p>
+<p class="prose"><label>Threads demandés <input type="number" name="threads" value="{{ preparation.threads }}" min="1" step="1" data-valeur-reglage></label></p>
 <p class="prose">Valeur par défaut : nombre de cœurs physiques, à défaut cœurs logiques. Le nombre demandé sera consigné ; le nombre appliqué ne sera affirmé que si l'API du moteur permet de le relire.</p>
 <fieldset>
-<legend>Réglages de la famille {{ modele.libelle_famille }}</legend>
-{% if not modele.reglages %}
+<legend>Réglages de la famille {{ preparation.modele.libelle_famille }}</legend>
+{% if not preparation.reglages %}
 <p class="prose">Aucun réglage n'est déclaré par cette famille : aucun réglage n'est proposé pour cette exécution.</p>
 {% endif %}
-{% for reglage in modele.reglages %}
+{% for reglage, valeur in preparation.reglages %}
 {% if reglage.type_valeur == 'booleen' %}
 <p class="prose">{{ reglage.libelle }} ({{ reglage.nom }}) :
-<label><input type="radio" name="{{ prefixe_reglage }}{{ reglage.nom }}" value="oui"{% if reglage.defaut %} checked{% endif %}> oui</label>
-<label><input type="radio" name="{{ prefixe_reglage }}{{ reglage.nom }}" value="non"{% if not reglage.defaut %} checked{% endif %}> non</label>
+<label><input type="radio" name="{{ prefixe_reglage }}{{ reglage.nom }}" value="oui" data-valeur-reglage{% if valeur is sameas true %} checked{% endif %}> oui</label>
+<label><input type="radio" name="{{ prefixe_reglage }}{{ reglage.nom }}" value="non" data-valeur-reglage{% if valeur is sameas false %} checked{% endif %}> non</label>
 </p>
 {% elif reglage.type_valeur == 'choix' %}
-<p class="prose"><label>{{ reglage.libelle }} ({{ reglage.nom }}) <select name="{{ prefixe_reglage }}{{ reglage.nom }}">
-{% for valeur in reglage.valeurs %}
-<option value="{{ valeur }}"{% if valeur == reglage.defaut %} selected{% endif %}>{{ valeur }}</option>
+<p class="prose"><label>{{ reglage.libelle }} ({{ reglage.nom }}) <select name="{{ prefixe_reglage }}{{ reglage.nom }}" data-valeur-reglage>
+{% for option in reglage.valeurs %}
+<option value="{{ option }}"{% if option == valeur %} selected{% endif %}>{{ option }}</option>
 {% endfor %}
 </select></label></p>
 {% elif reglage.type_valeur == 'entier' %}
-<p class="prose"><label>{{ reglage.libelle }} ({{ reglage.nom }}) <input type="number" name="{{ prefixe_reglage }}{{ reglage.nom }}" value="{{ reglage.defaut }}" step="1"></label></p>
+<p class="prose"><label>{{ reglage.libelle }} ({{ reglage.nom }}) <input type="number" name="{{ prefixe_reglage }}{{ reglage.nom }}" value="{{ valeur }}" step="1" data-valeur-reglage></label></p>
 {% else %}
-<p class="prose"><label>{{ reglage.libelle }} ({{ reglage.nom }}) <input type="text" name="{{ prefixe_reglage }}{{ reglage.nom }}" value="{{ reglage.defaut }}"></label></p>
+<p class="prose"><label>{{ reglage.libelle }} ({{ reglage.nom }}) <input type="text" name="{{ prefixe_reglage }}{{ reglage.nom }}" value="{{ valeur }}" data-valeur-reglage></label></p>
 {% endif %}
 <p class="prose">{{ reglage.description }} (défaut : {% if reglage.type_valeur == 'booleen' %}{% if reglage.defaut %}oui{% else %}non{% endif %}{% elif reglage.defaut == "" %}(vide){% else %}{{ reglage.defaut }}{% endif %})</p>
 {% endfor %}
 </fieldset>
 </details>
-<p class="prose">Les audios sélectionnés seront décodés par le serveur en signaux bruts 16 kHz mono dans un dossier de travail de l'exécution sous <code>data/cache</code>, supprimé à la fin ; le moteur est lancé dans son propre groupe de processus et le créneau reste occupé jusqu'à sa fin réelle.</p>
-<footer>
-<p class="prose"><button type="submit" class="secondary">Vérifier la demande (aucun lancement)</button></p>
-<p class="prose"><button type="submit" formaction="{{ url_for('lancer_execution') }}">Lancer l'exécution</button></p>
-</footer>
 </form>
+</section>
+{% else %}
+<p class="prose">Appliquez les choix ci-dessus pour afficher la préparation à lancer.</p>
 {% endif %}
-</article>
-{% endfor %}
 {% endif %}
+<details>
+<summary>Aide : choix, lancement et méthode</summary>
+<p class="prose"><strong>Choix.</strong> Le moteur découle du modèle choisi : il n'est jamais converti et un moteur incompatible est refusé. La durée indicative d'un audio vient de l'en-tête du fichier ; la durée de référence du RTF sera la durée réellement décodée. La préparation affichée garde les réglages avancés encore applicables à la nouvelle famille et réinitialise les autres en l'annonçant.</p>
+<p class="prose"><strong>Modèle synthétique.</strong> Le modèle factice n'a ni fichier ni poids : le moteur factice ne charge rien et produit des textes et mesures simulés, utiles pour vérifier le logiciel, jamais représentatifs d'un PC.</p>
+<p class="prose"><strong>Méthode.</strong> {% if preparation.modele %}{% if preparation.modele.fenetre_fixe_secondes is none %}Mécanisme natif d'audio long pris en charge jusqu'à la durée déclarée par la famille ; au-delà, repli en fenêtres fixes de 30 s sans recouvrement. La méthode effectivement utilisée est consignée pour chaque audio.{% else %}Famille sans mécanisme natif d'audio long pris en charge par le runner : les audios seront découpés en fenêtres fixes de {{ "%.0f"|format(preparation.modele.fenetre_fixe_secondes) }} s sans recouvrement, et la durée de fenêtre sera consignée pour chaque audio.{% endif %} Les audios sont décodés par le serveur en signaux bruts 16 kHz mono dans un dossier de travail de l'exécution sous <code>data/cache</code>, supprimé à la fin. Le modèle n'est chargé qu'une fois pour le lot et les audios sont traités l'un après l'autre.{% endif %}</p>
+<p class="prose"><strong>Lancement dans le créneau global.</strong> {{ message_lancement }}</p>
+</details>
 <h2 id="historique">Historique des exécutions</h2>
 {% if erreur_historique %}
 <p class="callout danger prose">{{ erreur_historique }}</p>

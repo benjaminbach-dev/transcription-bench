@@ -9,8 +9,12 @@ exécution n'est lancée et qu'aucun dossier de données n'est créé.
 
 from __future__ import annotations
 
+import html
+import re
 import unittest
+from dataclasses import replace
 from pathlib import Path
+from urllib.parse import urlencode
 
 from engines.declarations import (
     TYPE_BOOLEEN,
@@ -31,6 +35,17 @@ from transcription_bench.executions import (
     CLE_MODELE_FACTICE,
     FENETRE_FIXE_SECONDES,
     LIBELLE_MODELE_FACTICE,
+    MESSAGE_AUDIO_INCOHERENT,
+    MESSAGE_MODELE_REINITIALISE,
+    MESSAGE_MOTEUR_INCOHERENT,
+    MESSAGE_MOTEUR_ADAPTE,
+    MESSAGE_REGLAGES_AUTRE_FAMILLE,
+    MESSAGE_REGLAGES_INVALIDES,
+    MESSAGE_REGLAGES_REINITIALISES,
+    MESSAGE_THREADS_REINITIALISES,
+    MESSAGE_TEXTE_NON_CONSERVE,
+    MESSAGE_REGLAGES_SANS_SOURCE,
+    MESSAGE_REGLAGE_INCONNU,
     NOMBRE_THREADS_MINIMUM,
     PREFIXE_CHAMP_REGLAGE,
     ConfigurationExecutions,
@@ -41,6 +56,8 @@ from transcription_bench.executions import (
 )
 from transcription_bench.gestion_modeles import ModeleLocal
 from transcription_bench.paths import ValeurRefusee
+from transcription_bench.web import NOM_CHAMP_JETON
+from transcription_bench.web.app import MESSAGE_PREPARATION_REFUSEE
 
 MOTEUR = "moteur-de-test"
 CLE = "a" * 64
@@ -91,6 +108,71 @@ AUDIOS = (
         "lecture impossible : illisible.wav (fichier invalide)",
     ),
 )
+
+# Deux familles déclarent un réglage du même nom avec des valeurs disjointes :
+# aucune valeur de l'une ne doit être reportée sur l'autre.
+REGLAGES_A = (
+    Reglage(
+        "compute_type",
+        "Type de calcul",
+        TYPE_CHOIX,
+        "float32",
+        "Précision de calcul demandée au moteur.",
+        valeurs=("float32", "int8"),
+    ),
+    Reglage(
+        "beam_size",
+        "Largeur du faisceau",
+        TYPE_ENTIER,
+        5,
+        "Nombre d'hypothèses conservées pendant le décodage.",
+    ),
+    Reglage(
+        "vad_filter",
+        "Filtre de silence",
+        TYPE_BOOLEEN,
+        False,
+        "Active le filtre de détection d'activité vocale.",
+    ),
+    Reglage(
+        "prompt",
+        "Amorce",
+        TYPE_TEXTE,
+        "",
+        "Texte d'amorce facultatif.",
+    ),
+)
+REGLAGES_B = (
+    Reglage(
+        "compute_type",
+        "Type de calcul",
+        TYPE_CHOIX,
+        "int8_float16",
+        "Précision de calcul demandée au moteur.",
+        valeurs=("int8_float16", "bfloat16"),
+    ),
+)
+CLE_VARIANTE = "d" * 64
+
+
+def declaration_homonyme(
+    identifiant: str,
+    famille: str,
+    libelle: str,
+    reglages: tuple[Reglage, ...],
+    *,
+    nom: str = "Moteur de test",
+) -> DeclarationAdaptateur:
+    """Déclaration synthétique d'une famille aux réglages nommés librement."""
+    return DeclarationAdaptateur(
+        identifiant=identifiant,
+        nom=nom,
+        fichier_requirements=None,
+        regle_compatibilite="transformers-safetensors",
+        familles=(
+            Famille(famille, libelle, qualifiee=True, reglages=reglages),
+        ),
+    )
 
 
 def declaration_avec_reglages(
@@ -691,7 +773,8 @@ class PageExecutionsTest(SocleWebTest):
             app=app,
         )
 
-        self.verifier_page_erreur(reponse, 400)
+        corps = self.verifier_refus_preparation(reponse)
+        self.assertNotIn('action="/executions/lancer"', corps)
         self.assertEqual(self.creneau.instantane().etat, "libre")
 
     def test_post_refuse_un_champ_repete(self) -> None:
@@ -709,7 +792,10 @@ class PageExecutionsTest(SocleWebTest):
         for donnees in cas:
             with self.subTest(donnees=donnees):
                 reponse = self.post_autorise("/executions/verifier", donnees=donnees)
-                self.verifier_page_erreur(reponse, 400)
+                corps = self.verifier_refus_preparation(reponse)
+                # Le premier choix du champ répété n'est pas arbitré : la page
+                # reprend les valeurs de la préparation, sans lancer.
+                self.assertIn("Lancer l'exécution", corps)
                 self.assertEqual(self.creneau.instantane().etat, "libre")
 
     def test_formulaire_propose_seulement_les_reglages_declares(self) -> None:
@@ -723,7 +809,7 @@ class PageExecutionsTest(SocleWebTest):
         # Valeurs par défaut de la déclaration, sans valeur inventée.
         self.assertIn('value="5"', corps)
         self.assertIn('<option value="float32" selected>', corps)
-        self.assertIn('value="non" checked', corps)
+        self.assertIn('value="non" data-valeur-reglage checked', corps)
         self.assertIn('name="threads" value="4"', corps)
 
         # Audios lisibles seulement, et fenêtres fixes annoncées.
@@ -769,26 +855,28 @@ class PageExecutionsTest(SocleWebTest):
                 "modele": self.reference(),
                 "audios": ["a.wav"],
                 "threads": "4",
-                PREFIXE_CHAMP_REGLAGE + "temperature": "0.0",
+                    PREFIXE_CHAMP_REGLAGE + "temperature": "0.0",
             },
         )
 
-        self.verifier_page_erreur(reponse, 400)
+        corps = self.verifier_refus_preparation(reponse)
+        self.assertIn(MESSAGE_REGLAGE_INCONNU, corps)
         self.assertEqual(self.creneau.instantane().etat, "libre")
 
     def test_post_refuse_audio_hors_liste_et_modele_non_pret(self) -> None:
         cas = (
-            ("z.wav", self.reference()),
-            ("illisible.wav", self.reference()),
-            ("a.wav", f"{MOTEUR}/{AUTRE_CLE}"),
+            ("z.wav", self.reference(), MESSAGE_AUDIO_INCOHERENT),
+            ("illisible.wav", self.reference(), MESSAGE_AUDIO_INCOHERENT),
+            ("a.wav", f"{MOTEUR}/{AUTRE_CLE}", MESSAGE_MODELE_REINITIALISE),
         )
-        for audio, modele in cas:
+        for audio, modele, attendu in cas:
             with self.subTest(audio=audio, modele=modele):
                 reponse = self.post_autorise(
                     "/executions/verifier",
                     donnees={"modele": modele, "audios": [audio], "threads": "4"},
                 )
-                self.verifier_page_erreur(reponse, 400)
+                corps = self.verifier_refus_preparation(reponse)
+                self.assertIn(attendu, corps)
 
     def test_post_sans_jeton_refuse_sans_lancer(self) -> None:
         reponse = self.post_autorise(
@@ -832,3 +920,1143 @@ class PageExecutionsTest(SocleWebTest):
         self.assertIn("Aucun audio lisible", corps)
         self.assertNotIn("illisible.wav", corps)
         self.verifier_html_seul(corps)
+
+
+AUTRE_MOTEUR = "autre-moteur"
+INSTANCE_AUTRE_MOTEUR = "Moteur alternatif de test"
+
+
+class PreparationUniqueTest(SocleWebTest):
+    """Panneau de préparation unique Modèle/Audio/Moteur (tâche 4.1, D4).
+
+    Deux moteurs proposent un modèle de même identifiant : les libellés courts
+    restent distincts, le moteur n'est jamais un second choix indépendant et
+    toute sélection GET est revalidée côté serveur sans jeton dans l'URL.
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.registre = RegistreMoteurs()
+        self.registre.enregistrer(declaration_avec_reglages())
+        self.registre.enregistrer(
+            replace(
+                declaration_avec_reglages(
+                    identifiant=AUTRE_MOTEUR, famille="autre"
+                ),
+                nom=INSTANCE_AUTRE_MOTEUR,
+            )
+        )
+        self.modeles = (
+            modele_prete(),
+            modele_prete(moteur=AUTRE_MOTEUR, cle=AUTRE_CLE, famille="autre"),
+        )
+        self.service = self.creer_service()
+        self.app = self.construire_app(self.services(executions=self.service))
+        self.client = self.app.test_client()
+
+    def creer_service(self, **options) -> ConfigurationExecutions:
+        parametres = {
+            "lister": lambda dossier: AUDIOS,
+            "compter_threads": lambda: THREADS_DEFAUT,
+        }
+        parametres.update(options)
+        return ConfigurationExecutions(
+            self.dossier_data,
+            self.registre,
+            lambda: self.modeles,
+            **parametres,
+        )
+
+    def get(self, chemin: str = "/executions"):
+        return self.client.get(chemin, base_url=self.base_url())
+
+    def reference(self, position: int = 0) -> str:
+        return self.service.modeles_proposables()[position].reference
+
+    def scenario(self, parametres: dict[str, object]) -> str:
+        return "/executions?" + urlencode(parametres, doseq=True)
+
+    def test_un_seul_panneau_avec_une_seule_serie_de_selecteurs(self) -> None:
+        reponse = self.get()
+
+        self.assertEqual(reponse.status_code, 200)
+        corps = reponse.get_data(as_text=True)
+        self.verifier_html_seul(corps)
+        self.assertEqual(
+            corps.count('<select id="champ-modele" name="modele" data-choix-modele>'), 1
+        )
+        self.assertEqual(
+            corps.count('<select id="champ-moteur" name="moteur" data-choix-moteur>'), 1
+        )
+        # Tâche 4.3 : un audio unitaire par défaut et un lot facultatif, jamais
+        # envoyés dans le même champ.
+        self.assertEqual(
+            corps.count('<select id="champ-audio" name="audios" data-choix-audio>'), 1
+        )
+        self.assertNotIn('type="checkbox" name="audios"', corps)
+        self.assertNotIn("formulaire est répété", corps)
+        # Un seul formulaire de lancement, pas un par modèle proposé.
+        self.assertEqual(corps.count('action="/executions/lancer"'), 1)
+        # Les audios lisibles sont proposés une fois chacun, pas un par modèle.
+        for audio in AUDIOS[:2]:
+            self.assertEqual(
+                corps.count(f'<option value="{audio.nom}"'),
+                1,
+                audio.nom,
+            )
+            self.assertEqual(
+                corps.count(
+                    f'<input type="checkbox" name="audios_lot" value="{audio.nom}"'
+                ),
+                1,
+                audio.nom,
+            )
+
+    def test_defauts_appliques_sans_clic_supplementaire(self) -> None:
+        corps = self.get().get_data(as_text=True)
+        corps_html = html.unescape(corps)
+
+        self.assertIn("Préparation appliquée", corps)
+        self.assertIn(f'name="modele" value="{self.reference()}"', corps)
+        self.assertIn('name="moteur" value="moteur-de-test"', corps)
+        self.assertIn('name="audios" value="a.wav"', corps)
+        self.assertIn('<option value="a.wav" selected>', corps)
+        self.assertIn(
+            f'<option value="moteur-de-test" data-reference="{self.reference()}" selected>',
+            corps,
+        )
+        self.assertIn("Lancer l'exécution", corps_html)
+        # Ni identifiant canonique ni commit avant les contrôles (D4).
+        self.assertNotIn(COMMIT, corps)
+
+    def test_libelles_courts_et_moteurs_distincts(self) -> None:
+        corps = html.unescape(self.get().get_data(as_text=True))
+        options = re.findall(r"<option value=\"[^\"]*\"[^>]*>([^<]*)</option>", corps)
+
+        self.assertIn("org/modele — Moteur de test", options)
+        self.assertIn(f"org/modele — {INSTANCE_AUTRE_MOTEUR}", options)
+
+    def test_preparation_get_sans_jeton_ni_action(self) -> None:
+        corps = self.get().get_data(as_text=True)
+        formulaire = corps.split('data-preparation-choix>', 1)[1].split("</form>", 1)[0]
+        noms = set(re.findall(r'name="([^"]+)"', formulaire))
+
+        self.assertIn('method="get"', corps)
+        self.assertNotIn(NOM_CHAMP_JETON, formulaire)
+        # Liste blanche stricte des paramètres GET : références locales, noms
+        # d'audios (unitaire et lot facultatif) et copies non sensibles des
+        # réglages déjà affichés.
+        for nom in noms:
+            self.assertTrue(
+                nom
+                in ("modele", "moteur", "audios", "audios_lot", "source", "threads")
+                or nom.startswith(PREFIXE_CHAMP_REGLAGE),
+                f"paramètre GET hors liste blanche : {nom}",
+            )
+        # Sans script, ces copies restent désactivées : aucune valeur saisie ne
+        # voyage, et le remplacement par les défauts est annoncé.
+        copies = re.findall(
+            r'<input type="hidden" name="[^"]+" value="[^"]*"'
+            r' data-copie-reglage( disabled)?>',
+            formulaire,
+        )
+        self.assertTrue(copies)
+        self.assertTrue(all(disabled for disabled in copies), formulaire)
+        self.assertEqual(self.creneau.instantane().etat, "libre")
+        self.assertFalse(self.dossier_data.exists())
+
+    def test_jeton_fourni_en_get_ignore_et_non_recopie(self) -> None:
+        reponse = self.get(
+            self.scenario(
+                {
+                    NOM_CHAMP_JETON: "jeton-en-url",
+                    "modele": self.reference(),
+                    "audios": ["a.wav"],
+                }
+            )
+        )
+
+        self.assertEqual(reponse.status_code, 200)
+        self.assertNotIn("jeton-en-url", reponse.get_data(as_text=True))
+
+    def test_choix_appliques_par_get_conserves(self) -> None:
+        seconde = self.reference(1)
+        corps = self.get(
+            self.scenario(
+                {
+                    "modele": seconde,
+                    "moteur": AUTRE_MOTEUR,
+                    "audios": ["b.wav"],
+                    "source": seconde,
+                }
+            )
+        ).get_data(as_text=True)
+
+        self.assertIn(f'name="modele" value="{seconde}"', corps)
+        self.assertIn(f'name="moteur" value="{AUTRE_MOTEUR}"', corps)
+        self.assertIn('name="audios" value="b.wav"', corps)
+        # La préparation d'origine accompagne la sélection, mais aucune valeur de
+        # réglage (repli HTML) : le remplacement par les défauts est annoncé.
+        self.assertIn(f'name="source" value="{seconde}"', corps)
+        self.assertIn(MESSAGE_REGLAGES_REINITIALISES, html.unescape(corps))
+
+    def test_reference_perimee_refusee_sans_500(self) -> None:
+        perimee = f"MOTEUR_INCONNU/{'f' * 64}"
+        reponse = self.get(self.scenario({"modele": perimee, "audios": ["a.wav"]}))
+        corps = reponse.get_data(as_text=True)
+
+        self.assertEqual(reponse.status_code, 400)
+        self.verifier_html_seul(corps)
+        # La page Exécutions reste rendue : l'opération et l'historique restent
+        # accessibles, seuls les choix sont réinitialisés.
+        self.assertIn("<h1>Exécutions</h1>", corps)
+        self.assertIn(MESSAGE_MODELE_REINITIALISE, corps)
+        self.assertIn(f'name="modele" value="{self.reference()}"', corps)
+        self.assertNotIn("Erreur 400", corps)
+        self.assertEqual(self.creneau.instantane().etat, "libre")
+
+    def test_reference_non_executable_refusee_et_defaut_repris(self) -> None:
+        registre = RegistreMoteurs()
+        registre.enregistrer(declaration_avec_reglages(qualifiee=False))
+        service = ConfigurationExecutions(
+            self.dossier_data,
+            registre,
+            lambda: (modele_prete(),),
+            lister=lambda dossier: AUDIOS,
+        )
+        reference = service.modeles_proposables()[0].reference
+        app = self.construire_app(self.services(executions=service))
+
+        reponse = app.test_client().get(
+            f"/executions?modele={reference}",
+            base_url=self.base_url(),
+        )
+        corps = reponse.get_data(as_text=True)
+
+        self.assertEqual(reponse.status_code, 400)
+        self.assertIn("Aucun modèle exécutable", corps)
+        self.assertIn("Non exécutable", corps)
+        self.assertNotIn('name="modele"', corps)
+
+    def test_audio_invalide_refuse_et_modele_conserve(self) -> None:
+        reponse = self.get(
+            self.scenario(
+                {
+                    "modele": self.reference(),
+                    "moteur": "moteur-de-test",
+                    "audios": ["z.wav", "illisible.wav"],
+                }
+            )
+        )
+        corps = reponse.get_data(as_text=True)
+
+        self.assertEqual(reponse.status_code, 400)
+        self.assertIn(MESSAGE_AUDIO_INCOHERENT, corps)
+        self.assertIn(f'name="modele" value="{self.reference()}"', corps)
+        self.assertIn('name="audios" value="a.wav"', corps)
+        self.assertNotIn('name="audios" value="z.wav"', corps)
+
+    def test_audio_absent_annonce_le_defaut(self) -> None:
+        reponse = self.get(
+            self.scenario({"modele": self.reference(), "moteur": "moteur-de-test"})
+        )
+
+        self.assertEqual(reponse.status_code, 400)
+        self.assertIn(
+            "Aucun audio sélectionné", reponse.get_data(as_text=True)
+        )
+
+    def test_moteur_incoherent_refuse_et_moteur_de_la_reference_retenu(self) -> None:
+        reponse = self.get(
+            self.scenario(
+                {
+                    "modele": self.reference(),
+                    "moteur": AUTRE_MOTEUR,
+                    "audios": ["a.wav"],
+                }
+            )
+        )
+        corps = reponse.get_data(as_text=True)
+
+        self.assertEqual(reponse.status_code, 400)
+        self.assertIn(MESSAGE_MOTEUR_INCOHERENT, corps)
+        self.assertIn('name="moteur" value="moteur-de-test"', corps)
+        self.assertNotIn(f'name="moteur" value="{AUTRE_MOTEUR}"', corps)
+
+    def test_champ_get_repete_refuse_sans_500(self) -> None:
+        chemin = "/executions?" + urlencode(
+            [("modele", self.reference()), ("modele", self.reference(1))]
+        )
+        reponse = self.get(chemin)
+        corps = reponse.get_data(as_text=True)
+
+        self.assertEqual(reponse.status_code, 400)
+        self.verifier_html_seul(corps)
+        self.assertIn(MESSAGE_PREPARATION_REFUSEE, corps)
+        self.assertIn("<h1>Exécutions</h1>", corps)
+
+    def test_valeur_get_hostile_echappee_sans_script(self) -> None:
+        reponse = self.get(
+            self.scenario(
+                {
+                    "modele": "<script>alert(1)</script>",
+                    "moteur": "<img src=x onerror=alert(1)>",
+                    "audios": ["<script>alert(2)</script>"],
+                }
+            )
+        )
+        corps = reponse.get_data(as_text=True)
+
+        self.assertEqual(reponse.status_code, 400)
+        self.verifier_html_seul(corps)
+        self.assertNotIn("<script>alert", corps)
+        self.assertNotIn("<img", corps)
+        self.assertIn(MESSAGE_MODELE_REINITIALISE, corps)
+
+    def test_inventaire_vide_et_non_executable_sans_lancement(self) -> None:
+        for modeles, attendu in (
+            ((), "Aucun modèle proposable"),
+            ((modele_prete(),), "Aucun modèle exécutable"),
+        ):
+            with self.subTest(attendu=attendu):
+                registre = self.registre
+                if not modeles:
+                    registre = RegistreMoteurs()
+                else:
+                    registre = RegistreMoteurs()
+                    registre.enregistrer(
+                        declaration_avec_reglages(qualifiee=False)
+                    )
+                service = ConfigurationExecutions(
+                    self.dossier_data,
+                    registre,
+                    lambda modeles=modeles: modeles,
+                    lister=lambda dossier: AUDIOS,
+                )
+                app = self.construire_app(self.services(executions=service))
+                corps = (
+                    app.test_client()
+                    .get("/executions", base_url=self.base_url())
+                    .get_data(as_text=True)
+                )
+
+                self.assertIn(attendu, corps)
+                self.assertNotIn('name="modele"', corps)
+                self.assertNotIn("Lancer l'exécution", corps)
+                self.verifier_html_seul(corps)
+
+    def test_post_moteur_incoherent_refuse_sans_lancer(self) -> None:
+        reponse = self.post_autorise(
+            "/executions/verifier",
+            donnees={
+                "modele": self.reference(),
+                "moteur": AUTRE_MOTEUR,
+                "audios": ["a.wav"],
+                "threads": "4",
+            },
+        )
+
+        corps = self.verifier_refus_preparation(reponse)
+        self.assertIn(MESSAGE_MOTEUR_INCOHERENT, corps)
+        self.assertEqual(self.creneau.instantane().etat, "libre")
+
+    def test_post_moteur_repete_refuse(self) -> None:
+        reponse = self.post_autorise(
+            "/executions/verifier",
+            donnees={
+                "modele": self.reference(),
+                "moteur": ["moteur-de-test", AUTRE_MOTEUR],
+                "audios": ["a.wav"],
+                "threads": "4",
+            },
+        )
+
+        self.verifier_refus_preparation(reponse)
+        self.assertEqual(self.creneau.instantane().etat, "libre")
+
+    def test_post_coherent_verifie_sans_lancer_ni_creer_de_dossier(self) -> None:
+        reponse = self.post_autorise(
+            "/executions/verifier",
+            donnees={
+                "modele": self.reference(1),
+                "moteur": AUTRE_MOTEUR,
+                "audios": ["b.wav", "a.wav"],
+                "threads": "3",
+            },
+        )
+
+        self.assertEqual(reponse.status_code, 200)
+        corps = reponse.get_data(as_text=True)
+        self.verifier_html_seul(corps)
+        self.assertIn("Demande validée", corps)
+        self.assertIn(f'name="moteur" value="{AUTRE_MOTEUR}"', corps)
+        self.assertIn("<li>b.wav</li>", corps)
+        self.assertEqual(self.creneau.instantane().etat, "libre")
+        self.assertFalse(self.dossier_data.exists())
+
+
+class PreparationLotTest(SocleWebTest):
+    """Audio unitaire par défaut et lot facultatif ordonné (tâche 4.3, D4).
+
+    Le cas courant est un contrôle simple qui sélectionne un seul audio ; le
+    lot reste replié au second plan, sous un autre nom de champ, et son ordre
+    de traitement est celui de la liste rendue, rappelé dans la préparation
+    appliquée. Aucun essai n'est lancé : ces lectures ne sollicitent pas le
+    créneau et ne transmettent aucun jeton dans l'URL.
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        registre = RegistreMoteurs()
+        registre.enregistrer(declaration_avec_reglages())
+        self.service = ConfigurationExecutions(
+            self.dossier_data,
+            registre,
+            lambda: (modele_prete(),),
+            lister=lambda dossier: AUDIOS,
+            compter_threads=lambda: THREADS_DEFAUT,
+        )
+        self.app = self.construire_app(self.services(executions=self.service))
+        self.client = self.app.test_client()
+
+    def reference(self) -> str:
+        return self.service.modeles_proposables()[0].reference
+
+    def get(self, parametres: dict[str, object] | None = None):
+        chemin = "/executions"
+        if parametres:
+            chemin += "?" + urlencode(parametres, doseq=True)
+        return self.client.get(chemin, base_url=self.base_url())
+
+    def formulaire_lancement(self, corps: str) -> str:
+        return corps.split("data-preparation-lancement>", 1)[1].split("</form>", 1)[0]
+
+    def test_audio_unitaire_par_defaut_et_lot_replie(self) -> None:
+        reponse = self.get()
+        corps = reponse.get_data(as_text=True)
+
+        self.assertEqual(reponse.status_code, 200)
+        self.verifier_html_seul(corps)
+        # Contrôle simple : un seul audio sélectionné par défaut, une option
+        # choisie, et aucune case de lot active sans geste explicite.
+        self.assertIn(
+            '<select id="champ-audio" name="audios" data-choix-audio>', corps
+        )
+        self.assertIn('<option value="a.wav" selected>', corps)
+        self.assertNotIn(
+            'name="audios_lot" value="a.wav" data-choix-audio checked', corps
+        )
+        self.assertIn(
+            '<details>\n<summary>Plusieurs audios, dans cet ordre (facultatif)</summary>',
+            corps,
+        )
+        self.assertNotIn('<details open>\n<summary>Plusieurs audios', corps)
+        # L'audio retenu n'est envoyé qu'une fois : le lot porte un autre nom.
+        self.assertEqual(corps.count('name="audios" value="a.wav"'), 1)
+        lancement = self.formulaire_lancement(corps)
+        self.assertNotIn('name="audios_lot"', lancement)
+        self.assertEqual(lancement.count('name="audios"'), 1)
+        self.assertEqual(self.creneau.instantane().etat, "libre")
+
+    def test_premiere_case_du_lot_reste_cochee_pour_en_ajouter_une_autre(self) -> None:
+        # Le JS applique un GET après chaque case : la première sélection ne
+        # doit ni refermer le lot ni disparaître avant la deuxième.
+        reponse = self.get({"modele": self.reference(), "audios_lot": ["b.wav"]})
+        corps = reponse.get_data(as_text=True)
+        self.assertEqual(reponse.status_code, 200)
+        self.assertIn('<details open>\n<summary>Plusieurs audios', corps)
+        self.assertIn('name="audios_lot" value="b.wav" data-choix-audio checked', corps)
+        lancement = self.formulaire_lancement(corps)
+        self.assertEqual(lancement.count('name="audios"'), 1)
+        self.assertIn('name="audios" value="b.wav"', lancement)
+
+    def test_lot_ordonne_avant_lancement(self) -> None:
+        reponse = self.get(
+            {"modele": self.reference(), "audios_lot": ["b.wav", "a.wav"]}
+        )
+        corps = reponse.get_data(as_text=True)
+
+        self.assertEqual(reponse.status_code, 200)
+        self.verifier_html_seul(corps)
+        self.assertIn("dans cet ordre de traitement", corps)
+        applique = corps.split('id="preparation-appliquee"', 1)[1].split("</p>", 1)[0]
+        self.assertLess(applique.index("b.wav"), applique.index("a.wav"))
+        liste = corps.split("<summary>Plusieurs audios", 1)[1].split("</ol>", 1)[0]
+        self.assertLess(liste.index('value="b.wav"'), liste.index('value="a.wav"'))
+        # Le lot est déplié et ses cases cochées : l'ordre est lisible avant
+        # tout lancement, sans promettre un ordre de clic différent du DOM.
+        self.assertIn(
+            '<details open>\n<summary>Plusieurs audios, dans cet ordre (facultatif)</summary>',
+            corps,
+        )
+        self.assertIn('name="audios_lot" value="a.wav" data-choix-audio checked', corps)
+        self.assertIn('name="audios_lot" value="b.wav" data-choix-audio checked', corps)
+        lancement = self.formulaire_lancement(corps)
+        self.assertLess(
+            lancement.index('name="audios" value="b.wav"'),
+            lancement.index('name="audios" value="a.wav"'),
+        )
+        self.assertEqual(lancement.count('name="audios"'), 2)
+        self.assertIn('name="threads" value="4"', lancement)
+        self.assertEqual(self.creneau.instantane().etat, "libre")
+
+    def test_lot_prime_et_annonce_l_audio_unique_ecarte(self) -> None:
+        reponse = self.get(
+            {
+                "modele": self.reference(),
+                "audios": "a.wav",
+                "audios_lot": ["b.wav"],
+            }
+        )
+        corps = reponse.get_data(as_text=True)
+
+        self.assertEqual(reponse.status_code, 200)
+        self.verifier_html_seul(corps)
+        self.assertIn("Mode lot appliqué", corps)
+        self.assertIn("« a.wav »", corps)
+        lancement = self.formulaire_lancement(corps)
+        self.assertEqual(lancement.count('name="audios" value="b.wav"'), 1)
+        self.assertNotIn('name="audios" value="a.wav"', lancement)
+        self.assertEqual(self.creneau.instantane().etat, "libre")
+
+    def test_audio_unitaire_forge_n_est_pas_reafiche(self) -> None:
+        reponse = self.get(
+            {
+                "modele": self.reference(),
+                "audios": "<script>alert(1)</script>",
+                "audios_lot": ["b.wav"],
+            }
+        )
+        corps = reponse.get_data(as_text=True)
+
+        self.assertEqual(reponse.status_code, 200)
+        self.verifier_html_seul(corps)
+        self.assertNotIn("<script>alert(1)</script>", corps)
+        # Ce nom n'est pas un audio de l'inventaire : il n'est pas nommé dans
+        # l'annonce, même échappé.
+        self.assertNotIn("Mode lot appliqué", corps)
+        self.assertIn('name="audios" value="b.wav"', corps)
+        self.assertEqual(self.creneau.instantane().etat, "libre")
+
+    def test_lot_avec_audio_inconnu_refuse_et_conserve_les_choix_valides(self) -> None:
+        reponse = self.get(
+            {"modele": self.reference(), "audios_lot": ["z.wav", "b.wav"]}
+        )
+        corps = reponse.get_data(as_text=True)
+
+        self.assertEqual(reponse.status_code, 400)
+        self.verifier_html_seul(corps)
+        self.assertIn(MESSAGE_AUDIO_INCOHERENT, corps)
+        self.assertIn("<h1>Exécutions</h1>", corps)
+        self.assertIn(f'name="modele" value="{self.reference()}"', corps)
+        self.assertIn('name="audios" value="b.wav"', corps)
+        self.assertNotIn('name="audios" value="z.wav"', corps)
+        self.assertEqual(self.creneau.instantane().etat, "libre")
+
+    def test_lot_en_double_signale_sans_500(self) -> None:
+        reponse = self.get(
+            {"modele": self.reference(), "audios_lot": ["b.wav", "b.wav"]}
+        )
+        corps = reponse.get_data(as_text=True)
+
+        self.assertEqual(reponse.status_code, 400)
+        self.verifier_html_seul(corps)
+        self.assertIn(MESSAGE_AUDIO_INCOHERENT, corps)
+        self.assertEqual(corps.count('name="audios" value="b.wav"'), 1)
+        self.assertEqual(self.creneau.instantane().etat, "libre")
+
+    def test_defauts_et_reglages_avances_fermes_et_actions_uniques(self) -> None:
+        corps = self.get().get_data(as_text=True)
+
+        self.verifier_html_seul(corps)
+        # Les réglages avancés restent fermés, avec leurs défauts déjà utilisables
+        # dans le formulaire de lancement.
+        self.assertIn(
+            '<details>\n<summary>Réglages avancés (facultatif)</summary>', corps
+        )
+        self.assertNotIn('<details open>\n<summary>Réglages avancés', corps)
+        lancement = self.formulaire_lancement(corps)
+        self.assertIn('name="threads" value="4"', lancement)
+        self.assertIn('<option value="float32" selected>', lancement)
+        # Actions uniques : Lancer puis la vérification secondaire, une fois.
+        self.assertEqual(corps.count('action="/executions/lancer"'), 1)
+        self.assertEqual(corps.count("Lancer l'exécution"), 1)
+        self.assertEqual(corps.count("Vérifier la demande (aucun lancement)"), 1)
+        # Aucun lancement ni dossier de travail n'est créé par la lecture GET.
+        self.assertEqual(self.creneau.instantane().etat, "libre")
+        self.assertFalse(self.dossier_data.exists())
+
+    def test_verification_reprend_les_defauts_sans_repetter_les_actions(self) -> None:
+        validation = self.post_autorise(
+            "/executions/verifier",
+            donnees={
+                "modele": self.reference(),
+                "audios": ["b.wav", "a.wav"],
+                "threads": str(THREADS_DEFAUT),
+            },
+        )
+        corps = validation.get_data(as_text=True)
+
+        self.assertEqual(validation.status_code, 200)
+        self.verifier_html_seul(corps)
+        self.assertIn("Demande validée", corps)
+        self.assertLess(corps.index("<li>b.wav</li>"), corps.index("<li>a.wav</li>"))
+        # Le résumé ne répète pas les actions du panneau : une seule série.
+        self.assertEqual(corps.count('action="/executions/lancer"'), 1)
+        self.assertEqual(corps.count("Lancer l'exécution"), 1)
+        self.assertEqual(corps.count("Vérifier la demande (aucun lancement)"), 1)
+        self.assertIn(
+            '<details open>\n<summary>Plusieurs audios, dans cet ordre (facultatif)</summary>',
+            corps,
+        )
+        self.assertEqual(self.creneau.instantane().etat, "libre")
+        self.assertFalse(self.dossier_data.exists())
+
+
+class PreparationCompatibiliteTest(SocleWebTest):
+    """Sélections compatibles : variante, familles homonymes et doublons (4.2).
+
+    Deux familles déclarent un réglage du **même nom** avec des valeurs
+    disjointes : la page d'une famille ne doit jamais porter les contrôles ni
+    les valeurs de l'autre, et un POST mêlant les deux est refusé. Une variante
+    GGUF de la même référence est une ressource locale distincte, choisie par
+    sa propre référence. Le contrat de données (`data-moteur`,
+    `data-reference`) reste la seule information lue par le script local ; il
+    ne contient ni jeton ni valeur sensible.
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.registre = RegistreMoteurs()
+        self.registre.enregistrer(
+            declaration_homonyme(MOTEUR, "whisper", "Whisper", REGLAGES_A)
+        )
+        self.registre.enregistrer(
+            declaration_homonyme(
+                AUTRE_MOTEUR,
+                "autre",
+                "Autre famille",
+                REGLAGES_B,
+                nom=INSTANCE_AUTRE_MOTEUR,
+            )
+        )
+        self.modeles = (
+            modele_prete(),
+            replace(
+                modele_prete(),
+                cle=CLE_VARIANTE,
+                fichier_gguf="modele-Q8_0.gguf",
+            ),
+            modele_prete(
+                moteur=AUTRE_MOTEUR,
+                cle=AUTRE_CLE,
+                famille="autre",
+                identifiant="org/modele-autre",
+            ),
+        )
+        self.service = ConfigurationExecutions(
+            self.dossier_data,
+            self.registre,
+            lambda: self.modeles,
+            lister=lambda dossier: AUDIOS,
+            compter_threads=lambda: THREADS_DEFAUT,
+        )
+        self.app = self.construire_app(self.services(executions=self.service))
+        self.client = self.app.test_client()
+
+    def reference(self, position: int) -> str:
+        return self.service.modeles_proposables()[position].reference
+
+    def preparation(self, parametres: dict[str, object]):
+        return self.client.get(
+            "/executions?" + urlencode(parametres, doseq=True),
+            base_url=self.base_url(),
+        )
+
+    def verifier(self, modele: str, moteur: str, **champs: object):
+        donnees = {
+            "modele": modele,
+            "moteur": moteur,
+            "audios": ["a.wav"],
+            "threads": "4",
+        }
+        donnees.update(champs)
+        return self.post_autorise("/executions/verifier", donnees=donnees)
+
+    def test_changement_de_variante_applique_la_reference_choisie(self) -> None:
+        variante = self.reference(1)
+        reponse = self.preparation({"modele": variante, "audios": ["a.wav"]})
+        corps = reponse.get_data(as_text=True)
+
+        self.assertEqual(reponse.status_code, 200)
+        self.verifier_html_seul(corps)
+        self.assertIn(f'name="modele" value="{variante}"', corps)
+        self.assertIn(f'value="{variante}" data-moteur="{MOTEUR}" selected', corps)
+        self.assertIn("variante GGUF modele-Q8_0.gguf", corps)
+        # La variante n'est pas confondue avec le modèle sans fichier GGUF.
+        self.assertNotIn(f'name="modele" value="{self.reference(0)}"', corps)
+
+        verification = self.verifier(variante, MOTEUR)
+        self.assertEqual(verification.status_code, 200)
+        self.assertIn("Demande validée", verification.get_data(as_text=True))
+        self.assertEqual(self.creneau.instantane().etat, "libre")
+
+    def test_famille_retenue_seule_rend_les_reglages_homonymes(self) -> None:
+        corps = self.preparation(
+            {"modele": self.reference(2), "audios": ["a.wav"]}
+        ).get_data(as_text=True)
+
+        self.assertIn("Réglages de la famille Autre famille", corps)
+        self.assertIn('name="reglage_compute_type"', corps)
+        self.assertIn('<option value="int8_float16" selected>', corps)
+        # Ni les valeurs de l'autre famille ni son réglage propre ne suivent.
+        self.assertNotIn('value="float32"', corps)
+        self.assertNotIn('name="reglage_beam_size"', corps)
+        self.assertIn('<option value="int8_float16" selected>', corps)
+
+    def test_post_valeur_de_l_autre_famille_refusee(self) -> None:
+        for modele, moteur, valeur in (
+            (self.reference(2), AUTRE_MOTEUR, "float32"),
+            (self.reference(0), MOTEUR, "int8_float16"),
+        ):
+            with self.subTest(valeur=valeur):
+                reponse = self.verifier(
+                    modele, moteur, **{f"{PREFIXE_CHAMP_REGLAGE}compute_type": valeur}
+                )
+
+                self.verifier_refus_preparation(reponse)
+                self.assertEqual(self.creneau.instantane().etat, "libre")
+                self.assertFalse(self.dossier_data.exists())
+
+    def test_post_reglage_etranger_ou_repete_refuse_sans_lancer(self) -> None:
+        etranger = self.verifier(
+            self.reference(2),
+            AUTRE_MOTEUR,
+            **{f"{PREFIXE_CHAMP_REGLAGE}beam_size": "3"},
+        )
+        self.verifier_refus_preparation(etranger)
+
+        repete = self.verifier(
+            self.reference(0),
+            MOTEUR,
+            **{f"{PREFIXE_CHAMP_REGLAGE}compute_type": ["float32", "int8"]},
+        )
+        self.verifier_refus_preparation(repete)
+        self.assertEqual(self.creneau.instantane().etat, "libre")
+
+    def test_post_valeur_propre_a_la_famille_retenue_accepte(self) -> None:
+        reponse = self.verifier(
+            self.reference(2),
+            AUTRE_MOTEUR,
+            **{f"{PREFIXE_CHAMP_REGLAGE}compute_type": "bfloat16"},
+        )
+        corps = reponse.get_data(as_text=True)
+
+        self.assertEqual(reponse.status_code, 200)
+        self.verifier_html_seul(corps)
+        self.assertIn("<li>compute_type : bfloat16</li>", corps)
+        self.assertNotIn("compute_type : float32", corps)
+        self.assertEqual(self.creneau.instantane().etat, "libre")
+
+    def test_get_audio_repete_signale_et_choix_valides_conserves(self) -> None:
+        reponse = self.preparation(
+            {"modele": self.reference(1), "audios": ["b.wav", "b.wav"]}
+        )
+        corps = reponse.get_data(as_text=True)
+
+        self.assertEqual(reponse.status_code, 400)
+        self.assertIn(MESSAGE_AUDIO_INCOHERENT, corps)
+        self.assertIn(f'name="modele" value="{self.reference(1)}"', corps)
+        self.assertIn('<option value="b.wav" selected>', corps)
+
+    def test_sans_js_changement_de_moteur_seul_selectionne_un_modele_compatible(self) -> None:
+        # Repli HTML : seul le moteur a changé depuis la préparation affichée,
+        # `source` désigne toujours le modèle rendu : la première référence
+        # exécutable de ce moteur est sélectionnée et annoncée, sans refus.
+        reponse = self.preparation(
+            {
+                "modele": self.reference(0),
+                "moteur": AUTRE_MOTEUR,
+                "audios": ["a.wav"],
+                "source": self.reference(0),
+            }
+        )
+        corps = reponse.get_data(as_text=True)
+
+        self.assertEqual(reponse.status_code, 200)
+        self.verifier_html_seul(corps)
+        self.assertIn(f'name="modele" value="{self.reference(2)}"', corps)
+        self.assertIn(
+            f'<option value="{AUTRE_MOTEUR}" '
+            f'data-reference="{self.reference(2)}" selected>',
+            corps,
+        )
+        self.assertIn(MESSAGE_MOTEUR_ADAPTE, html.unescape(corps))
+        self.assertEqual(self.creneau.instantane().etat, "libre")
+
+    def test_get_moteur_incoherent_sans_origine_refuse(self) -> None:
+        # Sans `source`, un moteur qui contredit la référence est une requête
+        # forgée : refus 400, la référence fait foi.
+        reponse = self.preparation(
+            {"modele": self.reference(0), "moteur": AUTRE_MOTEUR, "audios": ["a.wav"]}
+        )
+        corps = reponse.get_data(as_text=True)
+
+        self.assertEqual(reponse.status_code, 400)
+        self.assertIn(MESSAGE_MOTEUR_INCOHERENT, html.unescape(corps))
+
+    def test_contrat_de_donnees_pour_la_mise_a_jour_automatique(self) -> None:
+        corps = self.client.get(
+            "/executions", base_url=self.base_url()
+        ).get_data(as_text=True)
+
+        self.verifier_html_seul(corps)
+        self.assertIn(
+            '<select id="champ-modele" name="modele" data-choix-modele>', corps
+        )
+        self.assertIn(
+            '<select id="champ-moteur" name="moteur" data-choix-moteur>', corps
+        )
+        self.assertIn(f'data-moteur="{MOTEUR}"', corps)
+        self.assertIn(f'data-moteur="{AUTRE_MOTEUR}"', corps)
+        for attendue in (self.reference(0), self.reference(2)):
+            with self.subTest(reference=attendue):
+                self.assertIn(
+                    f'data-reference="{attendue}"',
+                    corps,
+                    "chaque moteur propose une référence réellement compatible",
+                )
+        # Le contrat du moteur reste sa première référence, pas une variante.
+        self.assertNotIn(f'data-reference="{self.reference(1)}"', corps)
+        self.assertIn("data-choix-audio", corps)
+        self.assertIn("data-action-appliquer", corps)
+        # Formulaire GET : ni jeton, ni champ hors de la liste blanche.
+        formulaire = corps.split("data-preparation-choix>", 1)[1].split("</form>", 1)[0]
+        self.assertNotIn(NOM_CHAMP_JETON, formulaire)
+        noms = set(re.findall(r'name="([^"]+)"', formulaire))
+        for nom in noms:
+            self.assertTrue(
+                nom
+                in ("modele", "moteur", "audios", "audios_lot", "source", "threads")
+                or nom.startswith(PREFIXE_CHAMP_REGLAGE),
+                f"paramètre GET hors liste blanche : {nom}",
+            )
+        # Les copies restent désactivées sans script, pour le repli HTML.
+        for nom in noms - {"modele", "moteur", "audios", "audios_lot"}:
+            with self.subTest(nom=nom):
+                self.assertIn(
+                    f'<input type="hidden" name="{nom}" value="', formulaire
+                )
+        self.assertEqual(
+            formulaire.count("data-copie-reglage disabled"),
+            1 + sum(
+                1 for reglage in REGLAGES_A if reglage.type_valeur != TYPE_TEXTE
+            ),
+        )
+        # Aucun texte libre n'a de copie GET : il ne partirait jamais en URL.
+        # La référence d'origine accompagne la sélection, jamais le jeton.
+        self.assertIn(f'name="source" value="{self.reference(0)}"', corps)
+
+    def formulaire_lancement(self, corps: str) -> str:
+        return corps.split("data-preparation-lancement>", 1)[1].split("</form>", 1)[0]
+
+    def test_get_conserve_audio_et_reglages_non_defaut(self) -> None:
+        origine = self.reference(0)
+        reponse = self.preparation(
+            {
+                "modele": origine,
+                "moteur": MOTEUR,
+                "audios": ["b.wav"],
+                "source": origine,
+                "threads": "6",
+                f"{PREFIXE_CHAMP_REGLAGE}compute_type": "int8",
+                f"{PREFIXE_CHAMP_REGLAGE}beam_size": "8",
+                f"{PREFIXE_CHAMP_REGLAGE}vad_filter": "oui",
+            }
+        )
+        corps = reponse.get_data(as_text=True)
+        lancement = self.formulaire_lancement(corps)
+
+        self.assertEqual(reponse.status_code, 200)
+        self.verifier_html_seul(corps)
+        self.assertNotIn(MESSAGE_REGLAGES_AUTRE_FAMILLE, corps)
+        self.assertNotIn(MESSAGE_REGLAGES_INVALIDES, corps)
+        self.assertNotIn(MESSAGE_REGLAGES_REINITIALISES, corps)
+        # Audio conservé et réglages non par défaut repris tels quels.
+        self.assertIn('<option value="b.wav" selected>', corps)
+        self.assertIn('name="threads" value="6"', lancement)
+        self.assertIn('<option value="int8" selected>', lancement)
+        self.assertIn('name="reglage_beam_size" value="8"', lancement)
+        self.assertIn('value="oui" data-valeur-reglage checked', lancement)
+        # Les copies GET portent les mêmes valeurs, prêtes pour le script.
+        self.assertIn(
+            '<input type="hidden" name="reglage_compute_type" value="int8"', corps
+        )
+
+    def test_get_variante_conserve_les_valeurs_valides(self) -> None:
+        origine, variante = self.reference(0), self.reference(1)
+        reponse = self.preparation(
+            {
+                "modele": variante,
+                "moteur": MOTEUR,
+                "audios": ["a.wav"],
+                "source": origine,
+                "threads": "2",
+                f"{PREFIXE_CHAMP_REGLAGE}beam_size": "3",
+            }
+        )
+        corps = reponse.get_data(as_text=True)
+
+        self.assertEqual(reponse.status_code, 200)
+        self.assertIn(f'name="modele" value="{variante}"', corps)
+        self.assertNotIn(MESSAGE_REGLAGES_AUTRE_FAMILLE, corps)
+        self.assertIn('name="reglage_beam_size" value="3"', corps)
+        self.assertIn('name="threads" value="2"', corps)
+
+    def test_get_autre_famille_reinitialise_et_annonce(self) -> None:
+        reponse = self.preparation(
+            {
+                "modele": self.reference(2),
+                "moteur": AUTRE_MOTEUR,
+                "audios": ["a.wav"],
+                "source": self.reference(0),
+                "threads": "6",
+                f"{PREFIXE_CHAMP_REGLAGE}compute_type": "float32",
+            }
+        )
+        corps = reponse.get_data(as_text=True)
+        lancement = self.formulaire_lancement(corps)
+
+        self.assertEqual(reponse.status_code, 200)
+        self.assertIn(MESSAGE_REGLAGES_AUTRE_FAMILLE, html.unescape(corps))
+        # Aucune valeur homonyme de l'autre famille n'est reportée.
+        self.assertNotIn('value="float32"', corps)
+        self.assertIn('<option value="int8_float16" selected>', lancement)
+        # Les threads, indépendants de la famille, restent conservés.
+        self.assertIn('name="threads" value="6"', lancement)
+
+    def test_get_valeur_invalide_reinitialisee_et_signalee(self) -> None:
+        origine = self.reference(0)
+        reponse = self.preparation(
+            {
+                "modele": origine,
+                "audios": ["a.wav"],
+                "source": origine,
+                "threads": "trois",
+                f"{PREFIXE_CHAMP_REGLAGE}compute_type": "int8",
+                f"{PREFIXE_CHAMP_REGLAGE}beam_size": "abc",
+            }
+        )
+        corps = reponse.get_data(as_text=True)
+        lancement = self.formulaire_lancement(corps)
+
+        self.assertEqual(reponse.status_code, 200)
+        self.assertIn(MESSAGE_REGLAGES_INVALIDES, html.unescape(corps))
+        # Les valeurs valides restent, les invalides reviennent aux défauts.
+        self.assertIn('<option value="int8" selected>', lancement)
+        self.assertIn('name="reglage_beam_size" value="5"', lancement)
+        self.assertIn('name="threads" value="4"', lancement)
+
+    def test_get_valeur_inconnue_refusee(self) -> None:
+        origine = self.reference(0)
+        reponse = self.preparation(
+            {
+                "modele": origine,
+                "audios": ["a.wav"],
+                "source": origine,
+                f"{PREFIXE_CHAMP_REGLAGE}nom_forge_non_affichable": "1",
+            }
+        )
+        corps = reponse.get_data(as_text=True)
+
+        self.assertEqual(reponse.status_code, 400)
+        self.verifier_html_seul(corps)
+        self.assertIn(MESSAGE_REGLAGE_INCONNU, html.unescape(corps))
+        self.assertNotIn("nom_forge_non_affichable", corps)
+
+    def test_get_valeurs_sans_source_refusees(self) -> None:
+        for source in (None, f"{MOTEUR}/{'f' * 64}"):
+            with self.subTest(source=source):
+                parametres = {
+                    "modele": self.reference(0),
+                    "audios": ["a.wav"],
+                    f"{PREFIXE_CHAMP_REGLAGE}beam_size": "8",
+                }
+                if source is not None:
+                    parametres["source"] = source
+                reponse = self.preparation(parametres)
+                corps = reponse.get_data(as_text=True)
+
+                self.assertEqual(reponse.status_code, 400)
+                self.assertIn(
+                    MESSAGE_REGLAGES_SANS_SOURCE, html.unescape(corps)
+                )
+                self.assertIn('name="reglage_beam_size" value="5"', corps)
+
+    def test_post_verifie_conserve_les_valeurs_effectives(self) -> None:
+        reponse = self.verifier(
+            self.reference(0),
+            MOTEUR,
+            threads="6",
+            **{
+                f"{PREFIXE_CHAMP_REGLAGE}compute_type": "int8",
+                f"{PREFIXE_CHAMP_REGLAGE}beam_size": "8",
+                f"{PREFIXE_CHAMP_REGLAGE}vad_filter": "oui",
+            },
+        )
+        corps = html.unescape(reponse.get_data(as_text=True))
+        lancement = self.formulaire_lancement(corps)
+
+        self.assertEqual(reponse.status_code, 200)
+        self.assertIn("Demande validée", corps)
+        # Vérifier ne remet pas à zéro les valeurs affichées de la préparation.
+        self.assertIn('name="threads" value="6"', lancement)
+        self.assertIn('<option value="int8" selected>', lancement)
+        self.assertIn('name="reglage_beam_size" value="8"', lancement)
+        self.assertIn('value="oui" data-valeur-reglage checked', lancement)
+
+    def test_get_valeur_hostile_textuelle_jamais_conservee_ni_repetee(self) -> None:
+        origine = self.reference(0)
+        hostile = "<script>alert(1)</script>"
+        reponse = self.preparation(
+            {
+                "modele": origine,
+                "audios": ["a.wav"],
+                "source": origine,
+                f"{PREFIXE_CHAMP_REGLAGE}prompt": hostile,
+            }
+        )
+        corps = reponse.get_data(as_text=True)
+
+        self.assertEqual(reponse.status_code, 200)
+        self.verifier_html_seul(corps)
+        # Un texte libre ne voyage jamais dans une URL de GET : la valeur
+        # hostile est écartée et annoncée, jamais réaffichée.
+        self.assertNotIn(hostile, corps)
+        self.assertNotIn(html.escape(hostile), corps)
+        self.assertIn(MESSAGE_TEXTE_NON_CONSERVE, html.unescape(corps))
+        self.assertNotIn(f'value="{hostile}"', corps)
+
+    def test_post_valeur_textuelle_hostile_echappee_dans_les_controles(self) -> None:
+        origine = self.reference(0)
+        hostile = '<script>alert(1)</script> & suite'
+        verification = self.verifier(
+            origine, MOTEUR, **{f"{PREFIXE_CHAMP_REGLAGE}prompt": hostile}
+        )
+
+        self.assertEqual(verification.status_code, 200)
+        corps = verification.get_data(as_text=True)
+        self.verifier_html_seul(corps)
+        # Au POST, la valeur textuelle vérifiée est rendue échappée dans le
+        # contrôle de la préparation restituée.
+        self.assertNotIn("<script>alert", corps)
+        self.assertIn(html.escape(hostile), corps)
+
+    def test_get_champs_de_reglage_repetes_refuses(self) -> None:
+        origine = self.reference(0)
+        for champ in ("threads", "source", f"{PREFIXE_CHAMP_REGLAGE}beam_size"):
+            with self.subTest(champ=champ):
+                chemin = "/executions?" + urlencode(
+                    [
+                        ("modele", origine),
+                        ("audios", "a.wav"),
+                        ("source", origine),
+                        (champ, "1"),
+                        (champ, "2"),
+                    ]
+                )
+                reponse = self.client.get(chemin, base_url=self.base_url())
+
+                self.assertEqual(reponse.status_code, 400)
+                self.assertIn(
+                    MESSAGE_PREPARATION_REFUSEE, reponse.get_data(as_text=True)
+                )
+
+
+class PreparationServiceTest(SocleExecutionsTest):
+    """Résolution d'une préparation sans page : valeurs par défaut et notices."""
+
+    def test_preparer_par_defaut_applique_le_premier_audio_lisible(self) -> None:
+        preparation = self.service.preparer()
+
+        self.assertEqual(preparation.audios, ("a.wav",))
+        self.assertIsNone(preparation.notice)
+
+    def test_preparer_defauts_et_audios_dans_l_ordre(self) -> None:
+        preparation = self.service.preparer(audios=["b.wav", "a.wav"])
+
+        self.assertEqual(preparation.modele.reference, self.reference())
+        self.assertEqual(preparation.moteur, MOTEUR)
+        self.assertEqual(preparation.audios, ("b.wav", "a.wav"))
+        self.assertIsNone(preparation.notice)
+
+    def test_preparer_audio_par_defaut_et_doublon_signale(self) -> None:
+        preparation = self.service.preparer(audios=["a.wav", "a.wav"])
+
+        self.assertEqual(preparation.audios, ("a.wav",))
+        self.assertEqual(preparation.notice, MESSAGE_AUDIO_INCOHERENT)
+
+    def test_preparer_reference_inconnue_reinitialisee(self) -> None:
+        preparation = self.service.preparer(
+            modele=f"{MOTEUR}/{'f' * 64}", audios=["a.wav"]
+        )
+
+        self.assertEqual(preparation.modele.reference, self.reference())
+        self.assertEqual(preparation.notice, MESSAGE_MODELE_REINITIALISE)
+
+    def test_preparer_moteur_incoherent_signale(self) -> None:
+        preparation = self.service.preparer(
+            modele=self.reference(), moteur="autre-moteur", audios=["a.wav"]
+        )
+
+        self.assertEqual(preparation.moteur, MOTEUR)
+        self.assertEqual(preparation.notice, MESSAGE_MOTEUR_INCOHERENT)
+
+    def test_preparer_sans_audio_lisible_ni_modele_executable(self) -> None:
+        service = ConfigurationExecutions(
+            "/donnees", self.registre, lambda: (), lister=lambda dossier: AUDIOS
+        )
+
+        preparation = service.preparer(modele=f"{MOTEUR}/{CLE}", audios=["a.wav"])
+
+        self.assertFalse(preparation.applicable)
+        self.assertIsNone(preparation.modele)
+        self.assertIsNone(preparation.reference)
+        self.assertEqual(preparation.notice, MESSAGE_MODELE_REINITIALISE)
+
+    def test_preparer_sans_audio_lisible(self) -> None:
+        service = ConfigurationExecutions(
+            "/donnees",
+            self.registre,
+            lambda: self.modeles,
+            lister=lambda dossier: (AUDIOS[2],),
+        )
+
+        preparation = service.preparer(audios=["illisible.wav"])
+
+        self.assertFalse(preparation.applicable)
+        self.assertEqual(preparation.audios, ())
+        self.assertEqual(preparation.notice, MESSAGE_AUDIO_INCOHERENT)
+
+    def test_valider_refuse_un_moteur_incoherent(self) -> None:
+        with self.assertRaises(ValeurRefusee):
+            self.service.valider(
+                modele=self.reference(),
+                moteur="autre-moteur",
+                audios=["a.wav"],
+                threads="4",
+                reglages={},
+            )
+
+    def test_valider_accepte_le_moteur_de_la_reference_et_son_absence(self) -> None:
+        for moteur in (None, MOTEUR):
+            with self.subTest(moteur=moteur):
+                demande = self.service.valider(
+                    modele=self.reference(),
+                    moteur=moteur,
+                    audios=["a.wav"],
+                    threads="4",
+                    reglages={},
+                )
+
+                self.assertEqual(demande.moteur, MOTEUR)

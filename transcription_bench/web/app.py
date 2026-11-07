@@ -33,11 +33,18 @@ explicites aux services. La page des audios ne décode aucun signal : elle
 affiche la durée indicative du conteneur et les erreurs de lecture par fichier,
 y compris les noms refusés, et signale un dossier d'entrée inaccessible. La
 page des exécutions réunit l'opération longue en cours ou la dernière issue
-(ancre `#operation`), la préparation d'une demande (modèle prêt, audios,
-threads, réglages déclarés) validée par le service de la tâche 6.2, le bouton
+(ancre `#operation`), la préparation unique d'une demande — un seul panneau
+Modèle/Audio/Moteur (design D4) dont la sélection est une lecture GET sans
+jeton — que le script local recharge sur changement de sélection, sans mutation
+et avec les seules valeurs non sensibles encore applicables —, puis la
+préparation appliquée et son formulaire POST protégé revalidé par le
+service de la tâche 6.2 —, le bouton
 de lancement qui démarre l'exécution dans le créneau global (tâche 6.3),
 l'historique technique complet des exécutions en détail secondaire et les
-diagnostics des dossiers de données. Le résumé d'opération porte un abri de suivi
+diagnostics des dossiers de données. Une référence locale reste la source de
+vérité : le moteur affiché en découle, ne le contredit jamais et n'est jamais
+converti ; une sélection périmée ou incohérente rend un message borné avec le
+statut 400, sans 500 ni valeur interprétée comme du HTML. Le résumé d'opération porte un abri de suivi
 (`data-suivi-operation`) ; `GET /executions/etat` renvoie son état borné en JSON
 `no-store` — type, état, cible, erreur et lien de résultat construit ici depuis
 l'identifiant publié par l'exécution admise — jamais un PID, un jeton, une
@@ -107,8 +114,13 @@ from transcription_bench.execution_moteur import (
 )
 from transcription_bench.executions import (
     PREFIXE_CHAMP_REGLAGE,
+    SEPARATEUR_REFERENCE_MODELE,
+    VALEUR_FAUSSE,
+    VALEUR_VRAIE,
     ConfigurationExecutions,
     DemandeExecution,
+    ModelePropose,
+    PreparationExecution,
     refuser_champs_repetes,
     reglages_depuis_formulaire,
 )
@@ -268,6 +280,18 @@ MESSAGE_COMPARAISON_REFUSEE = (
 MESSAGE_TRI_REFUSE = (
     "Classement refusé : un seul critère parmi temps, ram, cpu et recent est "
     "accepté dans une même requête. Aucun fichier n'a été modifié."
+)
+
+MESSAGE_PREPARATION_REFUSEE = (
+    "Préparation refusée : un champ de sélection a été fourni plusieurs fois. "
+    "Les choix par défaut sont proposés à la place ; appliquez une seule "
+    "sélection à la fois."
+)
+
+MESSAGE_DEMANDE_REFUSEE = (
+    "Demande refusée : un champ est invalide, inconnu ou fourni plusieurs "
+    "fois ; aucune exécution n'a été lancée. Les choix encore valides sont "
+    "repris ci-dessous, les autres reviennent à leurs valeurs par défaut."
 )
 
 
@@ -599,14 +623,63 @@ def _enregistrer_routes(
         )
 
     @application.get("/executions")
-    def executions() -> str:
-        return _page_executions(
+    def executions():
+        """Préparation unique et suivi, en lecture seule (design D1, D4, D5).
+
+        Les paramètres GET ne portent que des références locales, des noms
+        d'audios et les réglages avancés **non sensibles** de la préparation
+        déjà affichée (`source`, `threads`, `reglage_*`) : jamais le jeton
+        anti-CSRF, jamais un nom hors de la liste blanche des réglages déclarés.
+        Une valeur périmée ou incohérente est remplacée par le choix applicable
+        avec un message borné et le statut de refus 400, sans 500 ni valeur
+        interprétée comme du HTML. Un réglage seulement inapplicable est remis
+        à son défaut et annoncé, sans refus. Aucun créneau d'action n'est
+        sollicité : cette page ne lance, n'installe et ne télécharge rien.
+        """
+        erreur_preparation = None
+        audio_unitaire_ignore = None
+        audios_lot = request.args.getlist("audios_lot")
+        audios_uniques = request.args.getlist("audios")
+        # Tâche 4.3 : le lot facultatif porte un autre nom que l'audio unique,
+        # et remplace celui-ci quand au moins une case est cochée. Aucun audio
+        # n'est alors envoyé deux fois et le choix écarté est annoncé.
+        audios_choisis = audios_lot or audios_uniques
+        if audios_lot and audios_uniques and audios_uniques[0] not in audios_lot:
+            # Seul un audio réellement lisible de l'inventaire local est nommé :
+            # aucune valeur forgée n'est réaffichée, même échappée.
+            candidat = audios_uniques[0]
+            if any(
+                audio.nom == candidat
+                for audio in service_executions.audios_proposables()
+            ):
+                audio_unitaire_ignore = candidat
+        try:
+            refuser_champs_repetes(request.args.items(multi=True))
+        except ValeurRefusee:
+            erreur_preparation = MESSAGE_PREPARATION_REFUSEE
+            preparation = service_executions.preparer()
+        else:
+            preparation = service_executions.preparer(
+                modele=request.args.get("modele"),
+                moteur=request.args.get("moteur"),
+                audios=audios_choisis,
+                source=request.args.get("source"),
+                threads=request.args.get("threads"),
+                reglages=reglages_depuis_formulaire(request.args),
+            )
+            if preparation is not None and preparation.notice is not None:
+                erreur_preparation = preparation.notice
+        rendu = _page_executions(
             service_executions,
             service_resultats,
             service_execution,
             services,
             config,
+            preparation=preparation,
+            erreur_preparation=erreur_preparation,
+            audio_unitaire_ignore=audio_unitaire_ignore,
         )
+        return (rendu, 400) if erreur_preparation is not None else rendu
 
     @application.get("/executions/etat")
     def etat_execution() -> Response:
@@ -649,14 +722,23 @@ def _enregistrer_routes(
 
         La page est rendue directement au lieu de rediriger en 303 : aucune
         action n'est acceptée ni consignée côté serveur, il n'y a donc rien à
-        relire en GET et aucune valeur à conserver sans session. Les refus
-        restent des réponses 400 à message fixe.
+        relire en GET et aucune valeur à conserver sans session. Un refus rend
+        la page Exécutions en 400 avec un message fixe et une préparation
+        reconstruite depuis les champs soumis : les choix encore valides sont
+        repris, les autres sont remplacés et annoncés au lieu d'être perdus
+        silencieusement (tâche 4.3, design D4).
         """
         try:
             refuser_champs_repetes(request.form.items(multi=True))
             demande = _demande_validee(service_executions)
         except ValeurRefusee:
-            abort(400)
+            return _page_demande_refusee(
+                service_executions,
+                service_resultats,
+                service_execution,
+                services,
+                config,
+            )
         return _page_executions(
             service_executions,
             service_resultats,
@@ -664,6 +746,7 @@ def _enregistrer_routes(
             services,
             config,
             demande,
+            preparation=_preparation_de_la_demande(service_executions, demande),
         )
 
     @application.post("/executions/lancer")
@@ -680,16 +763,30 @@ def _enregistrer_routes(
             demande = _demande_validee(service_executions)
             service_execution.verifier_lancable(demande)
         except ValeurRefusee:
-            abort(400)
+            # Refus de la demande elle-même : rien n'est lancé, la page reprend
+            # les choix encore valides au lieu de les laisser disparaître.
+            return _page_demande_refusee(
+                service_executions,
+                service_resultats,
+                service_execution,
+                services,
+                config,
+            )
         except ExecutionImpossible:
-            # Moteur non prêt : message explicite, distinct du refus de jeton.
-            return _page_erreur(403, MESSAGE_MOTEUR_NON_PRET)
+            # Refus métier, distinct du refus de jeton : garder les choix valides.
+            return _page_demande_refusee(
+                service_executions, service_resultats, service_execution,
+                services, config, statut=403, message=MESSAGE_MOTEUR_NON_PRET,
+            )
         try:
             # Réservation posée avant l'admission : un arrêt demandé dans
             # l'intervalle n'est pas perdu, et `lancer` ne remet rien à zéro.
             service_execution.reserver()
         except ExecutionImpossible:
-            abort(409)
+            return _page_demande_refusee(
+                service_executions, service_resultats, service_execution,
+                services, config, statut=409, message=MESSAGES_ERREUR[409],
+            )
         try:
             services.creneau.demarrer(
                 TYPE_EXECUTION,
@@ -698,10 +795,16 @@ def _enregistrer_routes(
             )
         except CreneauOccupe:
             service_execution.annuler_reservation()
-            abort(409)
+            return _page_demande_refusee(
+                service_executions, service_resultats, service_execution,
+                services, config, statut=409, message=MESSAGES_ERREUR[409],
+            )
         except ServiceArrete:
             service_execution.annuler_reservation()
-            abort(503)
+            return _page_demande_refusee(
+                service_executions, service_resultats, service_execution,
+                services, config, statut=503, message=MESSAGES_ERREUR[503],
+            )
         except BaseException:
             service_execution.annuler_reservation()
             raise
@@ -1012,13 +1115,129 @@ def _demande_validee(service: ConfigurationExecutions) -> DemandeExecution:
     """Forme consommable du formulaire d'exécution, ou `ValeurRefusee`.
 
     Les champs sont lus depuis la requête courante : la route appelante les
-    revalide donc entièrement, même si la page les a déjà affichés.
+    revalide donc entièrement, même si la page les a déjà affichés. Le champ
+    `moteur` du panneau de préparation est revalidé avec la référence : fourni,
+    il doit être celui qu'elle déclare.
     """
     return service.valider(
         modele=request.form.get("modele", ""),
         audios=request.form.getlist("audios"),
         threads=request.form.get("threads", ""),
         reglages=reglages_depuis_formulaire(request.form),
+        moteur=request.form.get("moteur"),
+    )
+
+
+def _preparation_de_la_demande(
+    service: ConfigurationExecutions, demande: DemandeExecution
+) -> PreparationExecution:
+    """Préparation affichée après une vérification, alignée sur la demande.
+
+    La demande validée peut avoir été forgée ou soumise hors de la page : la
+    préparation est recalculée depuis elle, par les mêmes règles que la page GET
+    (référence source de vérité, audios lisibles, moteur cohérent). Les threads
+    et les réglages effectifs de la demande sont repris, comme le fait le GET
+    pour une préparation déjà affichée : vérifier ne remet donc pas les valeurs
+    en cours à leurs défauts.
+    """
+    reference = f"{demande.moteur}{SEPARATEUR_REFERENCE_MODELE}{demande.cle}"
+    return service.preparer(
+        modele=reference,
+        moteur=demande.moteur,
+        audios=demande.audios,
+        source=reference,
+        threads=str(demande.threads),
+        reglages={
+            reglage.nom: _valeur_de_formulaire(reglage.valeur)
+            for reglage in demande.reglages
+        },
+        autoriser_texte=True,  # valeurs vérifiées du POST, jamais une URL
+        adapter_moteur=False,
+    )
+
+
+def _preparation_refusee(service: ConfigurationExecutions) -> PreparationExecution:
+    """Préparation reconstruite depuis une demande POST refusée (tâche 4.3).
+
+    La demande n'a pas été validée : ses champs sont relus ici sans aucune
+    confiance et repassés par les mêmes règles que la page GET. Le modèle soumis
+    sert d'origine aux réglages avancés, ce qui permet de reprendre les valeurs
+    encore valides et de faire annoncer par le service tout ce qui est remplacé.
+    Aucune valeur soumise n'est rendue telle quelle : seuls les choix résolus par
+    l'inventaire local et les messages bornés du service apparaissent.
+    """
+    return service.preparer(
+        modele=request.form.get("modele"),
+        moteur=request.form.get("moteur"),
+        audios=request.form.getlist("audios"),
+        source=request.form.get("modele"),
+        threads=request.form.get("threads"),
+        reglages=reglages_depuis_formulaire(request.form),
+        autoriser_texte=True,  # restitution locale d'un POST refusé
+        adapter_moteur=False,
+    )
+
+
+def _page_demande_refusee(
+    service: ConfigurationExecutions,
+    service_resultats: ConsultationResultats,
+    service_execution: ExecutionMoteur,
+    services: ServicesApplication,
+    config: ConfigApplication,
+    *,
+    statut: int = 400,
+    message: str = MESSAGE_DEMANDE_REFUSEE,
+) -> tuple[str, int]:
+    """Refus métier d'une demande : vrai statut et préparation restituée.
+
+    Le message fixe est complété par l'annonce bornée du service (modèle, audio
+    ou réglage remplacé) ; aucune valeur soumise n'est reprise telle quelle et
+    aucune exécution n'est lancée ni consignée.
+    """
+    preparation = _preparation_refusee(service)
+    if preparation.notice is not None:
+        message = f"{message} {preparation.notice}"
+    return (
+        _page_executions(
+            service,
+            service_resultats,
+            service_execution,
+            services,
+            config,
+            preparation=preparation,
+            erreur_preparation=message,
+        ),
+        statut,
+    )
+
+
+def _valeur_de_formulaire(valeur: int | bool | str) -> str:
+    """Valeur d'un réglage telle que le formulaire la transmet (oui ou non)."""
+    if valeur is True:
+        return VALEUR_VRAIE
+    if valeur is False:
+        return VALEUR_FAUSSE
+    return str(valeur)
+
+
+def _moteurs_proposes(
+    modeles: Sequence[ModelePropose],
+) -> tuple[tuple[str, str, str], ...]:
+    """Triplets (moteur, nom, référence) des moteurs proposables, uniques.
+
+    Le moteur d'un modèle n'est pas un second choix indépendant : ce sélecteur
+    ne sert qu'à rendre le moteur attendu lisible et présélectionné (D4). La
+    référence jointe est la première du moteur dans l'ordre des modèles : elle
+    permet au script local de choisir un modèle réellement compatible quand
+    l'utilisateur ne change que le moteur, sans inventer de combinaison ni
+    convertir aucun format. Aucune valeur sensible n'y figure.
+    """
+    proposes: dict[str, tuple[str, str]] = {}
+    for modele in modeles:
+        proposes.setdefault(modele.moteur, (modele.nom_moteur, modele.reference))
+    return tuple(
+        (identifiant, nom_moteur, reference)
+        for identifiant, (nom_moteur, reference) in proposes.items()
     )
 
 
@@ -1029,15 +1248,19 @@ def _page_executions(
     services: ServicesApplication,
     config: ConfigApplication,
     demande: DemandeExecution | None = None,
+    *,
+    preparation: PreparationExecution | None = None,
+    erreur_preparation: str | None = None,
+    audio_unitaire_ignore: str | None = None,
 ) -> str:
     """Page d'exécutions : opération, préparation, historique et diagnostics.
 
-    L'opération longue vient en tête avec l'ancre `#operation`, l'historique
-    technique complet reste un détail secondaire (`#historique`) et les
-    diagnostics de dossiers un accès explicite (`#diagnostics`). Aucune lecture
-    n'écrit de fichier. L'identité de l'opération est lue avant le lien de
-    résultat : `identifiant_resultat` ne renvoie que l'identifiant publié par
-    cette opération admise, jamais celui d'un essai antérieur.
+    L'opération longue vient en tête avec l'ancre `#operation`, la préparation
+    unique Modèle/Audio/Moteur (design D4) ensuite, puis l'historique technique
+    complet (`#historique`) et les diagnostics de dossiers (`#diagnostics`).
+    Aucune lecture n'écrit de fichier. L'identité de l'opération est lue avant le
+    lien de résultat : `identifiant_resultat` ne renvoie que l'identifiant publié
+    par cette opération admise, jamais celui d'un essai antérieur.
     """
     instantane = services.creneau.instantane()
     url_resultat = _url_resultat(
@@ -1050,11 +1273,31 @@ def _page_executions(
         erreur_historique = MESSAGE_RESULTATS_INACCESSIBLES
     else:
         erreur_historique = None
+    modeles = service.modeles_proposables()
+    executables = tuple(modele for modele in modeles if modele.executable)
+    if preparation is None:
+        preparation = service.preparer()
+    lot_actif = bool(request.args.getlist("audios_lot")) or len(preparation.audios) > 1
+    audios = service.audios_proposables()
+    ordre_lot = {nom: index for index, nom in enumerate(preparation.audios)}
+    audios_lot_ordonnes = (
+        sorted(audios, key=lambda audio: ordre_lot.get(audio.nom, len(ordre_lot)))
+        if lot_actif else audios
+    )
     return render_template(
         "executions.html",
-        modeles=service.modeles_proposables(),
-        audios=service.audios_proposables(),
-        threads_defaut=service.threads_par_defaut(),
+        modeles=modeles,
+        modeles_executables=executables,
+        modeles_non_executables=tuple(
+            modele for modele in modeles if not modele.executable
+        ),
+        moteurs_proposes=_moteurs_proposes(executables),
+        preparation=preparation,
+        erreur_preparation=erreur_preparation,
+        audio_unitaire_ignore=audio_unitaire_ignore,
+        lot_actif=lot_actif,
+        audios=audios,
+        audios_lot_ordonnes=audios_lot_ordonnes,
         demande=demande,
         prefixe_reglage=PREFIXE_CHAMP_REGLAGE,
         message_lancement=MESSAGE_LANCEMENT,

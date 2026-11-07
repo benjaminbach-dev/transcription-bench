@@ -18,6 +18,7 @@ from transcription_bench.web import (
     ServicesApplication,
     create_app,
 )
+from transcription_bench.web.app import MESSAGE_DEMANDE_REFUSEE
 
 ADRESSE_LOCALE = "127.0.0.1"
 PORT_TEST = 8765
@@ -72,6 +73,22 @@ class SocleWebTest(unittest.TestCase):
         self.assertIn("text/html", reponse.headers["Content-Type"])
         corps = reponse.get_data(as_text=True)
         self.assertIn(f"Erreur {code}", corps)
+        self.assertNotIn("RuntimeError", corps)
+        self.verifier_html_seul(corps)
+        return corps
+
+    def verifier_refus_preparation(self, reponse) -> str:
+        """Refus 400 d'une demande : page Exécutions, choix restitués (4.3).
+
+        Le refus n'est pas une page d'erreur qui perdrait les sélections : la
+        page Exécutions est rendue avec un message fixe et une préparation
+        reconstruite depuis les champs soumis.
+        """
+        self.assertEqual(reponse.status_code, 400)
+        self.assertIn("text/html", reponse.headers["Content-Type"])
+        corps = reponse.get_data(as_text=True)
+        self.assertIn(MESSAGE_DEMANDE_REFUSEE, html.unescape(corps))
+        self.assertIn("<h1>Exécutions</h1>", corps)
         self.assertNotIn("RuntimeError", corps)
         self.verifier_html_seul(corps)
         return corps

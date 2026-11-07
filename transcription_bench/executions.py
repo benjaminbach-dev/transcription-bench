@@ -42,10 +42,25 @@ Règles reprises des specs et du design :
   déclaré rend la famille non exécutable (voir ci-dessus) : l'interface ne
   l'annonce donc jamais comme pris en charge.
 
-Champs de formulaire : `modele`, `threads` et chaque `reglage_<nom>` sont
-exigés **une seule fois**. Un champ répété est refusé (`ValeurRefusee`) plutôt
-que résolu par la première ou la dernière valeur : aucune valeur ambiguë n'est
-interprétée.
+Champs de formulaire : `modele`, `moteur`, `threads` et chaque
+`reglage_<nom>` sont exigés **une seule fois**. Un champ répété est refusé
+(`ValeurRefusee`) plutôt que résolu par la première ou la dernière valeur :
+aucune valeur ambiguë n'est interprétée. Le panneau de préparation (design D4)
+se lit d'abord en GET, avec les seules références locales et les noms d'audios
+(`preparer`), puis se soumet en POST avec le jeton anti-CSRF. Le champ `moteur`
+ne remplace jamais la référence : fourni, il doit être celui qu'elle déclare, et
+il est revalidé comme le reste au lancement.
+
+Extension bornée du GET (design D4, tâche 4.2) : pour conserver les réglages
+avancés d'une préparation déjà affichée, la lecture accepte aussi `source`
+(référence de la préparation d'origine), `threads` et les `reglage_<nom>`
+qu'elle proposait. Ce sont des valeurs **non sensibles** : jamais le jeton
+anti-CSRF, jamais un nom hors de la liste blanche des réglages déclarés, aucune
+écriture. Le service vérifie que `source` désigne une ressource proposable et
+que sa famille est celle de la cible ; il ne reporte aucune valeur homonyme
+d'une autre famille, il revalide chaque valeur avec les règles du POST et il
+distingue un refus borné (`notice`, valeur inconnue ou non attribuable) d'un
+repli annoncé (`reinitialisation`, valeurs remplacées par leurs défauts).
 
 Limites assumées : la demande validée est une valeur en mémoire, non persistée ;
 elle ne prouve ni que le modèle sera encore présent au lancement, ni que
@@ -68,6 +83,7 @@ from engines.declarations import (
     TYPE_BOOLEEN,
     TYPE_CHOIX,
     TYPE_ENTIER,
+    TYPE_TEXTE,
     DeclarationAdaptateur,
     Famille,
     Reglage,
@@ -83,14 +99,72 @@ NOMBRE_THREADS_MINIMUM = 1
 FENETRE_FIXE_SECONDES = 30.0
 #: Préfixe des champs de réglage du formulaire (`reglage_<nom>`).
 PREFIXE_CHAMP_REGLAGE = "reglage_"
-#: Champs du formulaire qui ne peuvent être fournis qu'une seule fois.
-CHAMPS_UNIQUES = ("modele", "threads")
+#: Champs du formulaire qui ne peuvent être fournis qu'une seule fois. `source`
+#: ne circule qu'en GET (référence de la préparation d'origine) : la répéter
+#: rendrait l'attribution des réglages ambiguë, elle est donc refusée aussi.
+CHAMPS_UNIQUES = ("modele", "moteur", "threads", "source")
 SEPARATEUR_REFERENCE_MODELE = "/"
 VALEUR_VRAIE = "oui"
 VALEUR_FAUSSE = "non"
 
 #: Libellé du modèle synthétique du moteur factice : aucun fichier, aucun poids.
 LIBELLE_MODELE_FACTICE = "aucun modèle, textes et mesures simulés"
+
+#: Messages bornés d'une préparation GET : une valeur de requête périmée,
+#: incohérente ou incomplète est remplacée par un choix applicable, et le
+#: remplacement est annoncé au lieu d'être silencieux (design D4).
+MESSAGE_MODELE_REINITIALISE = (
+    "Modèle choisi introuvable, périmé ou non exécutable : les choix par défaut "
+    "sont proposés à la place."
+)
+MESSAGE_MOTEUR_INCOHERENT = (
+    "Moteur incompatible avec la référence du modèle : le moteur déclaré par "
+    "cette référence est retenu."
+)
+MESSAGE_MOTEUR_ADAPTE = (
+    "Moteur changé : le premier modèle exécutable de ce moteur est sélectionné."
+)
+MESSAGE_AUDIO_INCOHERENT = (
+    "Audio choisi absent de la liste des audios lisibles ou fourni deux fois : "
+    "seuls les audios lisibles sont conservés."
+)
+MESSAGE_AUDIO_AUCUN = (
+    "Aucun audio sélectionné : le premier audio lisible est retenu par défaut."
+)
+
+#: Messages bornés de la conservation des réglages avancés (design D4) : les
+#: valeurs transmises en GET viennent du formulaire préparé ; elles ne sont
+#: retenues que pour la famille de la préparation d'origine, revalidées comme
+#: au POST. `notice` refuse, `reinitialisation` annonce un repli.
+MESSAGE_REGLAGES_SANS_SOURCE = (
+    "Réglages avancés refusés : la préparation d'origine de ces valeurs n'est "
+    "pas identifiée. Les valeurs par défaut sont proposées."
+)
+MESSAGE_REGLAGES_AUTRE_FAMILLE = (
+    "Réglages avancés réinitialisés : la famille du modèle a changé, les "
+    "valeurs précédentes ne s'appliquent plus."
+)
+MESSAGE_REGLAGES_INVALIDES = (
+    "Réglages avancés partiellement réinitialisés : les valeurs transmises "
+    "n'étaient pas toutes applicables, elles sont remplacées par leurs valeurs "
+    "par défaut."
+)
+MESSAGE_REGLAGES_REINITIALISES = (
+    "Réglages avancés revenus à leurs valeurs par défaut : aucune valeur "
+    "conservable n'a été transmise."
+)
+MESSAGE_THREADS_REINITIALISES = (
+    "Threads demandés revenus à la valeur par défaut : aucune valeur n'a été "
+    "transmise."
+)
+MESSAGE_TEXTE_NON_CONSERVE = (
+    "Réglages textuels revenus à leur valeur par défaut : aucun texte libre "
+    "n'est conservé dans une URL."
+)
+MESSAGE_REGLAGE_INCONNU = (
+    "Réglage non déclaré par la famille du modèle : demande refusée."
+)
+
 #: Clé constante du modèle synthétique (SHA-256 d'un texte fixe), distincte des
 #: clés calculées depuis un inventaire.
 CLE_MODELE_FACTICE = hashlib.sha256(b"modele-synthetique-factice").hexdigest()
@@ -191,6 +265,45 @@ class ModelePropose:
     def reference(self) -> str:
         """Référence opaque transmise par le formulaire (`<moteur>/<clé>`)."""
         return f"{self.moteur}{SEPARATEUR_REFERENCE_MODELE}{self.cle}"
+
+
+@dataclass(frozen=True)
+class PreparationExecution:
+    """Choix appliqués d'une préparation unique Modèle/Audio/Moteur (D4).
+
+    `modele` est la référence locale source de vérité, ou `None` quand aucun
+    modèle exécutable n'est proposable (`applicable` vaut alors faux et la page
+    remplace les contrôles inapplicables). `moteur` en découle et ne peut jamais
+    la contredire. `audios` garde l'ordre reçu et ne contient que des audios
+    lisibles. `notice` est un message borné, ou `None` quand la requête ne
+    demandait rien ou que tout a été retenu tel quel : une valeur périmée est
+    remplacée par un choix applicable et le remplacement annoncé.
+
+    `threads` et `reglages` sont les valeurs effectives du panneau, défauts
+    compris : conservées depuis la préparation d'origine par le GET quand elles
+    restent applicables (design D4), sinon remplacées par leurs défauts.
+    `reinitialisation` annonce alors ce repli, message borné distinct de
+    `notice` : un repli est une information, une valeur non attribuable ou
+    inconnue est un refus.
+    """
+
+    modele: ModelePropose | None
+    moteur: str | None
+    audios: tuple[str, ...]
+    notice: str | None = None
+    threads: int | None = None
+    reglages: tuple[tuple[Reglage, int | bool | str], ...] = ()
+    reinitialisation: str | None = None
+
+    @property
+    def applicable(self) -> bool:
+        """Vrai si un modèle exécutable et au moins un audio sont retenus."""
+        return self.modele is not None and bool(self.audios)
+
+    @property
+    def reference(self) -> str | None:
+        """Référence de la préparation appliquée (`<moteur>/<clé>`), ou None."""
+        return None if self.modele is None else self.modele.reference
 
 
 @dataclass(frozen=True)
@@ -326,6 +439,107 @@ class ConfigurationExecutions:
             return ()
         return tuple(audio for audio in audios if audio.erreur is None)
 
+    def preparer(
+        self,
+        *,
+        modele: str | None = None,
+        moteur: str | None = None,
+        audios: Sequence[str] = (),
+        source: str | None = None,
+        threads: str | None = None,
+        reglages: Mapping[str, str] | None = None,
+        autoriser_texte: bool = False,
+        adapter_moteur: bool = True,
+    ) -> PreparationExecution:
+        """Résout une préparation GET, sans effet de bord ni jeton (D4).
+
+        Reçoit des références locales, des noms d'audios et des réglages non
+        sensibles attribuables à une préparation, jamais un jeton : lecture seule. Le résultat n'est pas applicable
+        (`applicable` faux) quand aucun modèle exécutable ou aucun audio lisible
+        n'est disponible, pour que la page remplace les contrôles inapplicables.
+
+        Une valeur périmée, incohérente ou incomplète n'échoue pas : elle est
+        remplacée par le choix applicable (modèle par défaut, moteur déclaré
+        par la référence, audios lisibles) et le remplacement est consigné dans
+        `notice`, message fixe et borné. Le moteur demandé ne peut jamais
+        contredire la référence : celle-ci reste la source de vérité.
+
+        `source`, `threads` et `reglages` étendent cette lecture aux réglages
+        avancés (tâche 4.2) : ils ne viennent que d'une préparation déjà affichée
+        et restent des valeurs non sensibles. Seuls les réglages déclarés par la
+        famille de `source` sont attribuables ; aucune valeur homonyme d'une
+        autre famille n'est reportée. Une valeur inconnue ou non attribuable est
+        refusée (`notice`), une valeur seulement inapplicable est remplacée et
+        annoncée (`reinitialisation`). `autoriser_texte` est réservé au rendu
+        d'un POST : le GET ne conserve jamais de texte libre dans ses URL.
+        """
+        proposes = self.modeles_proposables()
+        executables = tuple(propose for propose in proposes if propose.executable)
+        lisibles = self.audios_proposables()
+        notices: list[str] = []
+        changement_moteur = None
+        choisi: ModelePropose | None = None
+        if modele is not None:
+            choisi = next(
+                (propose for propose in executables if propose.reference == modele),
+                None,
+            )
+            if choisi is None:
+                notices.append(MESSAGE_MODELE_REINITIALISE)
+        if choisi is None and executables:
+            choisi = executables[0]
+        noms_lisibles = {audio.nom for audio in lisibles}
+        gardes: list[str] = []
+        for nom in audios:
+            if isinstance(nom, str) and nom in noms_lisibles and nom not in gardes:
+                gardes.append(nom)
+        if len(gardes) != len(audios):
+            notices.append(MESSAGE_AUDIO_INCOHERENT)
+        if not gardes and lisibles:
+            if modele is not None:
+                notices.append(MESSAGE_AUDIO_AUCUN)
+            gardes.append(lisibles[0].nom)
+        if choisi is not None and moteur is not None and moteur != choisi.moteur:
+            compatible = next(
+                (propose for propose in executables if propose.moteur == moteur), None
+            )
+            if (adapter_moteur and source is not None and modele == source
+                    and compatible is not None):
+                # Repli HTML : seul le moteur a changé depuis la préparation.
+                choisi = compatible
+                changement_moteur = MESSAGE_MOTEUR_ADAPTE
+            else:
+                notices.append(MESSAGE_MOTEUR_INCOHERENT)
+        valeurs_threads = self.threads_par_defaut()
+        valeurs_reglages: tuple[tuple[Reglage, int | bool | str], ...] = ()
+        reinitialisation = None
+        if choisi is not None:
+            retenues = _retenir_valeurs(
+                choisi,
+                proposes=proposes,
+                source=source,
+                threads=threads,
+                reglages=reglages or {},
+                threads_par_defaut=valeurs_threads,
+                autoriser_texte=autoriser_texte,
+            )
+            valeurs_threads = retenues.threads
+            valeurs_reglages = retenues.reglages
+            reinitialisation = " ".join(
+                texte for texte in (changement_moteur, retenues.reinitialisation) if texte
+            ) or None
+            if retenues.notice is not None:
+                notices.append(retenues.notice)
+        return PreparationExecution(
+            modele=choisi,
+            moteur=None if choisi is None else choisi.moteur,
+            audios=tuple(gardes),
+            notice=" ".join(notices) or None,
+            threads=valeurs_threads,
+            reglages=valeurs_reglages,
+            reinitialisation=reinitialisation,
+        )
+
     def valider(
         self,
         *,
@@ -333,14 +547,23 @@ class ConfigurationExecutions:
         audios: Sequence[str],
         threads: str | int,
         reglages: Mapping[str, str],
+        moteur: str | None = None,
     ) -> DemandeExecution:
         """Valide une demande de formulaire et renvoie sa forme consommable.
 
-        Les contrôles s'enchaînent dans cet ordre : modèle prêt, audios de la
-        liste, threads demandés, réglages déclarés. Lève `ValeurRefusee` au
-        premier refus, sans effet de bord ni lancement.
+        Les contrôles s'enchaînent dans cet ordre : modèle prêt, moteur cohérent
+        avec la référence, audios de la liste, threads demandés, réglages
+        déclarés. Lève `ValeurRefusee` au premier refus, sans effet de bord ni
+        lancement. `moteur` est le champ du panneau de préparation : quand il est
+        fourni, il doit être celui de la référence ; la référence reste la source
+        de vérité et un moteur qui la contredit est refusé, jamais réinterprété.
         """
         propose = self._modele_prete(modele)
+        if moteur is not None and moteur != propose.moteur:
+            raise ValeurRefusee(
+                "moteur incompatible avec la référence du modèle : "
+                f"{moteur!r} fourni, {propose.moteur!r} déclaré par cette référence"
+            )
         noms = self._valider_audios(audios)
         nombre_threads = _valider_threads(threads)
         valeurs = _valider_reglages(propose.reglages, reglages)
@@ -441,6 +664,110 @@ def _proposer(
         motif_non_executable=motif,
         synthetique=synthetique,
     )
+
+
+@dataclass(frozen=True)
+class _ValeursRetenues:
+    """Valeurs effectives du panneau après conservation ou repli (tâche 4.2)."""
+
+    threads: int
+    reglages: tuple[tuple[Reglage, int | bool | str], ...]
+    notice: str | None = None
+    reinitialisation: str | None = None
+
+
+def _retenir_valeurs(
+    cible: ModelePropose,
+    *,
+    proposes: Sequence[ModelePropose],
+    source: str | None,
+    threads: str | None,
+    reglages: Mapping[str, str],
+    threads_par_defaut: int,
+    autoriser_texte: bool = False,
+) -> _ValeursRetenues:
+    """Réglages avancés d'une préparation GET, conservés ou remis aux défauts.
+
+    Les valeurs transmises viennent de la préparation déjà affichée (`source`).
+    Aucune n'est attribuée sans origine identifiée : sans `source` proposable,
+    elles sont refusées (`notice`) plutôt que devinées. Les réglages ne sont
+    conservés que pour la famille de `source` — même moteur et même famille, ce
+    qui couvre une révision ou une variante —, ce qui interdit tout report de
+    valeurs homonymes entre deux familles ; une autre famille remet les valeurs
+    à leurs défauts et l'annonce. Chaque valeur conservée est revalidée avec les
+    règles du POST ; les threads, indépendants de la famille, suivent la même
+    règle. Les défauts déclarés restent toujours applicables.
+    """
+    defauts = tuple((reglage, reglage.defaut) for reglage in cible.reglages)
+    valeurs = {reglage.nom: reglage.defaut for reglage in cible.reglages}
+    origine = _propose_par_reference(proposes, source)
+    if origine is None:
+        if reglages or threads is not None:
+            return _ValeursRetenues(
+                threads_par_defaut, defauts, notice=MESSAGE_REGLAGES_SANS_SOURCE
+            )
+        return _ValeursRetenues(threads_par_defaut, defauts)
+    valeurs_threads = threads_par_defaut
+    invalides = False
+    if threads is not None:
+        try:
+            valeurs_threads = _valider_threads(threads)
+        except ValeurRefusee:
+            invalides = True
+    annonces: list[str] = []
+    declares_origine = {reglage.nom: reglage for reglage in origine.reglages}
+    if set(reglages) - set(declares_origine):
+        return _ValeursRetenues(
+            threads_par_defaut, defauts, notice=MESSAGE_REGLAGE_INCONNU
+        )
+    if threads is None:
+        # Repli HTML : les copies du GET restent désactivées, la valeur
+        # demandée n'est pas transmise.
+        annonces.append(MESSAGE_THREADS_REINITIALISES)
+    if reglages:
+        if (origine.moteur, origine.famille) != (cible.moteur, cible.famille):
+            annonces.append(MESSAGE_REGLAGES_AUTRE_FAMILLE)
+        else:
+            declares = {reglage.nom: reglage for reglage in cible.reglages}
+            textes_ignores = False
+            for nom, brut in reglages.items():
+                if declares[nom].type_valeur == TYPE_TEXTE and not autoriser_texte:
+                    # Un texte libre ne voyage jamais dans une URL de GET.
+                    textes_ignores = True
+                    continue
+                try:
+                    valeurs[nom] = _valeur_reglage(declares[nom], brut)
+                except ValeurRefusee:
+                    invalides = True
+            if textes_ignores:
+                annonces.append(MESSAGE_TEXTE_NON_CONSERVE)
+    elif origine.reglages:
+        # Aucune valeur transmise alors que la préparation d'origine en
+        # proposait : le formulaire de sélection ne les transmet pas (repli HTML).
+        annonces.append(MESSAGE_REGLAGES_REINITIALISES)
+    if invalides:
+        annonces.append(MESSAGE_REGLAGES_INVALIDES)
+    return _ValeursRetenues(
+        valeurs_threads,
+        tuple((reglage, valeurs[reglage.nom]) for reglage in cible.reglages),
+        reinitialisation=" ".join(annonces) or None,
+    )
+
+
+def _propose_par_reference(
+    proposes: Sequence[ModelePropose], reference: str | None
+) -> ModelePropose | None:
+    """Modèle proposable désigné par une référence complète, sinon `None`."""
+    if reference is None:
+        return None
+    try:
+        moteur, cle = _decouper_reference(reference)
+    except ValeurRefusee:
+        return None
+    for propose in proposes:
+        if propose.moteur == moteur and propose.cle == cle:
+            return propose
+    return None
 
 
 def _decouper_reference(reference: str) -> tuple[str, str]:

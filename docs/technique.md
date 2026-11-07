@@ -136,8 +136,9 @@ données** de la page `Exécutions` affiche leur emplacement et leur présence.
 3. `Audios` liste les fichiers présents, le format et une durée indicative
    lue dans l'en-tête.
 4. `Exécutions` propose le moteur factice avec un **modèle synthétique** :
-   aucun fichier, aucun poids, aucun téléchargement. Sélectionnez un ou
-   plusieurs audios, le nombre de threads demandé, puis lancez.
+   aucun fichier, aucun poids, aucun téléchargement. Choisissez un audio dans
+   le contrôle simple (le lot reste facultatif et replié), le nombre de threads
+   demandé dans les réglages avancés si nécessaire, puis lancez.
 5. `Exécutions` réunit l'état de l'opération longue (une seule à la fois, sans
    file d'attente), la préparation d'une demande, l'historique technique et les
    dossiers de données ; `Résultats` liste les transcriptions groupées par

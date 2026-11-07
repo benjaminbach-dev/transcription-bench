@@ -118,7 +118,10 @@ NIVEAUX_TITRES = ("h1", "h2", "h3", "h4", "h5", "h6")
 # Design D7 : boutons de simple contrôle (classe `secondary`) et actions
 # principales (style primaire de Sumi, jamais `secondary`).
 BOUTONS_SECONDAIRES = {
-    "executions.html": ("Vérifier la demande (aucun lancement)",),
+    "executions.html": (
+        "Appliquer les choix",
+        "Vérifier la demande (aucun lancement)",
+    ),
     "modeles.html": (
         "Vérifier la compatibilité sans télécharger",
         "Vérifier avec {{ candidat }}",
@@ -484,7 +487,7 @@ class GabaritsTest(unittest.TestCase):
                     self.assertEqual(len(lignes), 1, lignes)
                     self.assertIn("secondary", classes_de_balise(lignes[0]))
                     trouves += 1
-        self.assertEqual(trouves, 3, "trois boutons de contrôle")
+        self.assertEqual(trouves, 4, "quatre boutons de contrôle")
 
     def test_actions_principales_sans_secondary(self) -> None:
         for nom, libelles in BOUTONS_PRIMAIRES.items():
