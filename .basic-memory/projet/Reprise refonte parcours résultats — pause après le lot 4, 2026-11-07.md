@@ -48,3 +48,9 @@ Note de reprise fraîche demandée par le propriétaire avant l'arrêt. Remplace
 - relates_to [[Reprise refonte parcours résultats — lot 1 et orchestration 2026-11-07]]
 - relates_to [[Lecture grand public et occupation des ressources — cadrage 2026-11-04]]
 - relates_to [[Décisions du prototype de benchmark]]
+
+### Publication finale et incident CI intermittent — 2026-11-07 soir
+
+- [status] Lot 4 publié `233d3fe`, CI code [42407167782](https://github.com/benjaminbach-dev/transcription-bench/actions/runs/42407167782) **verte Ubuntu/Windows** (1094 tests). Note de reprise poussée `0351311`.
+- [validation] Premier run de la note `0351311` (commit **sans aucun code**, `.basic-memory` seul) : échec Windows sur `test_echec_de_consignation_du_pid_arrete_le_moteur` (dossier cache résiduel) et `test_arret_pendant_le_demarrage_ne_laisse_pas_de_processus` — la famille d'incidents intermittents Windows déjà documentée (PID vide/arrêt au démarrage, non résolue). Relance du job défaillant : **vert**, confirming intermittence et non-causalité avec le lot 4 ni la note. Run final [42407380188](https://github.com/benjaminbach-dev/transcription-bench/actions/runs/42407380188) vert après rerun. Ce flau reste ouvert pour 6.2 : ne jamais présenter un succès unique comme preuve de correction.
+- [status] Session close conformément à la demande : lots 1–4 publiés, 14/20, aucun worker actif, serveurs temporaires arrêtés, `.playwright-mcp/` préservé non suivi, arbre propre hors ce dossier. Reprise : tâches 5.1–6.3 selon la méthode ci-dessus, workers en Haiku 5.5 / thinking high.
