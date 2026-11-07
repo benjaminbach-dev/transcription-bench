@@ -31,8 +31,9 @@ from tests.test_consultation_resultats import (
 )
 from tests.test_web import SocleWebTest
 from transcription_bench.compatibilite_modeles import RAISON_FICHIER_GGUF_NON_CHOISI
+from transcription_bench.gestion_modeles import ModeleLocal
 from transcription_bench.moteurs import ETAT_PRET, EtatMoteur
-from transcription_bench.verification_modeles import ResultatVerification
+from transcription_bench.verification_modeles import FichierVerifie, ResultatVerification
 from transcription_bench.web.app import NOM_FEUILLE_APP
 
 DOSSIER_GABARITS = (
@@ -153,6 +154,20 @@ DELAI = 5.0
 IDENTIFIANT_DETAIL = "20240103-000000-0000dead"
 #: Moteur réel prêt simulé : seul un tel moteur ouvre le formulaire d'ajout.
 MOTEUR_PRET = "moteur-de-test"
+#: Modèle local fabriqué : rend l'inventaire de /modeles non vide pour que le
+#: contrôle D8 voie aussi le détail fermé « Révision, fichiers et suppression ».
+MODELE_LOCAL = ModeleLocal(
+    moteur="moteur-de-test",
+    cle="c" * 64,
+    identifiant="org/modele-synthetique",
+    id_resolu="org/modele-synthetique",
+    commit="0123456789abcdef0123456789abcdef01234567",
+    famille="whisper",
+    fichier_gguf=None,
+    fichiers=(FichierVerifie("model.bin", 3),),
+    taille_disque=3,
+    date="2026-10-25",
+)
 
 # Design D8 : contenus qui restent visibles sans ouvrir d'accordéon.
 CONTENU_TOUJOURS_VISIBLE = frozenset({"pre", "button"})
@@ -849,9 +864,17 @@ class HabillagePageTest(SocleWebTest):
         # boutons d'action ne sont jamais enfermés dans un accordéon fermé (un
         # `details` qui contient une erreur porte `open`).
         for chemin, page in self.pages_a_controler().items():
+            corps = page.corps
+            if chemin == "/modeles":
+                # La page par défaut a un inventaire vide : rendre au moins un
+                # modèle local pour que le contrôle voie aussi son détail
+                # fermé « Révision, fichiers et suppression » et son bouton.
+                corps = self.page_modeles_avec_resultat(
+                    inventaire=(MODELE_LOCAL,)
+                ).corps
             with self.subTest(chemin=chemin):
                 self.assertEqual(
-                    self.violations_details_fermes(chemin, page.corps), [], chemin
+                    self.violations_details_fermes(chemin, corps), [], chemin
                 )
 
     def exception_details_fermes(self, chemin: str, resume: str, tag: str) -> bool:
@@ -868,9 +891,19 @@ class HabillagePageTest(SocleWebTest):
         # seulement les `button` du bloc « Ajouter un modèle » de /modeles,
         # jamais un `pre`, ni une classe danger/warning, ni un autre bloc ni
         # une autre page.
-        return (
+        if (
             chemin == "/modeles"
             and resume == "Ajouter un modèle"
+            and tag == "button"
+        ):
+            return True
+        # Suppression locale dans le détail d'un modèle (tâches 5.1/5.2) : la
+        # spec place révision, fichiers et suppression « en détail » ; le
+        # bouton de suppression — sa classe danger comprise — est le seul
+        # contenu toléré de ce bloc, jamais un encart ni un `pre`.
+        return (
+            chemin == "/modeles"
+            and resume == "Révision, fichiers et suppression"
             and tag == "button"
         )
 
@@ -922,6 +955,34 @@ class HabillagePageTest(SocleWebTest):
             len(self.violations_details_fermes("/executions", bouton)), 1
         )
 
+    def test_exception_de_la_suppression_limitee_au_bouton(self) -> None:
+        # L'exception du détail « Révision, fichiers et suppression » couvre le
+        # seul bouton de suppression (classe danger comprise) : un encart, un
+        # `pre` ou un autre bloc restent signalés.
+        bloc = (
+            '<details><summary>Révision, fichiers et suppression</summary>{}</details>'
+        )
+        bouton = bloc.format('<button class="danger">Supprimer</button>')
+        self.assertEqual(self.violations_details_fermes("/modeles", bouton), [])
+        for contenu in (
+            "<pre>journal</pre>",
+            '<p class="callout danger">refus</p>',
+            '<p role="status">état</p>',
+        ):
+            with self.subTest(contenu=contenu):
+                self.assertEqual(
+                    len(
+                        self.violations_details_fermes(
+                            "/modeles", bloc.format(contenu)
+                        )
+                    ),
+                    1,
+                )
+        # Une autre page ne bénéficie d'aucune exception pour ce même bloc.
+        self.assertEqual(
+            len(self.violations_details_fermes("/executions", bouton)), 1
+        )
+
     def test_diagnostics_secondaires_fermes_avec_verification_accessible(self) -> None:
         page = self.pages_a_controler()["/executions"]
         bloc = next(
@@ -932,7 +993,7 @@ class HabillagePageTest(SocleWebTest):
         self.assertIn("button", [tag for tag, _ in bloc.balises])
         self.assertIn('action="/dossiers/verifier"', page.corps)
 
-    def page_modeles_avec_resultat(self, resultat=None):
+    def page_modeles_avec_resultat(self, resultat=None, inventaire=()):
         """Page Modèles rendue avec un moteur prêt et un résultat éventuel.
 
         Le service factice de `tests.test_modeles_web` lève une erreur à la
@@ -943,6 +1004,7 @@ class HabillagePageTest(SocleWebTest):
             self.services(
                 modeles=FausseGestion(
                     resultat=resultat,
+                    inventaire=inventaire,
                     moteurs=(EtatMoteur(MOTEUR_PRET, "Moteur de test", ETAT_PRET),),
                 )
             )

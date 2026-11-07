@@ -181,7 +181,7 @@ Pour l'exemple, utilisez :
 | Identifiant Hugging Face | `handy-computer/whisper-large-v3-turbo-gguf` |
 | Moteur | transcribe.cpp (GGUF) |
 | Fichier à choisir | `whisper-large-v3-turbo-Q5_K_M.gguf` |
-| Taille à télécharger | environ 620 Mo (valeur indicative, non vérifiée à froid ; la page l'affiche en Mio ou Gio après la vérification, avant tout téléchargement) |
+| Taille à télécharger | environ 620 Mo, soit environ 591 Mio affichés (valeur indicative, non vérifiée à froid ; la page l'affiche en Mio ou Gio après la vérification, avant tout téléchargement) |
 
 « Hugging Face » est le site qui héberge ces modèles.
 
@@ -193,6 +193,10 @@ Pour l'exemple, utilisez :
 4. Quand la page indique « Dépôt compatible », contrôlez la taille annoncée sous **Taille à télécharger**, en Mio ou Gio (les valeurs exactes en octets restent dans le détail « Fichiers du modèle et identifiants »), puis cliquez sur **Télécharger ce modèle à la révision vérifiée**. Le téléchargement est une action séparée : il ne commence qu'après ce clic. Suivez l'avancement dans **Exécutions**, section **Opération longue**.
 
 *Vous devez voir.* Le panneau **Ajouter un modèle** reste ouvert tant qu'une vérification a un résultat, puis le modèle apparaît dans **Modèles locaux prêts**.
+
+*Utiliser un modèle prêt.* Chaque modèle de la liste propose **Utiliser** : la page **Exécutions** s'ouvre avec ce modèle déjà choisi, prête à préparer une exécution.
+
+*Supprimer un modèle.* Le détail « Révision, fichiers et suppression » de chaque modèle contient **Supprimer ce modèle local**. Ce bouton reste indisponible pendant une opération ou après un arrêt du serveur, avec le motif affiché juste au-dessus ; la suppression retire les fichiers locaux et les résultats déjà produits restent consultables.
 
 *Si ce n'est pas le cas.* Voir « modèle refusé ou introuvable », « téléchargement interrompu » et « pas de connexion Internet » dans le [dépannage](#13-dépannage).
 

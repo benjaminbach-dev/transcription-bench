@@ -26,7 +26,7 @@
 {% if moteur.date_installation %}
 {# Date courte dans le détail, horodatage consigné conservé à côté : la
    valeur brute n'est pas perdue, elle n'est plus mise en avant. #}
-<p class="prose">Installé le {{ formater_date_courte(moteur.date_installation) }} <small>(horodatage consigné : {{ moteur.date_installation }})</small></p>
+<p class="prose">Date d'installation : {{ formater_date_courte(moteur.date_installation) }} <small>(horodatage consigné : {{ moteur.date_installation }})</small></p>
 {% endif %}
 {% if moteur.versions %}
 <p class="prose">Versions contrôlées dans l'environnement :

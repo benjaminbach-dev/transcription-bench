@@ -36,6 +36,7 @@ from transcription_bench.executions import (
     FENETRE_FIXE_SECONDES,
     LIBELLE_MODELE_FACTICE,
     MESSAGE_AUDIO_INCOHERENT,
+    MESSAGE_AUDIO_AUCUN,
     MESSAGE_MODELE_REINITIALISE,
     MESSAGE_MOTEUR_INCOHERENT,
     MESSAGE_MOTEUR_ADAPTE,
@@ -1173,6 +1174,19 @@ class PreparationUniqueTest(SocleWebTest):
             '<p class="callout warning prose" role="alert">Aucun audio',
             corps,
         )
+
+    def test_audio_perime_avec_modele_n_annonce_pas_omission(self) -> None:
+        # Un audio nommé mais périmé est une valeur incohérente : refus 400 et
+        # encart d'incohérence, sans jamais prétendre qu'aucun audio n'était
+        # sélectionné dans la demande (message réservé à la vraie omission).
+        reponse = self.get(
+            self.scenario({"modele": self.reference(), "audios": ["z.wav"]})
+        )
+        corps = html.unescape(reponse.get_data(as_text=True))
+
+        self.assertEqual(reponse.status_code, 400)
+        self.assertIn("Audio choisi absent de la liste", corps)
+        self.assertNotIn(MESSAGE_AUDIO_AUCUN, corps)
 
     def test_moteur_incoherent_refuse_et_moteur_de_la_reference_retenu(self) -> None:
         reponse = self.get(

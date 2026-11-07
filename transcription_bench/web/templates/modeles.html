@@ -26,9 +26,9 @@
 <h3>{{ modele.identifiant }}</h3>
 </header>
 <p class="prose">Moteur : {{ modele.moteur }} · famille : {{ modele.famille }}{% if modele.variante %} · variante GGUF : {{ modele.variante }}{% endif %} · taille : {{ formater_taille_modele(modele.taille_disque) }}</p>
-<p class="prose"><a href="{{ url_for('executions', modele=modele.reference) }}">Utiliser</a> ce modèle pour préparer une exécution.</p>
+<p class="prose"><a href="{{ url_for('executions', modele=modele.reference) }}" aria-label="Utiliser {{ modele.identifiant }} pour préparer une exécution">Utiliser</a> ce modèle pour préparer une exécution.</p>
 <details>
-<summary>Révision, fichiers et suppression</summary>
+<summary aria-label="Révision, fichiers et suppression de {{ modele.identifiant }}">Révision, fichiers et suppression</summary>
 <dl class="prose">
 <dt>Identifiant complet</dt>
 <dd>{{ modele.id_resolu }}</dd>
@@ -38,26 +38,28 @@
 <dd>{{ modele.famille }}</dd>
 <dt>Ajouté le</dt>
 <dd>{{ modele.date }}</dd>
+{# Valeurs brutes conservées en détail (« Formats lisibles des indicateurs ») :
+   la taille reste lisible au premier niveau et exacte ici. #}
 <dt>Taille sur disque</dt>
-<dd>{{ formater_taille_modele(modele.taille_disque) }}</dd>
+<dd>{{ formater_taille_modele(modele.taille_disque) }}{% if modele.taille_disque is not none %} <small>({{ modele.taille_disque }} octets)</small>{% endif %}</dd>
 <dt>Taille distante totale</dt>
-<dd>{{ formater_taille_modele(modele.taille_distante) }}</dd>
+<dd>{{ formater_taille_modele(modele.taille_distante) }}{% if modele.taille_distante is not none %} <small>({{ modele.taille_distante }} octets)</small>{% endif %}</dd>
 </dl>
 <p class="prose">Fichiers retenus :</p>
 <ul class="prose">
 {% for fichier in modele.fichiers %}
-<li>{{ fichier.nom }} : {{ formater_taille_modele(fichier.taille) }}</li>
+<li>{{ fichier.nom }} : {{ formater_taille_modele(fichier.taille) }}{% if fichier.taille is not none %} <small>({{ fichier.taille }} octets)</small>{% endif %}</li>
 {% endfor %}
 </ul>
-{% if modele.actif %}
-<p class="prose">Ce modèle est visé par l'opération en cours : sa suppression reste indisponible jusqu'à sa fin.</p>
-<p class="prose"><button type="button" aria-disabled="true">Supprimer ce modèle local</button></p>
+{% if modele.motif_suppression %}
+<p class="prose" id="motif-suppression-{{ modele.cle }}">{{ modele.motif_suppression }}</p>
+<p class="prose"><button type="button" class="secondary" aria-disabled="true" aria-describedby="motif-suppression-{{ modele.cle }}" aria-label="Supprimer le modèle local {{ modele.identifiant }}">Supprimer ce modèle local</button></p>
 {% else %}
 <form method="post" action="{{ url_for('supprimer_modele') }}">
 <input type="hidden" name="jeton_csrf" value="{{ jeton_csrf }}">
 <input type="hidden" name="moteur" value="{{ modele.moteur }}">
 <input type="hidden" name="cle" value="{{ modele.cle }}">
-<p class="prose"><button type="submit" class="danger">Supprimer ce modèle local</button></p>
+<p class="prose"><button type="submit" class="danger" aria-label="Supprimer le modèle local {{ modele.identifiant }}">Supprimer ce modèle local</button></p>
 </form>
 {% endif %}
 </details>

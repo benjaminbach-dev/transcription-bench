@@ -23,6 +23,7 @@ from tests.test_verification_modeles import (
     declaration_synthetique,
     infos_de,
 )
+from tests.test_formats_moteurs_audios import details, premier_niveau
 from tests.test_web import SocleWebTest
 from transcription_bench.compatibilite_modeles import (
     RAISON_FICHIER_GGUF_NON_CHOISI,
@@ -50,6 +51,9 @@ from transcription_bench.verification_modeles import (
     VerificationModeles,
 )
 from transcription_bench.web.vues_modeles import (
+    MOTIF_SUPPRESSION_ACTIF,
+    MOTIF_SUPPRESSION_ARRET,
+    MOTIF_SUPPRESSION_OPERATION,
     formater_taille_modele,
     vues_modeles_locaux,
 )
@@ -425,15 +429,22 @@ class ModelesWebTest(SocleWebTest):
         self.assertEqual(corps.count(EXPLICATION_GENERALE), 1)
 
     def test_taille_lisible_sans_octets_bruts(self) -> None:
+        # « Formats lisibles des indicateurs » : lisible au premier niveau,
+        # valeurs brutes conservées dans le détail.
         self.preparer_modele_pret()
-        corps = self.inventaire_rendu(self.page())
+        corps = self.page()
+        affiche = premier_niveau(corps)
 
-        self.assertIn("0,1 Mio", corps)
+        self.assertIn("0,1 Mio", affiche)
         self.assertIsNone(
-            re.search(r"\d+ octets", corps),
+            re.search(r"\d+ octets", affiche),
             "taille en octets bruts au premier niveau de l'inventaire",
         )
         self.assertIn("Taille sur disque", corps)
+        # Le détail de chaque modèle garde les octets exacts.
+        brut = details(corps)
+        self.assertRegex(brut, r"\(\d+ octets\)")
+        self.assertIn("Taille sur disque", brut)
 
     def modeles_pour_executions(self, cle: str) -> FausseGestion:
         """Inventaire dont le moteur est l'une des quatre déclarations fournies.
@@ -552,7 +563,10 @@ class ModelesWebTest(SocleWebTest):
         self.assertIn('action="/modeles/supprimer"', corps)
         self.assertNotIn('aria-disabled="true"', corps)
 
-    def test_modele_non_vise_reste_supprimable_apres_operation(self) -> None:
+    def test_modele_non_vise_suspendu_puis_supprimable_apres_operation(self) -> None:
+        # Le service refuse toute suppression pendant une opération, quelle que
+        # soit sa cible : l'interface le signale aussi pour les modèles non
+        # visés, avec un motif unique, au lieu d'un bouton qui échouerait.
         cle = self.preparer_modele_pret()
         liberation = threading.Event()
         self.addCleanup(liberation.set)
@@ -562,11 +576,15 @@ class ModelesWebTest(SocleWebTest):
             cible="org/autre-modele",
         )
 
+        corps = html.unescape(self.page())
+        self.assertIn('aria-disabled="true"', corps)
+        self.assertIn(MOTIF_SUPPRESSION_OPERATION, corps)
+        self.assertNotIn('action="/modeles/supprimer"', corps)
+        liberation.set()
+        self.attendre()
         corps = self.page()
         self.assertNotIn('aria-disabled="true"', corps)
         self.assertIn('action="/modeles/supprimer"', corps)
-        liberation.set()
-        self.attendre()
         reponse = self.post_autorise(
             "/modeles/supprimer", donnees={"moteur": MOTEUR, "cle": cle}
         )
@@ -847,10 +865,10 @@ class TailleModeleTest(unittest.TestCase):
             date="2026-10-25",
         )
 
-    def instantane(self, etat: str, cible: str | None) -> InstantaneCreneau:
+    def instantane(self, etat: str, cible: str | None, *, arrete: bool = False) -> InstantaneCreneau:
         return InstantaneCreneau(
             etat=etat,
-            arrete=False,
+            arrete=arrete,
             type_operation=TYPE_EXECUTION if cible else None,
             cible=cible,
             debut=None,
@@ -873,11 +891,20 @@ class TailleModeleTest(unittest.TestCase):
             (self.modele(),), self.instantane(ETAT_EN_COURS, "org/modele")
         )
         self.assertTrue(actif["actif"])
+        self.assertEqual(actif["motif_suppression"], MOTIF_SUPPRESSION_ACTIF)
 
         (autre,) = vues_modeles_locaux(
             (self.modele(),), self.instantane(ETAT_EN_COURS, "org/autre")
         )
         self.assertFalse(autre["actif"])
+        # Non visé mais opération en cours : la suppression reste suspendue.
+        self.assertEqual(autre["motif_suppression"], MOTIF_SUPPRESSION_OPERATION)
+
+        (arrete,) = vues_modeles_locaux(
+            (self.modele(),), self.instantane(ETAT_LIBRE, None, arrete=True)
+        )
+        self.assertEqual(arrete["motif_suppression"], MOTIF_SUPPRESSION_ARRET)
+        self.assertIsNone(vue["motif_suppression"])
 
 
 if __name__ == "__main__":

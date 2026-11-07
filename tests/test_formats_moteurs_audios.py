@@ -418,7 +418,7 @@ class FormatsPremierNiveauTest(SoclePagesSynthetiques):
         self.assertNotRegex(affiche, MOTIF_HORODATAGE_ISO)
         self.assertNotIn("octets", affiche)
         self.assertNotRegex(affiche, MOTIF_TROIS_DECIMALES)
-        self.assertIn("Installé le 25/10/2026 12:00", details(corps))
+        self.assertIn("Date d'installation : 25/10/2026 12:00", details(corps))
         self.assertIn(f"horodatage consigné : {DATE_INSTALLATION}", details(corps))
 
     def test_aucun_premier_niveau_avec_octets_bruts_ni_trois_decimales(self) -> None:

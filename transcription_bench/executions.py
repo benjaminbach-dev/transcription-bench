@@ -505,9 +505,11 @@ class ConfigurationExecutions:
         if len(gardes) != len(audios):
             notices.append(MESSAGE_AUDIO_INCOHERENT)
         if not gardes and lisibles:
-            if modele is not None:
+            if modele is not None and not audios:
                 # Omission d'audio, pas valeur périmée : annonce neutre (200),
                 # jamais l'encart d'erreur réservé aux valeurs nommées invalides.
+                # Un audio nommé mais périmé a déjà son encart d'incohérence :
+                # ne jamais y ajouter une prétendue omission.
                 annonce_audio = MESSAGE_AUDIO_AUCUN
             gardes.append(lisibles[0].nom)
         if choisi is not None and moteur is not None and moteur != choisi.moteur:

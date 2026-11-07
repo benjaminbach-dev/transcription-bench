@@ -38,6 +38,21 @@ OCTETS_PAR_GIO = 1024**3
 TAILLE_INCONNUE = "taille inconnue"
 TAILLE_INTERPRETABLE_ABSENTE = "indisponible"
 
+#: Motifs bornés de suppression indisponible, affichés près du bouton et liés
+#: à lui par `aria-describedby`. Le service refuse toute suppression pendant
+#: une opération ou après un arrêt : l'interface le signale pour chaque modèle
+#: visé ou non, au lieu de proposer un bouton qui échouerait en 409 ou 503.
+MOTIF_SUPPRESSION_ACTIF = (
+    "Ce modèle est visé par l'opération en cours : sa suppression reste "
+    "indisponible jusqu'à sa fin."
+)
+MOTIF_SUPPRESSION_OPERATION = (
+    "Opération en cours : toute suppression de modèle est suspendue jusqu'à sa fin."
+)
+MOTIF_SUPPRESSION_ARRET = (
+    "Arrêt du serveur demandé : aucune suppression n'est acceptée."
+)
+
 
 def formater_taille_modele(valeur: Any) -> str:
     """Taille de modèle lisible en Mio ou Gio, jamais en octets bruts.
@@ -70,9 +85,16 @@ def vues_modeles_locaux(
     Chaque vue porte le nom affiché, le moteur, la famille, la variante GGUF
     éventuelle, la taille sur disque et la taille distante (brutes, formatées
     par le gabarit), la référence de préparation, la révision, l'identifiant
-    complet, la date d'ajout, les fichiers retenus et l'état `actif`.
+    complet, la date d'ajout, les fichiers retenus, l'état `actif` et le
+    `motif_suppression` (ou `None` quand la suppression est proposable).
     """
     en_cours = instantane.etat == ETAT_EN_COURS
+    if instantane.arrete:
+        motif = MOTIF_SUPPRESSION_ARRET
+    elif en_cours:
+        motif = MOTIF_SUPPRESSION_OPERATION
+    else:
+        motif = None
     return tuple(
         {
             "identifiant": modele.identifiant,
@@ -88,6 +110,11 @@ def vues_modeles_locaux(
             "date": modele.date,
             "fichiers": modele.fichiers,
             "actif": en_cours and instantane.cible == modele.identifiant,
+            "motif_suppression": (
+                MOTIF_SUPPRESSION_ACTIF
+                if en_cours and instantane.cible == modele.identifiant
+                else motif
+            ),
         }
         for modele in inventaire
     )
