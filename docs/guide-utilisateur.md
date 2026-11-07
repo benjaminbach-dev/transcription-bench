@@ -150,7 +150,7 @@ Cette page ne permet pas d'envoyer des fichiers : vous les copiez vous-même dan
 1. Copiez un ou plusieurs audios dans le dossier `data/audio`, sous un nom simple, sans sous-dossier.
 2. Dans le navigateur, ouvrez la page **Audios** puis cliquez sur **Actualiser**.
 
-*Vous devez voir.* Chaque fichier est listé avec son format, sa taille et une durée indicative ; la colonne **Lecture** indique « lisible ». Vos audios ne quittent pas l'ordinateur.
+*Vous devez voir.* Chaque fichier est listé avec son format, sa taille en Mio ou Gio et une durée indicative ; la colonne **Lecture** indique « lisible ». Les tailles exactes en octets restent dans le détail « Tailles exactes des fichiers et dossier d'entrée ». Vos audios ne quittent pas l'ordinateur.
 
 *Si ce n'est pas le cas.* Voir « audio illisible » dans le [dépannage](#13-dépannage).
 

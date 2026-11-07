@@ -11,19 +11,27 @@
 {% if audios %}
 <div class="overflow-auto">
 <table>
-<tr><th>Fichier</th><th>Format</th><th>Durée indicative</th><th>Lecture</th></tr>
+<thead>
+<tr><th>Fichier</th><th>Format</th><th>Taille</th><th>Durée indicative</th><th>Lecture</th></tr>
+</thead>
+<tbody>
 {% for audio in audios %}
+{# Taille lisible en Mio/Gio au premier niveau, durée avec le formateur
+   commun : jamais d'octets bruts ni de secondes à trois décimales ici. Les
+   valeurs exactes restent dans le détail des tailles, plus bas. #}
 <tr>
 <td>{{ audio.nom }}</td>
 <td>{{ audio.format }}</td>
-<td>{% if audio.duree_indicative is not none %}{{ "%.2f"|format(audio.duree_indicative) }} s{% else %}inconnue{% endif %}</td>
+<td>{{ formater_taille_modele(audio.taille_octets) }}</td>
+<td>{% if audio.duree_indicative is not none %}{{ formater_duree_premier_niveau(audio.duree_indicative) }}{% else %}inconnue{% endif %}</td>
 <td>{% if audio.erreur %}{{ audio.erreur }}{% else %}lisible{% endif %}</td>
 </tr>
 {% endfor %}
+</tbody>
 </table>
 </div>
 <details>
-<summary>Tailles des fichiers et dossier d'entrée</summary>
+<summary>Tailles exactes des fichiers et dossier d'entrée</summary>
 <p class="prose">Dossier d'entrée : <strong>{{ dossier }}</strong></p>
 <dl class="prose">
 {% for audio in audios %}
@@ -32,9 +40,15 @@
 {% endfor %}
 </dl>
 </details>
-<p class="prose">La durée indicative est celle annoncée par l'en-tête du fichier. La durée de référence du RTF est la durée réellement décodée, mesurée au moment de l'exécution ; les deux valeurs sont consignées séparément.</p>
-<p class="prose">Un fichier illisible reste listé avec son erreur : les autres fichiers ne sont pas interrompus. Un fichier au bon format mais dont le nom ou la cible est refusé reste listé avec l'erreur « nom refusé » ; il n'est jamais proposé à une exécution. Un fichier sans aucun échantillon décodable est une erreur explicite au moment de l'exécution, et aucun RTF n'est alors calculé.</p>
 {% elif not erreur_dossier %}
 <p class="callout prose">Aucun fichier audio dans le dossier d'entrée. Déposez un fichier wav, mp3, m4a, ogg, opus ou flac dans ce dossier, puis actualisez cette page.</p>
 {% endif %}
+{# Aide unique de la page, au même format que celles d'Exécutions et de
+   Moteurs : un seul accordéon, une explication par thème. #}
+<details>
+<summary>Aide : formats, tailles et fichiers refusés</summary>
+<p class="prose"><strong>Durées.</strong> La durée indicative est celle annoncée par l'en-tête du fichier. La durée de référence du RTF est la durée réellement décodée, mesurée au moment de l'exécution ; les deux valeurs sont consignées séparément.</p>
+<p class="prose"><strong>Tailles.</strong> Les tailles de fichier s'affichent en Mio ou Gio, unités binaires (1 Mio = 2²⁰ octets) ; les valeurs exactes en octets restent accessibles dans le détail.</p>
+<p class="prose"><strong>Fichiers refusés ou illisibles.</strong> Un fichier illisible reste listé avec son erreur : les autres fichiers ne sont pas interrompus. Un fichier au bon format mais dont le nom ou la cible est refusé reste listé avec l'erreur « nom refusé » ; il n'est jamais proposé à une exécution. Un fichier sans aucun échantillon décodable est une erreur explicite au moment de l'exécution, et aucun RTF n'est alors calculé.</p>
+</details>
 {% endblock %}

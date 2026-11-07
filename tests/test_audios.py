@@ -375,7 +375,10 @@ class PageAudiosTest(SocleAudiosTest):
 
         self.assertNotIn("Fonctionnalité non disponible", corps)
         self.assertIn("ok.wav", corps)
-        self.assertIn("0.50 s", corps)
+        # Durée avec le formateur commun de premier niveau : virgule décimale
+        # française, jamais trois décimales (tâche 5.3).
+        self.assertIn("0,5 s", corps)
+        self.assertNotIn("0.50 s", corps)
         self.assertIn("zero.wav", corps)
         self.assertIn("illisible.wav", corps)
         self.assertIn("lecture impossible", corps)

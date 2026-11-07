@@ -24,14 +24,16 @@
 <details>
 <summary>Versions installées</summary>
 {% if moteur.date_installation %}
-<p class="prose">Installé le : {{ moteur.date_installation }}</p>
+{# Date courte dans le détail, horodatage consigné conservé à côté : la
+   valeur brute n'est pas perdue, elle n'est plus mise en avant. #}
+<p class="prose">Installé le {{ formater_date_courte(moteur.date_installation) }} <small>(horodatage consigné : {{ moteur.date_installation }})</small></p>
 {% endif %}
 {% if moteur.versions %}
 <p class="prose">Versions contrôlées dans l'environnement :
 {% for nom, version in moteur.versions %}{{ nom }} {% if version %}{{ version }}{% else %}(version non disponible){% endif %}{% if not loop.last %}, {% endif %}{% endfor %}
 </p>
 {% else %}
-<p class="prose">Aucune version contrôlée dans l'environnement de ce moteur.</p>
+<p class="prose">Aucune version contrôlée dans cet environnement.</p>
 {% endif %}
 <p class="prose"><a href="{{ url_for('journal_moteur', identifiant=moteur.identifiant) }}">Consulter le journal d'installation</a></p>
 </details>
@@ -46,5 +48,15 @@
 </article>
 {% endfor %}
 </div>
-<p class="prose">Un moteur réel est installable seulement si son verrou de dépendances est présent. Cette action crée son environnement isolé et contrôle ses imports ; le démarrage du serveur ne l'installe pas. Le serveur de développement reste réservé au moteur factice, sans moteur réel ni poids. Le moteur factice ne charge aucun modèle et ne produit que des textes et mesures simulés.</p>
+{# Limitation de l'hôte, visible sans ouvrir l'aide : le serveur de
+   développement ne propose que le moteur factice. Sa nature simulée est déjà
+   écrite une seule fois, sur sa carte, par le service. #}
+<p class="prose">Le serveur de développement reste réservé au moteur factice, sans moteur réel ni poids.</p>
+{# Aide unique de la page, au même format que celle d'Exécutions : un seul
+   accordéon, une explication par thème, aucune répétition dans les cartes. #}
+<details>
+<summary>Aide : conditions et journal d'installation</summary>
+<p class="prose"><strong>Conditions.</strong> Un moteur réel n'est installable que si son verrou de dépendances est présent : l'installation crée son environnement isolé et contrôle ses imports, sans télécharger de poids de modèle.</p>
+<p class="prose"><strong>Journal.</strong> Chaque installation consigne son journal, consultable depuis la carte du moteur, y compris après un échec ; le motif de l'échec reste affiché sur la carte, sans ouvrir ce journal.</p>
+</details>
 {% endblock %}
