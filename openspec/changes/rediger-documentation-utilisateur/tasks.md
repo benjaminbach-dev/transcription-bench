@@ -13,6 +13,7 @@
 - [x] 2.4 Réduire `README.md` (moins de soixante lignes) avec liens vers le guide et la documentation technique
 - [ ] 2.5 Renseigner pour chaque procédure son niveau de vérification (Linux daté, CI Windows, non vérifié)
 - [x] 2.6 Mettre à jour `docs/rapport-livraison.md` (la ligne qui cite « README.md à jour » comme preuve de la documentation de lancement) pour renvoyer au guide
+- [ ] 2.7 Renvoi du change `habiller-interface-sumi` (tâche 8.11) : `docs/guide-utilisateur.md` annonce encore un rappel de non-validation clinique sur l'accueil (lignes 5 et 138) alors que le bandeau a été retiré du squelette (lot 5, 2026-11-04) ; corriger au fil de la rédaction, en conservant l'avertissement global du prototype
 
 ## 3. Contrôles automatiques
 

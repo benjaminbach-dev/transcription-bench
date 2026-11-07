@@ -1,7 +1,7 @@
 ## 1. Préalables
 
 - [x] 1.1 Archivage de `add-benchmark-prototype` : fait le 2026-11-03 (`openspec/specs/` existe ; modification et renommage ont leur cible)
-- [ ] 1.2 Mettre à jour `AGENTS.md` (règle « HTML sans CSS ni JavaScript » → « sans JavaScript, avec feuilles de style locales ») après relecture du propriétaire, puis demander /reload : à faire avant tout code, sinon l'implémentation enfreint la consigne actuelle
+- [x] 1.2 Mettre à jour `AGENTS.md` (règle « HTML sans CSS ni JavaScript » → « sans JavaScript, avec feuilles de style locales ») après relecture du propriétaire, puis demander /reload : à faire avant tout code, sinon l'implémentation enfreint la consigne actuelle — fait : fichier mis à jour puis `/reload` effectué (la règle en vigueur dans les sessions suivantes est « HTML sans JavaScript, avec feuilles de style locales ») ; relecture validée par le propriétaire en session du 2026-11-07
 - [x] 1.3 Ajouter `.gitattributes` déclarant `sumi.min.css` sans conversion de fin de ligne (`-text`)
 
 ## 2. Ressources figées
@@ -43,7 +43,7 @@
 ## 7. Documentation et clôture
 
 - [x] 7.1 Corriger les mentions « sans CSS » du README
-- [ ] 7.2 À l'archivage : corriger à la main le `## Purpose` de `openspec/specs/local-web-interface/spec.md` (« sans CSS ni JavaScript ») ; consigner en mémoire projet la décision (Sumi.css + Flexoki, bouton `danger` en couleur, pas de footer de page) et la provenance
+- [x] 7.2 À l'archivage : corriger à la main le `## Purpose` de `openspec/specs/local-web-interface/spec.md` (« sans CSS ni JavaScript ») ; consigner en mémoire projet la décision (Sumi.css + Flexoki, bouton `danger` en couleur, pas de footer de page) et la provenance — fait à l'archivage du 2026-11-07
 
 ## 8. Lot 5 — retrait du bandeau clinique, cartes et accordéons natifs (2026-11-04)
 
@@ -56,6 +56,6 @@
 - [x] 8.7 Refondre `accueil.html` en grille de cartes par section, chemins de dossiers en accordéon ouvert avec le bouton de vérification ; `moteurs.html` en cartes (versions et journal en accordéon) ; `operation.html` en carte d'état, début/fin et journal en accordéon (journal ouvert si l'opération est en cours, échouée ou interrompue)
 - [x] 8.8 Tests d'accordéons dans `tests/test_habillage.py` : `summary` sans titre, lien ni bouton ; aucun `pre`, bouton, encart `warning`/`danger` ni `role="status"` dans un `details` fermé ; journal ouvert pendant une opération ; amendement du test de squelette (`header`/`footer` de cartes dans un `article`)
 - [x] 8.9 Tests ciblés sous Linux, sans réseau : `tests/test_habillage.py`, `tests/test_web.py`, `tests/test_resultats_web.py`, `tests/test_operation_web.py`, `tests/test_comparaison_web.py`, `tests/test_audios.py`, `tests/test_modeles_web.py`, `tests/test_executions.py`, `tests/test_feuilles.py`, `tests/test_hors_ligne.py`
-- [ ] 8.10 Vérification visuelle des cartes, grilles et accordéons (clair/sombre, 360 px et 1280 px, accordéon ouvert/fermé) par le navigator : **non faite**, aucun rendu visuel affirmé par ce lot
-- [ ] 8.11 À faire hors de ce change : `docs/guide-utilisateur.md` annonce encore un rappel de non-validation clinique sur l'accueil (changement `rediger-documentation-utilisateur`)
+- [x] 8.10 Vérification visuelle des cartes, grilles et accordéons (clair/sombre, 360 px et 1280 px, accordéon ouvert/fermé) par le navigator : **non faite**, aucun rendu visuel affirmé par ce lot — clôturée sans observation navigator sur décision du propriétaire en session du 2026-11-07 (« c'est bon, coche, valide et archive ») ; la validation ciblée 6.5 (sombre + hover/focus, 2026-11-06, PC local à jour incluant le lot 5) et la recette 6.1/6.4 restent les seules observations visuelles consignées
+- [x] 8.11 À faire hors de ce change : `docs/guide-utilisateur.md` annonce encore un rappel de non-validation clinique sur l'accueil (changement `rediger-documentation-utilisateur`) — renvoi actif : couvert par les tâches de rédaction du change `rediger-documentation-utilisateur`, resté ouvert
 
