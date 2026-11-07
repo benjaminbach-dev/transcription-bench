@@ -158,6 +158,10 @@ from transcription_bench.paths import (
     preparer_dossiers_data,
 )
 from transcription_bench.resultats import MOTIF_IDENTIFIANT
+from transcription_bench.web.vues_modeles import (
+    formater_taille_modele,
+    vues_modeles_locaux,
+)
 from transcription_bench.web.vues_resultats import (
     vue_comparaison,
     vues_audios_detail,
@@ -210,7 +214,7 @@ MESSAGES_ACTION = {
         "qu'après succès complet."
     ),
     "modele-deja-present": "Ce modèle est déjà présent : aucun téléchargement n'a été lancé.",
-    "modele-supprime": "Modèle local supprimé ; les résultats déjà produits restent consultables.",
+    "modele-supprime": "Modèle local supprimé.",
 }
 
 
@@ -362,6 +366,7 @@ def create_app(config: ConfigApplication, services: ServicesApplication) -> Flas
         formater_duree_premier_niveau=formater_duree_premier_niveau,
         formater_memoire_premier_niveau=formater_memoire_premier_niveau,
         formater_pourcentage_premier_niveau=formater_pourcentage_premier_niveau,
+        formater_taille_modele=formater_taille_modele,
     )
     application.extensions[NOM_CHAMP_JETON] = jeton
     hotes = frozenset(f"{adresse}:{config.port}" for adresse in HOTES_AUTORISES)
@@ -833,14 +838,23 @@ def _enregistrer_routes(
 
     @application.get("/modeles")
     def modeles() -> str:
+        """Inventaire local d'abord, ajout secondaire après (tâche 5.1).
+
+        L'inventaire des modèles prêts est le premier contenu fonctionnel de la
+        page ; l'ajout (vérification puis téléchargement) vient ensuite. Chaque
+        modèle prêt porte la référence locale déjà acceptée en GET par
+        `/executions`, pour l'action « Utiliser », et l'état `actif` d'un modèle
+        visé par l'opération en cours. Aucune lecture n'écrit de fichier.
+        """
         resultat = service_modeles.dernier_resultat()
         try:
             inventaire = service_modeles.inventaire()
         except ValeurRefusee:
             inventaire = ()
+        instantane = services.creneau.instantane()
         return render_template(
             "modeles.html",
-            modeles=inventaire,
+            modeles=vues_modeles_locaux(inventaire, instantane),
             moteurs=service_modeles.moteurs_disponibles(),
             resultat=resultat,
             empreinte=(
@@ -848,7 +862,7 @@ def _enregistrer_routes(
                 if resultat is not None and resultat.accepte
                 else None
             ),
-            instantane=services.creneau.instantane(),
+            instantane=instantane,
             libelles_types=LIBELLES_TYPES,
             message=_message_action(),
         )

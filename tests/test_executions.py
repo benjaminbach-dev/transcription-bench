@@ -1157,13 +1157,21 @@ class PreparationUniqueTest(SocleWebTest):
         self.assertNotIn('name="audios" value="z.wav"', corps)
 
     def test_audio_absent_annonce_le_defaut(self) -> None:
+        # Omission d'audio alors que le modèle est nommé (lien « Utiliser » de
+        # la page Modèles, tâche 5.1) : choix incomplet, pas valeur périmée.
+        # Comme l'omission de `threads`, le repli est annoncé dans le bandeau
+        # neutre et la page est rendue en 200 ; le 400 reste réservé aux
+        # valeurs nommées périmées ou incohérentes.
         reponse = self.get(
             self.scenario({"modele": self.reference(), "moteur": "moteur-de-test"})
         )
+        corps = html.unescape(reponse.get_data(as_text=True))
 
-        self.assertEqual(reponse.status_code, 400)
-        self.assertIn(
-            "Aucun audio sélectionné", reponse.get_data(as_text=True)
+        self.assertEqual(reponse.status_code, 200)
+        self.assertIn("Aucun audio n'était sélectionné", corps)
+        self.assertNotIn(
+            '<p class="callout warning prose" role="alert">Aucun audio',
+            corps,
         )
 
     def test_moteur_incoherent_refuse_et_moteur_de_la_reference_retenu(self) -> None:

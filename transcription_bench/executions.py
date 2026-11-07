@@ -128,8 +128,11 @@ MESSAGE_AUDIO_INCOHERENT = (
     "Audio choisi absent de la liste des audios lisibles ou fourni deux fois : "
     "seuls les audios lisibles sont conservés."
 )
+#: Annonce neutre (bandeau `reinitialisation`, page rendue en 200) et non un
+#: refus : la demande nommait un modèle sans audio, le défaut s'applique.
 MESSAGE_AUDIO_AUCUN = (
-    "Aucun audio sélectionné : le premier audio lisible est retenu par défaut."
+    "Aucun audio n'était sélectionné dans la demande : le premier audio lisible "
+    "est retenu par défaut."
 )
 
 #: Messages bornés de la conservation des réglages avancés (design D4) : les
@@ -458,10 +461,15 @@ class ConfigurationExecutions:
         (`applicable` faux) quand aucun modèle exécutable ou aucun audio lisible
         n'est disponible, pour que la page remplace les contrôles inapplicables.
 
-        Une valeur périmée, incohérente ou incomplète n'échoue pas : elle est
-        remplacée par le choix applicable (modèle par défaut, moteur déclaré
-        par la référence, audios lisibles) et le remplacement est consigné dans
-        `notice`, message fixe et borné. Le moteur demandé ne peut jamais
+        Une valeur périmée ou incohérente n'échoue pas : elle est remplacée par
+        le choix applicable (modèle par défaut, moteur déclaré par la référence,
+        audios lisibles) et le remplacement est consigné dans `notice`, message
+        fixe et borné, que la route GET présente avec le statut de refus 400.
+        Une simple omission — aucun audio nommé alors que le modèle l'est — est
+        au contraire un choix incomplet, pas une valeur périmée : le repli sur
+        le premier audio lisible est annoncé dans `reinitialisation`, bandeau
+        neutre rendu en 200, pour que l'action « Utiliser » de la page Modèles
+        (tâche 5.1) mène à une préparation sans encart d'erreur. Le moteur demandé ne peut jamais
         contredire la référence : celle-ci reste la source de vérité.
 
         `source`, `threads` et `reglages` étendent cette lecture aux réglages
@@ -477,6 +485,7 @@ class ConfigurationExecutions:
         executables = tuple(propose for propose in proposes if propose.executable)
         lisibles = self.audios_proposables()
         notices: list[str] = []
+        annonce_audio: str | None = None
         changement_moteur = None
         choisi: ModelePropose | None = None
         if modele is not None:
@@ -497,7 +506,9 @@ class ConfigurationExecutions:
             notices.append(MESSAGE_AUDIO_INCOHERENT)
         if not gardes and lisibles:
             if modele is not None:
-                notices.append(MESSAGE_AUDIO_AUCUN)
+                # Omission d'audio, pas valeur périmée : annonce neutre (200),
+                # jamais l'encart d'erreur réservé aux valeurs nommées invalides.
+                annonce_audio = MESSAGE_AUDIO_AUCUN
             gardes.append(lisibles[0].nom)
         if choisi is not None and moteur is not None and moteur != choisi.moteur:
             compatible = next(
@@ -512,7 +523,7 @@ class ConfigurationExecutions:
                 notices.append(MESSAGE_MOTEUR_INCOHERENT)
         valeurs_threads = self.threads_par_defaut()
         valeurs_reglages: tuple[tuple[Reglage, int | bool | str], ...] = ()
-        reinitialisation = None
+        reinitialisation = annonce_audio
         if choisi is not None:
             retenues = _retenir_valeurs(
                 choisi,
@@ -526,7 +537,13 @@ class ConfigurationExecutions:
             valeurs_threads = retenues.threads
             valeurs_reglages = retenues.reglages
             reinitialisation = " ".join(
-                texte for texte in (changement_moteur, retenues.reinitialisation) if texte
+                texte
+                for texte in (
+                    changement_moteur,
+                    retenues.reinitialisation,
+                    reinitialisation,
+                )
+                if texte
             ) or None
             if retenues.notice is not None:
                 notices.append(retenues.notice)

@@ -7,17 +7,74 @@
 {% if message %}
 <p class="callout success prose" role="status">{{ message }}</p>
 {% endif %}
-<p class="prose">La vérification lit seulement les métadonnées du dépôt et les petits fichiers de configuration ; le téléchargement est une action explicite, à la révision exacte vérifiée, exécutée seule dans le créneau d'opération longue. Aucun poids n'est téléchargé au lancement du serveur.</p>
 {% if instantane.arrete %}
 <p class="callout warning prose">Arrêt du serveur demandé : aucune vérification, aucun téléchargement et aucune suppression ne sont acceptés.</p>
 {% endif %}
 {% if instantane.etat == 'en_cours' %}
 <p class="callout prose">Une opération « {{ libelles_types[instantane.type_operation] }} » est en cours{% if instantane.cible %} : {{ instantane.cible }}{% endif %}. <a href="{{ url_for('executions') ~ '#operation' }}">Consulter l'opération</a></p>
 {% endif %}
+{# Inventaire d'abord (spec « Inventaire des modèles locaux ») : nom, moteur,
+   variante utile, taille lisible et action « Utiliser » au premier niveau ; la
+   révision, l'identifiant complet, les fichiers et la suppression restent dans
+   le détail de chaque modèle. L'ajout vient après, sans précéder l'inventaire. #}
+<h2>Modèles locaux prêts</h2>
+{% if modeles %}
+<div class="grid cols-2">
+{% for modele in modeles %}
 <article>
 <header>
-<h2>Vérifier un dépôt</h2>
+<h3>{{ modele.identifiant }}</h3>
 </header>
+<p class="prose">Moteur : {{ modele.moteur }} · famille : {{ modele.famille }}{% if modele.variante %} · variante GGUF : {{ modele.variante }}{% endif %} · taille : {{ formater_taille_modele(modele.taille_disque) }}</p>
+<p class="prose"><a href="{{ url_for('executions', modele=modele.reference) }}">Utiliser</a> ce modèle pour préparer une exécution.</p>
+<details>
+<summary>Révision, fichiers et suppression</summary>
+<dl class="prose">
+<dt>Identifiant complet</dt>
+<dd>{{ modele.id_resolu }}</dd>
+<dt>Révision</dt>
+<dd>{{ modele.commit }}</dd>
+<dt>Famille</dt>
+<dd>{{ modele.famille }}</dd>
+<dt>Ajouté le</dt>
+<dd>{{ modele.date }}</dd>
+<dt>Taille sur disque</dt>
+<dd>{{ formater_taille_modele(modele.taille_disque) }}</dd>
+<dt>Taille distante totale</dt>
+<dd>{{ formater_taille_modele(modele.taille_distante) }}</dd>
+</dl>
+<p class="prose">Fichiers retenus :</p>
+<ul class="prose">
+{% for fichier in modele.fichiers %}
+<li>{{ fichier.nom }} : {{ formater_taille_modele(fichier.taille) }}</li>
+{% endfor %}
+</ul>
+{% if modele.actif %}
+<p class="prose">Ce modèle est visé par l'opération en cours : sa suppression reste indisponible jusqu'à sa fin.</p>
+<p class="prose"><button type="button" aria-disabled="true">Supprimer ce modèle local</button></p>
+{% else %}
+<form method="post" action="{{ url_for('supprimer_modele') }}">
+<input type="hidden" name="jeton_csrf" value="{{ jeton_csrf }}">
+<input type="hidden" name="moteur" value="{{ modele.moteur }}">
+<input type="hidden" name="cle" value="{{ modele.cle }}">
+<p class="prose"><button type="submit" class="danger">Supprimer ce modèle local</button></p>
+</form>
+{% endif %}
+</details>
+</article>
+{% endfor %}
+</div>
+{% else %}
+<p class="callout prose">Aucun modèle local prêt.{% if moteurs %} <a href="#ajouter-un-modele">Ajouter un modèle</a> pour vérifier un dépôt, puis le télécharger explicitement.{% else %} L'ajout suppose d'abord un moteur réel installé : voir <a href="{{ url_for('moteurs') }}">Moteurs</a>.{% endif %}</p>
+{% endif %}
+{# Une seule explication générale sur la page : elle n'est répétée ni dans
+   chaque modèle ni dans l'espace d'ajout. #}
+<p class="prose">Un modèle prêt est un dossier local complet, vérifié à une révision figée ; un dossier incomplet, interrompu ou sans inventaire cohérent n'est jamais proposé. L'ajout commence par vérifier un dépôt : seules les métadonnées et les petits fichiers de configuration sont lus, aucun poids n'est téléchargé, et le téléchargement reste une action explicite exécutée seule dans le créneau d'opération longue. La suppression retire les fichiers locaux du modèle ; les transcriptions et mesures déjà consignées ne sont pas modifiées.</p>
+<article id="ajouter-un-modele">
+<header>
+<h2>Ajouter un modèle</h2>
+</header>
+<h3>Vérifier un dépôt</h3>
 {% if moteurs %}
 <form method="post" action="{{ url_for('verifier_modele') }}">
 <input type="hidden" name="jeton_csrf" value="{{ jeton_csrf }}">
@@ -30,7 +87,6 @@
 <p class="prose"><label>Révision facultative <input type="text" name="revision" value=""></label></p>
 <p class="prose"><button type="submit" class="secondary">Vérifier la compatibilité sans télécharger</button></p>
 </form>
-<p class="prose">La vérification ne télécharge aucun poids et ne rend aucun modèle prêt. Une révision vide laisse le dépôt résoudre sa branche par défaut, puis le commit exact est figé pour la suite.</p>
 {% else %}
 <p class="prose">Aucun moteur réel n'est installé sur ce poste : la vérification et le téléchargement de modèles restent indisponibles. L'installation d'un moteur doit d'abord être validée sur un PC ; le serveur de développement n'installe aucun moteur réel et ne télécharge aucun poids. Le moteur factice ne charge aucun modèle et n'a donc pas besoin de dépôt à vérifier.</p>
 {% endif %}
@@ -65,6 +121,7 @@
 </form>
 {% endif %}
 {% else %}
+{# Une erreur de vérification reste visible, hors de tout panneau fermé. #}
 <p class="callout danger prose">Dépôt refusé{% if resultat.raison %} ({{ resultat.raison }}){% endif %} : {{ resultat.message }}</p>
 {% if resultat.fichiers_manquants %}
 <p class="callout danger prose">Fichiers manquants : {{ resultat.fichiers_manquants | join(', ') }}.</p>
@@ -91,39 +148,4 @@
 {% endif %}
 {% endif %}
 </article>
-<h2>Modèles locaux prêts</h2>
-{% if modeles %}
-<div class="grid cols-2">
-{% for modele in modeles %}
-<article>
-<header>
-<h3>{{ modele.identifiant }}</h3>
-</header>
-<p class="prose">Moteur : {{ modele.moteur }} ; famille : {{ modele.famille }}{% if modele.fichier_gguf %} ; variante GGUF : {{ modele.fichier_gguf }}{% endif %}.</p>
-<details>
-<summary>Fichiers du modèle et identifiants</summary>
-<p class="prose">Identifiant canonique : {{ modele.id_resolu }} ; commit : {{ modele.commit }} ; ajouté le : {{ modele.date }}.</p>
-<p class="prose">Fichiers retenus :</p>
-<ul class="prose">
-{% for fichier in modele.fichiers %}
-<li>{{ fichier.nom }} : {% if fichier.taille is not none %}{{ fichier.taille }} octets{% else %}taille distante inconnue{% endif %}</li>
-{% endfor %}
-</ul>
-<p class="prose">Taille sur disque : {% if modele.taille_disque is not none %}{{ modele.taille_disque }} octets{% else %}inconnue{% endif %} ; taille distante totale : {% if modele.taille_distante is not none %}{{ modele.taille_distante }} octets{% else %}inconnue{% endif %}.</p>
-</details>
-<footer>
-<form method="post" action="{{ url_for('supprimer_modele') }}">
-<input type="hidden" name="jeton_csrf" value="{{ jeton_csrf }}">
-<input type="hidden" name="moteur" value="{{ modele.moteur }}">
-<input type="hidden" name="cle" value="{{ modele.cle }}">
-<p class="prose"><button type="submit" class="danger">Supprimer ce modèle local</button></p>
-</form>
-</footer>
-<p class="prose">La suppression retire les fichiers de ce modèle ; les résultats déjà produits restent consultables.</p>
-</article>
-{% endfor %}
-</div>
-{% else %}
-<p class="callout prose">Aucun modèle local prêt. Un dossier incomplet, interrompu ou sans inventaire cohérent n'est jamais proposé comme prêt.</p>
-{% endif %}
 {% endblock %}
