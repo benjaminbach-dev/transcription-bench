@@ -4,7 +4,7 @@
  * Quatre rôles seulement (design D4 et D6 de refondre-parcours-resultats) :
  *   1. retours à la ligne, coupures et largeur minimale des transcriptions ;
  *   2. surcharge des jetons de COULEUR de Sumi par la palette Flexoki ;
- *   3. couleur des boutons d'action destructrice (classe `danger`) ;
+ *   3. couleurs des boutons destructifs et inactifs, sans opacité ;
  *   4. composant compact de résultat (macro `composants.html`) : jetons de
  *      taille, de couleur et de grille `--s-resultat-*`, et règles `resultat-*`.
  *
@@ -176,6 +176,13 @@ th pre {
 button.danger {
   --s-btn: var(--s-danger);
   --s-btn-on: var(--s-on-primary);
+}
+
+/* État inactif sans opacité ni perte du focus du bouton natif. */
+button[aria-disabled="true"] {
+  opacity: 1;
+  --s-btn: var(--s-code-bg);
+  --s-btn-on: var(--s-text);
 }
 
 /* 4. Composant compact de résultat (tâche 1.3, design D2 et D6). Tailles et

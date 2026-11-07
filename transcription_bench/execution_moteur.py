@@ -546,13 +546,47 @@ class ExecutionMoteur:
         self._arret_demande = False
         self._arret_serveur = False
         self._derniere: ResultatExecution | None = None
+        #: Association publiée du résultat consigné et de l'opération admise
+        #: (`generation`, identifiant du résultat). Écrite dès la création de la
+        #: consignation et conservée après la clôture ; jamais exposée pour une
+        #: autre génération, donc jamais pour une opération suivante.
+        self._resultat_publie: tuple[int, str] | None = None
 
     # -- état observable (routes, tests, tâches 6.4 à 6.6) -------------------
 
     def derniere_execution(self) -> ResultatExecution | None:
-        """Dernière exécution close, ou `None` si aucune n'est terminée."""
+        """Dernière exécution close, ou `None` si aucune n'est terminée.
+
+        Vue de la dernière issue seulement : elle ne dit rien de l'exécution
+        active. Le lien vers le résultat consigné, y compris pendant
+        l'exécution, se lit par `identifiant_resultat`.
+        """
         with self._verrou:
             return self._derniere
+
+    def identifiant_resultat(self, generation: int | None) -> str | None:
+        """Identifiant du résultat consigné par l'opération admise `generation`.
+
+        Vue synchronisée du lien résultat/opération du design D5 : l'appelant
+        lit l'identité d'abord (`CreneauOperations.instantane().generation`),
+        puis demande l'identifiant associé à cette génération. L'association est
+        publiée sous verrou dès que la consignation existe : le lien est donc
+        disponible pendant l'exécution comme après sa clôture, alors que
+        `derniere_execution` ne décrit que le cas clos.
+
+        Aucune invalidation par rappel n'est nécessaire : chaque admission du
+        créneau change de génération, et l'association n'est jamais renvoyée
+        pour une génération différente. Une installation, un téléchargement, une
+        vérification ou une exécution échouée avant la création de la
+        consignation ne reçoit donc aucun identifiant, même si une exécution
+        antérieure a consigné des résultats : `None` est renvoyé.
+        """
+        with self._verrou:
+            publie = self._resultat_publie
+        if publie is None or generation is None:
+            return None
+        generation_publiee, identifiant = publie
+        return identifiant if generation_publiee == generation else None
 
     def en_cours(self) -> bool:
         """Vrai si une exécution prépare, exécute ou collecte encore son moteur."""
@@ -648,6 +682,8 @@ class ExecutionMoteur:
         La consignation des résultats est propre à cette exécution : créée avant
         toute préparation, elle est close dans tous les cas (y compris une issue
         imprévue), une fois le processus moteur terminé et son journal fermé.
+        Son identifiant est publié pour l'opération admise dès sa création, par
+        `_publier_resultat` (voir `identifiant_resultat`).
         """
         processus = self._processus_reserve()
         resultat: ResultatExecution | None = None
@@ -665,6 +701,10 @@ class ExecutionMoteur:
             if consignateur is None:
                 resultat = self._resultat_avant_lancement(demande, erreur_stockage)
             else:
+                # Dès que le dossier de résultat existe, l'identifiant est publié
+                # pour cette opération admise : le suivi peut y renvoyer avant la
+                # clôture, sans jamais emprunter celui d'une exécution antérieure.
+                self._publier_resultat(travailleur.generation, consignateur.identifiant)
                 resultat = self._executer(
                     demande, travailleur, dossier, processus, consignateur
                 )
@@ -1269,6 +1309,17 @@ class ExecutionMoteur:
             self._processus_moteur = None
             self._travailleur = None
             self._derniere = resultat
+
+    def _publier_resultat(self, generation: int, identifiant: str) -> None:
+        """Associe le résultat consigné à l'opération admise, sous verrou.
+
+        Une publication remplace la précédente : dès qu'une nouvelle exécution
+        crée sa consignation, l'ancienne association n'est plus exposée, sans
+        comparaison de type ni de début. Le verrou du moteur est pris seul, sans
+        appel au créneau sous ce verrou : aucun ordre de verrous croisé.
+        """
+        with self._verrou:
+            self._resultat_publie = (generation, identifiant)
 
     def _arret_demande_actif(self) -> bool:
         with self._verrou:

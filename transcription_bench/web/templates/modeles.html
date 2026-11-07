@@ -12,7 +12,7 @@
 <p class="callout warning prose">Arrêt du serveur demandé : aucune vérification, aucun téléchargement et aucune suppression ne sont acceptés.</p>
 {% endif %}
 {% if instantane.etat == 'en_cours' %}
-<p class="callout prose">Une opération « {{ libelles_types[instantane.type_operation] }} » est en cours{% if instantane.cible %} : {{ instantane.cible }}{% endif %}. <a href="{{ url_for('operation') }}">Consulter l'opération</a></p>
+<p class="callout prose">Une opération « {{ libelles_types[instantane.type_operation] }} » est en cours{% if instantane.cible %} : {{ instantane.cible }}{% endif %}. <a href="{{ url_for('executions') ~ '#operation' }}">Consulter l'opération</a></p>
 {% endif %}
 <article>
 <header>
@@ -126,5 +126,4 @@
 {% else %}
 <p class="callout prose">Aucun modèle local prêt. Un dossier incomplet, interrompu ou sans inventaire cohérent n'est jamais proposé comme prêt.</p>
 {% endif %}
-<p class="prose"><a href="{{ url_for('accueil') }}">Retour à l'accueil</a></p>
 {% endblock %}

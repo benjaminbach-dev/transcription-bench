@@ -95,6 +95,7 @@ PROPRIETES_RESULTAT = frozenset(
 PROPRIETES_AUTORISEES = frozenset(
     {
         "white-space",
+        "opacity",  # neutralisation à 1 du seul bouton aria-disabled (testée)
         "overflow-wrap",
         "min-width",
         "--s-btn",
@@ -424,12 +425,14 @@ class RoutesFeuillesTest(SocleFeuillesTest):
 
                 self.assertTrue(corps.decode("utf-8"))
 
-    def test_accueil_relie_les_deux_feuilles_servies(self) -> None:
+    def test_pages_relient_les_deux_feuilles_servies(self) -> None:
         # Lot 2 : les gabarits se relient aux deux feuilles servies, dans
         # l'ordre `/sumi.css` puis `/app.css`. Le contrôle précis des `link`
         # est dans `tests/test_habillage.py` ; ici, on vérifie que les deux
         # chemins liés sont bien ceux que l'application sert.
-        corps = self.client.get("/", base_url=self.base_url()).get_data(as_text=True)
+        corps = self.client.get("/resultats", base_url=self.base_url()).get_data(
+            as_text=True
+        )
         page = assert_html_seul(self, corps)
 
         for _, chemin in page.feuilles:
@@ -600,15 +603,31 @@ class FeuilleComplementaireTest(SocleFeuillesTest):
         self.assertIn("LICENSE-Flexoki", note)
 
     def test_bouton_destructeur_en_couleur_de_danger(self) -> None:
-        couples = declarations(self.css)
-        regles = {
-            propriete: valeur
-            for propriete, valeur in couples
-            if propriete in ("--s-btn", "--s-btn-on")
-        }
+        bouton = regles(self.css)["button.danger"]
+        self.assertEqual(
+            bouton,
+            {"--s-btn": "var(--s-danger)", "--s-btn-on": "var(--s-on-primary)"},
+        )
 
-        self.assertIn("button.danger", self.css)
-        self.assertEqual(regles, {"--s-btn": "var(--s-danger)", "--s-btn-on": "var(--s-on-primary)"})
+    def test_bouton_inactif_contraste_sans_opacite(self) -> None:
+        bouton = regles(self.css)['button[aria-disabled="true"]']
+        self.assertEqual(
+            bouton,
+            {"opacity": "1", "--s-btn": "var(--s-code-bg)",
+             "--s-btn-on": "var(--s-text)"},
+        )
+        self.assertEqual(
+            [selecteur for selecteur, valeurs in regles(self.css).items()
+             if "opacity" in valeurs],
+            ['button[aria-disabled="true"]'],
+        )
+        for nom, partie in (("clair", self.clair), ("sombre", self.sombre)):
+            with self.subTest(theme=nom):
+                jetons = jetons_couleur(partie)
+                self.assertGreaterEqual(
+                    contraste(jetons["--s-text"], jetons["--s-code-bg"]),
+                    CONTRASTE_MINIMAL,
+                )
 
     def test_retours_a_la_ligne_des_contenus_longs(self) -> None:
         couples = declarations(self.css)

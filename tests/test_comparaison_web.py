@@ -1597,16 +1597,15 @@ class ListeParResultatWebTest(SocleWebTest):
         self.assertNotIn(IDENTIFIANT_QUATRIEME, comparaisons)
 
         # L'historique global reste complet, avec lien de détail et ordre
-        # décroissant, y compris pour ces exécutions.
-        historique = self.page("/resultats")
+        # décroissant, y compris pour ces exécutions. Il est tenu par
+        # Exécutions depuis la tâche 3.1.
+        historique = self.page("/executions")
         for identifiant in (
             IDENTIFIANT,
             IDENTIFIANT_TIERS,
             IDENTIFIANT_QUATRIEME,
         ):
             self.assertIn(f'href="/resultats/{identifiant}"', historique)
-        # L'ordre se lit dans l'historique complet seulement : l'identifiant
-        # exploitable figure aussi dans son groupe, plus haut dans la page.
         historique = historique[historique.index("Historique complet") :]
         self.assertLess(
             historique.index(IDENTIFIANT_QUATRIEME), historique.index(IDENTIFIANT_TIERS)

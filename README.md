@@ -26,6 +26,8 @@ uv run --locked transcription-bench
 ```
 
 Elle affiche une adresse (`http://127.0.0.1:8765`) à ouvrir dans votre navigateur.
+L'interface s'ouvre sur **Résultats** et propose six rubriques, dans cet ordre :
+**Résultats**, **Comparaisons**, **Exécutions**, **Modèles**, **Moteurs** et **Audios**.
 
 ## Pour les développeurs
 

@@ -92,16 +92,15 @@ CLASSES_COMPOSANT_RESULTAT = frozenset(
 )
 MOTIF_SELECTEUR_CLASSE = re.compile(r"\.([A-Za-z][\w-]*)")
 
-# Liens de la navigation commune, dans l'ordre exigé par la spec.
+# Liens de la navigation commune, dans l'ordre exigé par le design D1 : six
+# rubriques, sans Accueil ni Opération (redirigées depuis la tâche 3.1).
 LIENS_NAVIGATION = (
-    ("/", "Accueil"),
-    ("/audios", "Audios"),
-    ("/moteurs", "Moteurs"),
-    ("/modeles", "Modèles"),
-    ("/executions", "Exécutions"),
     ("/resultats", "Résultats"),
     ("/resultats/comparaison", "Comparaisons"),
-    ("/operation", "Opération"),
+    ("/executions", "Exécutions"),
+    ("/modeles", "Modèles"),
+    ("/moteurs", "Moteurs"),
+    ("/audios", "Audios"),
 )
 CHEMIN_NAVIGATION = ("html", "body", "header", "nav")
 CHEMIN_HEADER = ("html", "body", "header")
@@ -109,7 +108,7 @@ CHEMIN_HEADER = ("html", "body", "header")
 # Boutons destructeurs : seuls ceux-là portent la classe `danger`.
 BOUTONS_DESTRUCTEURS = {
     "modeles.html": "Supprimer ce modèle local",
-    "operation.html": "Arrêter l'exécution",
+    "executions.html": "Arrêter l'exécution",
 }
 
 # Design D7 : un seul `h1` (titre de la page dans `main`), sous-titres sans
@@ -248,7 +247,6 @@ class GabaritsTest(unittest.TestCase):
     def test_tous_les_gabarits_de_page_sont_analyses(self) -> None:
         attendus = {
             "base.html",
-            "accueil.html",
             "audios.html",
             "comparaison.html",
             "comparaisons.html",
@@ -257,7 +255,6 @@ class GabaritsTest(unittest.TestCase):
             "journal.html",
             "modeles.html",
             "moteurs.html",
-            "operation.html",
             "resultat.html",
             "resultats.html",
         }
@@ -368,8 +365,11 @@ class GabaritsTest(unittest.TestCase):
                 if 'role="status"' in ligne:
                     trouves += 1
                     with self.subTest(gabarit=nom, ligne=ligne.strip()):
-                        self.assertIn("callout", ligne)
-        self.assertEqual(trouves, 9)
+                        if 'data-champ="etat"' in ligne:
+                            self.assertEqual(nom, "executions.html")
+                        else:
+                            self.assertIn("callout", ligne)
+        self.assertEqual(trouves, 10)
 
     def test_classes_d_encart_seulement_sur_des_callouts(self) -> None:
         # D3 : `danger`, `warning` et `success` ne prennent effet que sur un
@@ -410,14 +410,12 @@ class GabaritsTest(unittest.TestCase):
 
     def test_bloc_page_courante_des_pages_de_premier_niveau(self) -> None:
         attendus = {
-            "accueil.html": "accueil",
             "audios.html": "audios",
             "moteurs.html": "moteurs",
             "modeles.html": "modeles",
             "executions.html": "executions",
             "resultats.html": "resultats",
             "comparaisons.html": "comparaisons",
-            "operation.html": "operation",
         }
         for nom, cle in attendus.items():
             with self.subTest(gabarit=nom):
@@ -519,7 +517,6 @@ class GabaritsTest(unittest.TestCase):
     def test_grille_utilisee_hors_de_main_et_des_tableaux(self) -> None:
         # Design D8 : les cartes se répartissent avec `.grid` et `.cols-N`.
         attendus = {
-            "accueil.html": "grid cols-3",
             "moteurs.html": "grid cols-2",
             "modeles.html": "grid cols-2",
         }
@@ -757,7 +754,7 @@ class HabillagePageTest(SocleWebTest):
                         chemin,
                     )
 
-    def test_aria_current_sur_les_huit_pages(self) -> None:
+    def test_aria_current_sur_les_six_pages(self) -> None:
         for chemin, libelle in LIENS_NAVIGATION:
             with self.subTest(chemin=chemin):
                 courants = self.page(chemin).courants()
@@ -815,7 +812,8 @@ class HabillagePageTest(SocleWebTest):
     def test_tableaux_dans_un_conteneur_defilant_rendus(self) -> None:
         self.ecrire_resultats_comparables()
         pages = {
-            "/resultats": self.page("/resultats"),
+            # L'historique technique a quitté Résultats pour Exécutions (3.1).
+            "/executions": self.page("/executions"),
             f"/resultats/{IDENTIFIANT_DETAIL}": self.page(
                 f"/resultats/{IDENTIFIANT_DETAIL}"
             ),
@@ -847,6 +845,12 @@ class HabillagePageTest(SocleWebTest):
                     continue
                 for tag, attributs in bloc.balises:
                     with self.subTest(chemin=chemin, resume=bloc.resume, balise=tag):
+                        # Diagnostic volontairement secondaire (D1), pas une
+                        # action de lancement ou d'arrêt à garder au premier plan.
+                        if (chemin == "/executions" and
+                                bloc.resume == "Emplacement des dossiers" and
+                                tag == "button"):
+                            continue
                         self.assertNotIn(tag, CONTENU_TOUJOURS_VISIBLE, bloc.resume)
                         classes = set((attributs.get("class") or "").split())
                         self.assertFalse(
@@ -854,21 +858,36 @@ class HabillagePageTest(SocleWebTest):
                         )
                         self.assertNotEqual(attributs.get("role"), "status")
 
-    def test_journal_ouvert_pendant_une_operation(self) -> None:
-        # Design D8 : le journal d'une opération en cours est ouvert d'emblée.
+    def test_diagnostics_secondaires_fermes_avec_verification_accessible(self) -> None:
+        page = self.pages_a_controler()["/executions"]
+        bloc = next(
+            bloc for bloc in analyser_details(page.corps).blocs
+            if bloc.resume == "Emplacement des dossiers"
+        )
+        self.assertFalse(bloc.ouvert)
+        self.assertIn("button", [tag for tag, _ in bloc.balises])
+        self.assertIn('action="/dossiers/verifier"', page.corps)
+
+    def test_journal_replie_pendant_une_operation(self) -> None:
+        # Design D5 : le résumé et l'arrêt restent visibles, le journal
+        # technique peut rester replié même pendant une opération en cours.
         fin = threading.Event()
         self.addCleanup(fin.set)
         self.creneau.demarrer(
             "execution", lambda travailleur: fin.wait(DELAI), cible="a.wav"
         )
 
-        blocs = analyser_details(self.page("/operation").corps).blocs
+        page = self.page("/executions")
+        blocs = analyser_details(page.corps).blocs
         journaux = [bloc for bloc in blocs if bloc.resume.startswith("Journal")]
 
         self.assertEqual(len(journaux), 1, [bloc.resume for bloc in blocs])
-        self.assertTrue(
-            journaux[0].ouvert, "journal fermé alors que l'opération est en cours"
+        self.assertFalse(
+            journaux[0].ouvert, "journal ouvert alors qu'il doit rester replié"
         )
+        self.assertIn("État : en cours", page.corps)
+        self.assertIn("Cible : a.wav", page.corps)
+        self.assertIn("Arrêter l'exécution", page.corps)
 
     def test_arret_execution_en_danger(self) -> None:
         fin = threading.Event()
@@ -877,7 +896,7 @@ class HabillagePageTest(SocleWebTest):
             "execution", lambda travailleur: fin.wait(DELAI), cible="a.wav"
         )
 
-        page = self.page("/operation")
+        page = self.page("/executions")
         boutons = [balise for balise in page.avec_classe("danger")]
 
         self.assertEqual(len(boutons), 1, boutons)

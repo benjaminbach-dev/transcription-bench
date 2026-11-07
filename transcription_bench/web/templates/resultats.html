@@ -1,5 +1,4 @@
 {% extends "base.html" %}
-{% import "formats.html" as formats %}
 {% import "composants.html" as composants %}
 {% block page_courante %}resultats{% endblock %}
 {% block titre %}Résultats — transcription-bench{% endblock %}
@@ -17,55 +16,8 @@
 {% for groupe in groupes %}
 {{ composants.groupe_resultats(groupe) }}
 {% endfor %}
-{% elif not erreur_dossier and not executions %}
-<p class="callout prose">Aucune exécution enregistrée pour l'instant. Une exécution apparaît ici dès que la page des exécutions en a lancé une ; les résultats déjà produits restent consultables même si le modèle local est supprimé ensuite.</p>
 {% elif not erreur_dossier %}
-<p class="callout prose">Aucun résultat exploitable à regrouper par audio : chaque transcription doit consigner une empreinte valide. L'historique complet reste consultable ci-dessous.</p>
+<p class="callout prose">Aucune transcription à regrouper par audio pour l'instant. Une exécution apparaît ici dès que la page Exécutions en a lancé une ; les résultats déjà produits restent consultables même si le modèle local est supprimé ensuite.</p>
 {% endif %}
-<details>
-<summary>Historique complet des exécutions ({{ executions | length }})</summary>
-<p class="prose small">Dossier des résultats : <strong>{{ dossier }}</strong>.</p>
-{% if executions %}
-<p class="prose small">De la plus récente à la plus ancienne, y compris les échecs, les interruptions et les résultats non interprétables. Chaque exécution exploitable ouvre son détail.</p>
-<div class="overflow-auto" tabindex="0" role="region" aria-label="Historique des exécutions">
-<table>
-<thead>
-<tr><th>Exécution</th><th>Créée le</th><th>Modèle</th><th>État</th><th>Marques</th></tr>
-</thead>
-<tbody>
-{% for execution in executions %}
-<tr>
-<td>{% if execution.exploitable %}<a href="{{ url_for('resultat_detail', identifiant=execution.identifiant) }}">{{ execution.identifiant }}</a>{% else %}{{ execution.identifiant }}{% endif %}</td>
-<td>{{ formats.afficher(execution.cree_le) }}</td>
-<td>{{ formats.afficher(execution.modele) }}</td>
-<td>{% if execution.exploitable %}{{ execution.libelle_etat }}{% if execution.partiel %} (résultats partiels){% endif %}{% else %}{{ execution.libelle_etat }} : {{ execution.motif }}{% endif %}</td>
-<td>{% if execution.marques is none %}indisponible{% elif execution.marques %}{{ execution.marques | join(', ') }}{% else %}aucune{% endif %}</td>
-</tr>
-{% endfor %}
-</tbody>
-</table>
-</div>
-<details>
-<summary>Moteur, audios traités et durée de chaque exécution</summary>
-<div class="overflow-auto" tabindex="0" role="region" aria-label="Mesures des exécutions">
-<table>
-<thead>
-<tr><th>Exécution</th><th>Moteur</th><th>Audios traités</th><th>Durée totale de l'opération</th></tr>
-</thead>
-<tbody>
-{% for execution in executions %}
-<tr>
-<td>{{ execution.identifiant }}</td>
-<td>{{ formats.afficher(execution.moteur) }}</td>
-<td>{% if execution.audios_traites is not none %}{{ execution.audios_traites }} sur {{ execution.audios_total }}{% else %}indisponible{% endif %}</td>
-<td>{{ formats.duree(execution.duree_operation_s) }}</td>
-</tr>
-{% endfor %}
-</tbody>
-</table>
-</div>
-</details>
-{% endif %}
-</details>
-<p class="prose"><a href="{{ url_for('accueil') }}">Retour à l'accueil</a></p>
+<p class="prose small">L'<a href="{{ url_for('executions') }}#historique">historique complet des exécutions</a> est tenu dans Exécutions, y compris les échecs et les résultats non interprétables.</p>
 {% endblock %}

@@ -125,8 +125,8 @@ le dossier courant. Elles sont exclues de Git.
 | `data/cache` | fichiers de travail décodés, créés à la demande et supprimés en fin d'exécution |
 
 `audio`, `models`, `engines` et `results` sont créés au démarrage ;
-`data/cache` ne l'est qu'au lancement d'une exécution. La page d'accueil affiche
-leur emplacement et leur présence.
+`data/cache` ne l'est qu'au lancement d'une exécution. La section **Dossiers de
+données** de la page `Exécutions` affiche leur emplacement et leur présence.
 
 ## Utilisation avec le moteur factice
 
@@ -138,11 +138,20 @@ leur emplacement et leur présence.
 4. `Exécutions` propose le moteur factice avec un **modèle synthétique** :
    aucun fichier, aucun poids, aucun téléchargement. Sélectionnez un ou
    plusieurs audios, le nombre de threads demandé, puis lancez.
-5. `Opération` affiche l'état de l'opération longue (une seule à la fois, sans
-   file d'attente) ; `Résultats` liste les exécutions enregistrées et le détail
-   de chaque transcription ; `Résultats > comparaison` regroupe les
-   transcriptions d'un **même fichier audio** repéré par son empreinte SHA-256
-   et les affiche côte à côte.
+5. `Exécutions` réunit l'état de l'opération longue (une seule à la fois, sans
+   file d'attente), la préparation d'une demande, l'historique technique et les
+   dossiers de données ; `Résultats` liste les transcriptions groupées par
+   audio et renvoie au détail de chacune ; `Résultats > comparaison` regroupe
+   les transcriptions d'un **même fichier audio** repéré par son empreinte
+   SHA-256 et les affiche côte à côte. Le résumé d'opération se met à jour par
+   la route fixe `GET /executions/etat` (JSON borné, `no-store`, sans jeton ni
+   journal) : une requête toutes les 3 s tant que l'opération est active, une
+   seule à la fois, suspendue si l'onglet est masqué, arrêtée à l'état terminal.
+   Une génération d'opération distingue les admissions, même à date et cible
+   identiques : si elle change, le suivi demande une actualisation plutôt que
+   mélanger le nouvel état avec l'ancien journal. Après l'état terminal, l'arrêt
+   devient sans objet (`aria-disabled` et soumission empêchée), sans perdre le
+   focus du bouton. Le lien **Actualiser** reste le repli sans JavaScript.
 
 Les textes du moteur factice portent le marqueur `[FACTICE]`. Les mesures
 relevées par le serveur restent réelles (durée décodée, temps de décodage,

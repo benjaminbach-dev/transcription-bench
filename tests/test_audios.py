@@ -386,7 +386,7 @@ class PageAudiosTest(SocleAudiosTest):
         corps = self.texte("/audios")
 
         self.assertIn("Aucun fichier audio", corps)
-        self.assertIn('href="/"', corps)
+        self.assertIn('href="/resultats"', corps, "navigation commune présente")
         self.verifier_html_seul(corps)
 
     def test_page_signale_un_nom_refuse_sans_le_proposer(self) -> None:

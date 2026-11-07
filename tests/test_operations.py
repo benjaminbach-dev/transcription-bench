@@ -420,5 +420,111 @@ class ArretCreneauTest(CreneauTest):
         self.assertEqual(self.creneau.instantane().etat, ETAT_TERMINEE)
 
 
+class GenerationOperationTest(CreneauTest):
+    """Identité stable de l'opération admise (tâche 3.2).
+
+    Deux opérations du même type, sur la même cible et à la même seconde
+    restent distinctes : la génération ne dépend ni de `type_operation`, ni de
+    `cible`, ni de `debut`, et une demande refusée n'en consomme aucune.
+    """
+
+    def demarrer_bloque_identifie(
+        self, type_operation: str = "execution", cible: str | None = "factice"
+    ) -> tuple[object, threading.Event]:
+        """Démarre une opération bloquée et renvoie son handle et sa libération."""
+        observation: dict[str, object] = {}
+        demarre = threading.Event()
+        fin = threading.Event()
+
+        def travail(travailleur) -> None:
+            observation["travailleur"] = travailleur
+            demarre.set()
+            if not fin.wait(DELAI):
+                raise AssertionError("le test n'a pas libéré le travail de fond")
+
+        self.creneau.demarrer(type_operation, travail, cible=cible)
+        self.attendre(demarre, "le travail de fond n'a pas démarré")
+        return observation["travailleur"], fin
+
+    def test_generation_nulle_avant_toute_admission(self) -> None:
+        self.assertEqual(self.creneau.instantane().generation, 0)
+
+    def test_generation_distincte_meme_type_meme_cible_et_meme_debut(self) -> None:
+        self.creneau = CreneauOperations(horloge=lambda: "T0")
+
+        premier, fin = self.demarrer_bloque_identifie()
+        premiere = self.creneau.instantane()
+        self.assertEqual(premier.generation, premiere.generation)
+        fin.set()
+        self.terminer_thread()
+
+        second, fin = self.demarrer_bloque_identifie()
+        seconde = self.creneau.instantane()
+        self.assertEqual(second.generation, seconde.generation)
+        fin.set()
+        self.terminer_thread()
+
+        # Même type, même cible, même horodatage : seules les générations diffèrent.
+        self.assertEqual(premiere.type_operation, seconde.type_operation)
+        self.assertEqual(premiere.cible, seconde.cible)
+        self.assertEqual(premiere.debut, seconde.debut)
+        self.assertGreater(seconde.generation, premiere.generation)
+
+    def test_generation_lue_sous_le_meme_verrou_que_l_etat(self) -> None:
+        travailleur, fin = self.demarrer_bloque_identifie()
+        instantane = self.creneau.instantane()
+
+        self.assertGreater(instantane.generation, 0)
+        self.assertEqual(travailleur.generation, instantane.generation)
+        self.assertEqual(instantane.etat, ETAT_EN_COURS)
+
+        fin.set()
+        self.terminer_thread()
+        self.assertEqual(self.creneau.instantane().generation, instantane.generation)
+
+        second, fin = self.demarrer_bloque_identifie(cible="autre")
+        apres = self.creneau.instantane()
+        self.assertGreater(apres.generation, instantane.generation)
+        # L'instantané et le handle déjà lus décrivent toujours la même opération.
+        self.assertEqual(instantane.generation, travailleur.generation)
+        fin.set()
+        self.terminer_thread()
+        self.assertEqual(second.generation, apres.generation)
+
+    def test_demande_refusee_ne_consomme_aucune_generation(self) -> None:
+        travailleur, fin = self.demarrer_bloque_identifie()
+        active = self.creneau.instantane()
+
+        for type_operation in TYPES_OPERATION:
+            with self.subTest(type_operation=type_operation):
+                with self.assertRaises(CreneauOccupe):
+                    self.creneau.demarrer(type_operation, lambda travailleur: None)
+        with self.assertRaises(CreneauOccupe):
+            self.creneau.executer_mutation(lambda: None)
+        self.assertEqual(self.creneau.instantane().generation, active.generation)
+
+        fin.set()
+        self.terminer_thread()
+        self.assertEqual(self.creneau.instantane().generation, active.generation)
+
+        self.creneau.demarrer("installation", lambda travailleur: None)
+        self.terminer_thread()
+        self.assertEqual(
+            self.creneau.instantane().generation, active.generation + 1
+        )
+        self.assertEqual(travailleur.generation, active.generation)
+
+    def test_arret_du_serveur_ne_change_pas_l_identite(self) -> None:
+        avant = self.creneau.instantane()
+
+        self.creneau.passer_a_l_arret()
+        with self.assertRaises(ServiceArrete):
+            self.creneau.demarrer("execution", lambda travailleur: None)
+
+        apres = self.creneau.instantane()
+        self.assertEqual(apres.generation, avant.generation)
+        self.assertTrue(apres.arrete)
+
+
 if __name__ == "__main__":
     unittest.main()

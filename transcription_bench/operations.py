@@ -28,6 +28,13 @@ l'appelant.
 
 Ce module ne conserve aucun historique persistant : l'état et le journal vivent
 en mémoire, pour l'opération courante et la dernière opération terminée.
+
+Chaque opération admise reçoit une **génération** : un compteur croissant, remis
+sous le verrou à l'admission, qui identifie l'opération même quand deux
+opérations du même type visent la même cible à la même seconde. Une demande
+refusée n'incrémente rien : elle ne décrit aucune opération. Ce module ne
+conserve donc pas d'autres identifiants d'opération, et un service extérieur
+peut associer un résultat à l'opération admise sans comparer type et début.
 """
 
 from __future__ import annotations
@@ -128,6 +135,12 @@ class InstantaneCreneau:
 
     `journal` est un tuple : une page ou un test peut conserver cet instantané
     sans que les écritures suivantes du travail de fond le modifient.
+
+    `generation` est l'identité stable de l'opération décrite : elle vaut `0`
+    avant toute admission, puis une valeur nouvelle à chaque admission, jamais
+    réutilisée, y compris quand `debut` et `cible` sont identiques. Elle est lue
+    sous le même verrou que l'état, donc `(generation, etat)` décrit toujours la
+    même opération.
     """
 
     etat: str
@@ -138,6 +151,7 @@ class InstantaneCreneau:
     fin: str | None
     erreur: str | None
     journal: tuple[str, ...]
+    generation: int
 
 
 class Travailleur:
@@ -146,12 +160,22 @@ class Travailleur:
     Aucun objet Flask n'est transmis. Les deux méthodes prennent le verrou du
     créneau : elles ne doivent pas être appelées depuis une publication en
     cours (verrou non réentrant), et les publications doivent rester brèves.
+
+    `generation` est l'identité de l'opération admise qui exécute ce travail.
+    Elle est figée à l'admission et ne se relit donc pas depuis l'état courant,
+    qui peut déjà décrire une opération suivante.
     """
 
-    __slots__ = ("_creneau",)
+    __slots__ = ("_creneau", "_generation")
 
-    def __init__(self, creneau: CreneauOperations) -> None:
+    def __init__(self, creneau: CreneauOperations, generation: int) -> None:
         self._creneau = creneau
+        self._generation = generation
+
+    @property
+    def generation(self) -> int:
+        """Identité stable de l'opération admise qui exécute ce travail."""
+        return self._generation
 
     def journaliser(self, message: str) -> None:
         """Ajoute une ligne horodatée au journal de l'opération."""
@@ -177,6 +201,7 @@ class CreneauOperations:
         self._horloge = horloge
         self._arrete = False
         self._etat = ETAT_LIBRE
+        self._generation = 0
         self._type_operation: str | None = None
         self._cible: str | None = None
         self._debut: str | None = None
@@ -198,7 +223,8 @@ class CreneauOperations:
         `type_operation` appartient à `TYPES_OPERATION` ; `cible` et les données
         du travail sont des valeurs déjà validées par l'appelant. Lève
         `CreneauOccupe` si une opération est en cours et `ServiceArrete` si le
-        serveur est en cours d'arrêt, sans rien démarrer.
+        serveur est en cours d'arrêt, sans rien démarrer : une demande refusée ne
+        consomme aucune génération et ne décrit aucune opération.
         """
         if type_operation not in TYPES_OPERATION:
             raise ValueError(
@@ -209,6 +235,10 @@ class CreneauOperations:
             raise ValueError("travail attendu sous forme d'appelable")
         with self._verrou:
             self._refuser_si_indisponible()
+            # Identité de l'opération admise : posée seulement après les refus,
+            # donc jamais consommée par une demande rejetée.
+            self._generation += 1
+            generation = self._generation
             self._etat = ETAT_EN_COURS
             self._type_operation = type_operation
             self._cible = cible
@@ -226,7 +256,7 @@ class CreneauOperations:
             try:
                 thread = threading.Thread(
                     target=self._executer,
-                    args=(travail, Travailleur(self)),
+                    args=(travail, Travailleur(self, generation)),
                     name="transcription-bench-operation",
                     daemon=True,
                 )
@@ -320,7 +350,11 @@ class CreneauOperations:
         return True
 
     def instantane(self) -> InstantaneCreneau:
-        """Renvoie une copie immuable de l'état et du journal, sous verrou."""
+        """Renvoie une copie immuable de l'état et du journal, sous verrou.
+
+        L'état et `generation` sont lus ensemble : l'identité renvoyée est
+        toujours celle de l'opération décrite par cet instantané.
+        """
         with self._verrou:
             return InstantaneCreneau(
                 etat=self._etat,
@@ -331,6 +365,7 @@ class CreneauOperations:
                 fin=self._fin,
                 erreur=self._erreur,
                 journal=tuple(self._journal),
+                generation=self._generation,
             )
 
     @property

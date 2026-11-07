@@ -187,10 +187,10 @@ class CliTest(unittest.TestCase):
         instances[0].arreter()
         application = servir.call_args.args[0]
         page = application.test_client().get(
-            "/operation", base_url="http://127.0.0.1:8765"
+            "/executions", base_url="http://127.0.0.1:8765"
         )
         self.assertEqual(page.status_code, 200)
-        self.assertIn("arrêt demandé", page.get_data(as_text=True))
+        self.assertIn("Arrêt du serveur demandé", page.get_data(as_text=True))
         self.assertNotIn("Set-Cookie", page.headers)
 
     def test_import_du_cli_ne_charge_aucun_paquet_moteur(self) -> None:

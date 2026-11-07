@@ -873,7 +873,7 @@ class PageMoteursWebTest(SocleMoteurs):
         reponse = post("/moteurs/engine-test/installer", jeton_envoye=jeton)
 
         self.assertEqual(reponse.status_code, 303)
-        self.assertEqual(reponse.headers["Location"], "/operation")
+        self.assertEqual(reponse.headers["Location"], "/executions#operation")
         thread = self.creneau.thread_travailleur
         self.assertIsNotNone(thread)
         thread.join(DELAI)

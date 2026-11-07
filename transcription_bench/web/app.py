@@ -21,22 +21,32 @@ ni le contrôle `Host`, ni celui d'`Origin`, ni le jeton anti-CSRF.
 
 Les mutations passent par le créneau unique injecté : la vérification des
 dossiers s'exécute sous son verrou et est refusée (409) pendant une opération
-longue, comme après le passage à l'arrêt (503). L'accueil affiche l'état du
-créneau, les emplacements des dossiers, l'état des moteurs et des liens vers les
-pages des moteurs, modèles, audios, exécutions et résultats. Les pages des
-moteurs, des modèles, des audios et des exécutions sont réelles : elles lisent
-l'inventaire, le dossier d'entrée local ou une demande de formulaire et
-délèguent les actions explicites aux services. La page des audios ne décode
-aucun signal : elle affiche la durée indicative du conteneur et les erreurs de
-lecture par fichier, y compris les noms refusés, et signale un dossier d'entrée
-inaccessible. La page des exécutions prépare une demande (modèle prêt, audios,
-threads, réglages déclarés), la valide par le service de la tâche 6.2, et son
-bouton de lancement démarre l'exécution dans le créneau global (tâche 6.3) ; la
-page `/operation` affiche l'instantané du créneau et permet d'arrêter
-l'exécution active. Aucune route ne transmet d'objet Flask au travail de fond.
-La page Résultats (tâche 1.4) regroupe les essais par empreinte audio, tri commun
-appliqué dans chaque groupe ; son historique complet des exécutions (tâche 7.1)
-reste dans un détail secondaire. Le détail d'une transcription : texte,
+longue, comme après le passage à l'arrêt (503). La navigation commune présente
+six rubriques fixes — Résultats, Comparaisons, Exécutions, Modèles, Moteurs,
+Audios — et `GET /` redirige vers Résultats (design D1). `GET /operation`
+redirige vers la section `#operation` d'Exécutions sans transmettre de
+paramètre de redirection libre : seuls les codes `arret-demande` et
+`arret-incomplet` y sont traduits en message fixe. Les pages des moteurs, des
+modèles, des audios et des exécutions sont réelles : elles lisent l'inventaire,
+le dossier d'entrée local ou une demande de formulaire et délèguent les actions
+explicites aux services. La page des audios ne décode aucun signal : elle
+affiche la durée indicative du conteneur et les erreurs de lecture par fichier,
+y compris les noms refusés, et signale un dossier d'entrée inaccessible. La
+page des exécutions réunit l'opération longue en cours ou la dernière issue
+(ancre `#operation`), la préparation d'une demande (modèle prêt, audios,
+threads, réglages déclarés) validée par le service de la tâche 6.2, le bouton
+de lancement qui démarre l'exécution dans le créneau global (tâche 6.3),
+l'historique technique complet des exécutions en détail secondaire et les
+diagnostics des dossiers de données. Le résumé d'opération porte un abri de suivi
+(`data-suivi-operation`) ; `GET /executions/etat` renvoie son état borné en JSON
+`no-store` — type, état, cible, erreur et lien de résultat construit ici depuis
+l'identifiant publié par l'exécution admise — jamais un PID, un jeton, une
+transcription ni le journal brut. Le script local n'interroge cette route que
+tant que l'opération est active, une requête à la fois, et le lien Actualiser
+reste le repli sans JavaScript. Aucune route ne transmet d'objet Flask au
+travail de fond. La page Résultats (tâche 1.4) regroupe les essais par empreinte
+audio, tri commun appliqué dans chaque groupe, et renvoie vers l'historique
+complet des exécutions dans Exécutions. Le détail d'une transcription : texte,
 segments, métadonnées, mesures et marques, en lecture seule. Le détail
 individuel (tâches 3.2 et 2.2) suit la même tête de lecture qu'une carte de comparaison
 — le composant compact de valeurs puis le texte complet — avec l'annotation du pic mémoire
@@ -63,6 +73,7 @@ d'inférence ni ne modifie un fichier.
 
 from __future__ import annotations
 
+import json
 import secrets
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -112,14 +123,13 @@ from transcription_bench.indicateurs_resultats import (
     formater_pourcentage_premier_niveau,
 )
 from transcription_bench.moteurs import (
-    ETAT_PRET,
     LIBELLES_ETATS_MOTEUR,
-    EtatMoteur,
     InstallationIndisponible,
     InstallationMoteurs,
 )
 from transcription_bench.operations import (
     ETAT_EN_COURS,
+    ETAT_LIBRE,
     LIBELLES_ETATS,
     LIBELLES_TYPES,
     TYPE_EXECUTION,
@@ -135,6 +145,7 @@ from transcription_bench.paths import (
     ValeurRefusee,
     preparer_dossiers_data,
 )
+from transcription_bench.resultats import MOTIF_IDENTIFIANT
 from transcription_bench.web.vues_resultats import (
     vue_comparaison,
     vues_audios_detail,
@@ -145,6 +156,7 @@ LIMITE_CORPS_APPLICATION = 64 * 1024
 NOM_CHAMP_JETON = "jeton_csrf"
 TYPE_FEUILLE = "text/css; charset=utf-8"
 TYPE_SCRIPT = "text/javascript; charset=utf-8"
+TYPE_JSON = "application/json; charset=utf-8"
 # Dossier des ressources locales du paquet (feuilles et script), jamais servi
 # comme répertoire : chaque route lit un nom fixe décidé dans ce module.
 DOSSIER_FEUILLES = Path(__file__).resolve().parent / "ressources"
@@ -192,7 +204,7 @@ MESSAGES_ACTION = {
 
 MESSAGE_LANCEMENT = (
     "Le bouton « Lancer l'exécution » revalide la demande, décode les audios puis "
-    "démarre le moteur dans le créneau global d'opération ; la page d'opération "
+    "démarre le moteur dans le créneau global d'opération ; la page Exécutions "
     "suit l'avancement et permet d'arrêter l'exécution. Une seule opération longue "
     "à la fois : une exécution en cours refuse toute autre demande. Les modèles "
     "prêts des familles prises en charge sont exécutables après installation "
@@ -200,15 +212,14 @@ MESSAGE_LANCEMENT = (
     "et des mesures simulés."
 )
 
+# Design D1 : seul ce sous-ensemble borné d'actions d'arrêt est traduit par
+# `GET /operation` en message local ; tout autre paramètre, dont un `next`
+# libre, n'est pas répercuté.
+ACTIONS_OPERATION = frozenset({"arret-demande", "arret-incomplet"})
+
 MESSAGE_DOSSIER_AUDIO_INACCESSIBLE = (
     "Le dossier d'entrée n'a pas pu être lu : aucun audio n'est listé. "
     "Vérifiez qu'il s'agit d'un dossier accessible en lecture."
-)
-
-MESSAGE_MOTEURS_NON_INSTALLES = (
-    "Aucun moteur n'est installé à ce stade ; le moteur factice est disponible "
-    "sans installation, avec des textes et mesures simulés. Le lancement du "
-    "serveur n'installe ni ne télécharge rien."
 )
 
 MESSAGES_ERREUR = {
@@ -458,6 +469,18 @@ def _lien_resultat(identifiant: str) -> str:
     return url_for("resultat_detail", identifiant=identifiant)
 
 
+def _identifiant_resultat_valide(identifiant: str | None) -> bool:
+    """Même identité bornée que le stockage et les routes de consultation."""
+    return isinstance(identifiant, str) and bool(MOTIF_IDENTIFIANT.fullmatch(identifiant))
+
+
+def _url_resultat(identifiant: str | None) -> str | None:
+    """Adresse locale du résultat publié, ou `None` sans identifiant valide."""
+    if not _identifiant_resultat_valide(identifiant):
+        return None
+    return _lien_resultat(str(identifiant))
+
+
 def _identites_groupes(
     groupes: Sequence[GroupeEmpreinte],
 ) -> dict[str, frozenset[str]]:
@@ -522,18 +545,6 @@ def selections_liste(
     return frozenset(cochees)
 
 
-def _message_moteurs(moteurs: tuple[EtatMoteur, ...]) -> str:
-    """Phrase d'accueil honnête selon l'inventaire local des moteurs réels."""
-    prets = [moteur for moteur in moteurs if moteur.etat == ETAT_PRET and not moteur.factice]
-    if prets:
-        noms = ", ".join(moteur.nom for moteur in prets)
-        return (
-            f"Moteurs prêts : {noms}. Le lancement du serveur n'installe ni ne "
-            "télécharge rien."
-        )
-    return MESSAGE_MOTEURS_NON_INSTALLES
-
-
 def _enregistrer_routes(
     application: Flask,
     config: ConfigApplication,
@@ -545,18 +556,13 @@ def _enregistrer_routes(
     service_resultats: ConsultationResultats,
 ) -> None:
     @application.get("/")
-    def accueil() -> str:
-        moteurs = service_moteurs.inventaire()
-        return render_template(
-            "accueil.html",
-            dossiers=_etat_dossiers(config),
-            message=_message_action(),
-            instantane=services.creneau.instantane(),
-            libelles_etats=LIBELLES_ETATS,
-            libelles_types=LIBELLES_TYPES,
-            moteurs=moteurs,
-            message_moteurs=_message_moteurs(moteurs),
-        )
+    def accueil() -> Response:
+        """Entrée directe : l'accueil historique n'est plus une rubrique (D1).
+
+        La redirection est locale et ne transmet aucun paramètre reçu : aucun
+        `next` libre n'est répercuté.
+        """
+        return redirect(url_for("resultats"), code=302)
 
     @application.get("/sumi.css")
     def feuille_sumi() -> Response:
@@ -594,7 +600,48 @@ def _enregistrer_routes(
 
     @application.get("/executions")
     def executions() -> str:
-        return _page_executions(service_executions)
+        return _page_executions(
+            service_executions,
+            service_resultats,
+            service_execution,
+            services,
+            config,
+        )
+
+    @application.get("/executions/etat")
+    def etat_execution() -> Response:
+        """État borné de l'opération longue, pour le suivi automatique (D5).
+
+        Lecture seule et sans effet de bord : aucune mutation n'est exécutée et
+        le créneau n'est jamais sollicité pour autre chose que son instantané.
+        La charge ne contient que des champs fixes et bornés — type, état,
+        cible, erreur et lien de résultat construit ici depuis l'identifiant
+        validé — jamais un PID, le jeton anti-CSRF, une transcription ni le
+        journal brut. La réponse n'est pas mise en cache.
+        """
+        instantane = services.creneau.instantane()
+        identifiant = service_execution.identifiant_resultat(instantane.generation)
+        libelle_type = (
+            LIBELLES_TYPES[instantane.type_operation]
+            if instantane.type_operation in LIBELLES_TYPES
+            else None
+        )
+        charge = {
+            "generation": instantane.generation,
+            "etat": instantane.etat,
+            "libelle_etat": LIBELLES_ETATS[instantane.etat],
+            "type": instantane.type_operation,
+            "libelle_type": libelle_type,
+            "cible": instantane.cible,
+            "erreur": instantane.erreur,
+            "actif": instantane.etat == ETAT_EN_COURS,
+            "url_resultat": _url_resultat(identifiant),
+        }
+        reponse = Response(json.dumps(charge, ensure_ascii=False), status=200)
+        reponse.headers["Content-Type"] = TYPE_JSON
+        reponse.headers["Cache-Control"] = "no-store"
+        reponse.headers["X-Content-Type-Options"] = "nosniff"
+        return reponse
 
     @application.post("/executions/verifier")
     def verifier_demande_execution():
@@ -610,7 +657,14 @@ def _enregistrer_routes(
             demande = _demande_validee(service_executions)
         except ValeurRefusee:
             abort(400)
-        return _page_executions(service_executions, demande)
+        return _page_executions(
+            service_executions,
+            service_resultats,
+            service_execution,
+            services,
+            config,
+            demande,
+        )
 
     @application.post("/executions/lancer")
     def lancer_execution():
@@ -651,7 +705,7 @@ def _enregistrer_routes(
         except BaseException:
             service_execution.annuler_reservation()
             raise
-        return redirect(url_for("operation"), code=303)
+        return redirect(url_for("executions") + "#operation", code=303)
 
     @application.post("/executions/arreter")
     def arreter_execution():
@@ -664,10 +718,15 @@ def _enregistrer_routes(
         """
         arret = service_execution.arreter_execution()
         if arret == ARRET_AUCUN:
-            return redirect(url_for("operation"), code=303)
+            return redirect(url_for("executions") + "#operation", code=303)
         if arret == ARRET_SURVIVANT:
-            return redirect(url_for("operation", action="arret-incomplet"), code=303)
-        return redirect(url_for("operation", action="arret-demande"), code=303)
+            return redirect(
+                url_for("executions", action="arret-incomplet") + "#operation",
+                code=303,
+            )
+        return redirect(
+            url_for("executions", action="arret-demande") + "#operation", code=303
+        )
 
     @application.get("/modeles")
     def modeles() -> str:
@@ -775,7 +834,7 @@ def _enregistrer_routes(
             abort(409)
         except ServiceArrete:
             abort(503)
-        return redirect(url_for("operation"), code=303)
+        return redirect(url_for("executions") + "#operation", code=303)
 
     @application.get("/moteurs/<identifiant>/journal")
     def journal_moteur(identifiant: str) -> str:
@@ -794,11 +853,12 @@ def _enregistrer_routes(
 
     @application.get("/resultats")
     def resultats() -> str:
-        """Résultats groupés par audio, puis historique complet des exécutions.
+        """Résultats groupés par audio, avec accès à l'historique dans Exécutions.
 
         Le critère `tri` vaut `recent` par défaut et s'applique dans chaque groupe
         seulement ; un critère inconnu ou répété est refusé (400). L'historique
-        `lister` reste entier dans un détail secondaire de la page.
+        complet des exécutions vit désormais dans Exécutions (tâche 3.1), où la
+        page renvoie par un lien secondaire.
         """
         try:
             tri = analyser_tri(
@@ -808,18 +868,14 @@ def _enregistrer_routes(
             return _page_erreur(400, MESSAGE_TRI_REFUSE)
         try:
             groupes = service_resultats.groupes_par_empreinte(tri)
-            executions_enregistrees = service_resultats.lister()
         except LectureResultatsImpossible:
             groupes = ()
-            executions_enregistrees = ()
             erreur_dossier = MESSAGE_RESULTATS_INACCESSIBLES
         else:
             erreur_dossier = None
         return render_template(
             "resultats.html",
             groupes=vues_groupes(groupes, _lien_resultat),
-            executions=executions_enregistrees,
-            dossier=service_resultats.dossier_resultats,
             erreur_dossier=erreur_dossier,
             tri=tri,
             criteres_tri=tuple(LIBELLES_TRI.items()),
@@ -923,19 +979,18 @@ def _enregistrer_routes(
         )
 
     @application.get("/operation")
-    def operation() -> str:
-        instantane = services.creneau.instantane()
-        return render_template(
-            "operation.html",
-            instantane=instantane,
-            libelles_etats=LIBELLES_ETATS,
-            libelles_types=LIBELLES_TYPES,
-            execution_active=(
-                instantane.etat == ETAT_EN_COURS
-                and instantane.type_operation == TYPE_EXECUTION
-            ),
-            message=_message_action(),
-        )
+    def operation() -> Response:
+        """Ancien lien : redirection GET locale vers Exécutions (design D1).
+
+        Seul un code d'action d'arrêt connu est traduit en message local ; tout
+        autre paramètre reçu, dont un `next` libre, n'est pas répercuté.
+        """
+        action = request.args.get("action", "")
+        if action in ACTIONS_OPERATION:
+            destination = url_for("executions", action=action)
+        else:
+            destination = url_for("executions")
+        return redirect(destination + "#operation", code=302)
 
     @application.post("/dossiers/verifier")
     def verifier_dossiers():
@@ -947,7 +1002,10 @@ def _enregistrer_routes(
             abort(409)
         except ServiceArrete:
             abort(503)
-        return redirect(url_for("accueil", action="dossiers-verifies"), code=303)
+        return redirect(
+            url_for("executions", action="dossiers-verifies") + "#diagnostics",
+            code=303,
+        )
 
 
 def _demande_validee(service: ConfigurationExecutions) -> DemandeExecution:
@@ -965,9 +1023,33 @@ def _demande_validee(service: ConfigurationExecutions) -> DemandeExecution:
 
 
 def _page_executions(
-    service: ConfigurationExecutions, demande: DemandeExecution | None = None
+    service: ConfigurationExecutions,
+    service_resultats: ConsultationResultats,
+    service_execution: ExecutionMoteur,
+    services: ServicesApplication,
+    config: ConfigApplication,
+    demande: DemandeExecution | None = None,
 ) -> str:
-    """Page du formulaire d'exécution, avec la demande validée éventuelle."""
+    """Page d'exécutions : opération, préparation, historique et diagnostics.
+
+    L'opération longue vient en tête avec l'ancre `#operation`, l'historique
+    technique complet reste un détail secondaire (`#historique`) et les
+    diagnostics de dossiers un accès explicite (`#diagnostics`). Aucune lecture
+    n'écrit de fichier. L'identité de l'opération est lue avant le lien de
+    résultat : `identifiant_resultat` ne renvoie que l'identifiant publié par
+    cette opération admise, jamais celui d'un essai antérieur.
+    """
+    instantane = services.creneau.instantane()
+    url_resultat = _url_resultat(
+        service_execution.identifiant_resultat(instantane.generation)
+    )
+    try:
+        executions_enregistrees = service_resultats.lister()
+    except LectureResultatsImpossible:
+        executions_enregistrees = ()
+        erreur_historique = MESSAGE_RESULTATS_INACCESSIBLES
+    else:
+        erreur_historique = None
     return render_template(
         "executions.html",
         modeles=service.modeles_proposables(),
@@ -976,6 +1058,25 @@ def _page_executions(
         demande=demande,
         prefixe_reglage=PREFIXE_CHAMP_REGLAGE,
         message_lancement=MESSAGE_LANCEMENT,
+        instantane=instantane,
+        libelles_etats=LIBELLES_ETATS,
+        libelles_types=LIBELLES_TYPES,
+        operation_active=instantane.etat == ETAT_EN_COURS,
+        execution_active=(
+            instantane.etat == ETAT_EN_COURS
+            and instantane.type_operation == TYPE_EXECUTION
+        ),
+        url_resultat=url_resultat,
+        operation_visible=(
+            instantane.etat != ETAT_LIBRE
+            or bool(instantane.journal)
+            or instantane.erreur is not None
+        ),
+        message=_message_action(),
+        executions=executions_enregistrees,
+        erreur_historique=erreur_historique,
+        dossier=service_resultats.dossier_resultats,
+        dossiers=_etat_dossiers(config),
     )
 
 

@@ -144,7 +144,7 @@ class SqueletteScriptTest(SocleWebTest):
         return [dict(attributs) for _, _, attributs in pages.balises_de("script")]
 
     def test_script_unique_en_defer_sur_les_pages(self) -> None:
-        for chemin in ("/", "/resultats", "/modeles", "/route-inexistante"):
+        for chemin in ("/resultats", "/executions", "/modeles", "/route-inexistante"):
             with self.subTest(chemin=chemin):
                 self.assertEqual(self.scripts_de(chemin), [dict(ATTRIBUTS_SCRIPT)])
 
@@ -252,7 +252,14 @@ class PolitiqueContenuTest(SocleWebTest):
         self.assertNotIn("unsafe-eval", CSP_ATTENDUE)
 
     def test_csp_sur_les_pages_normales(self) -> None:
-        for chemin in ("/", "/resultats", "/modeles", "/audios", "/operation"):
+        for chemin in (
+            "/resultats",
+            "/resultats/comparaison",
+            "/executions",
+            "/modeles",
+            "/moteurs",
+            "/audios",
+        ):
             with self.subTest(chemin=chemin):
                 reponse = self.client.get(chemin, base_url=self.base_url())
 

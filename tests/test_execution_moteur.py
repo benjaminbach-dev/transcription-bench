@@ -78,6 +78,8 @@ from transcription_bench.operations import (
     ETAT_INTERROMPUE as ETAT_CRENEAU_INTERROMPUE,
     ETAT_LIBRE,
     TYPE_EXECUTION,
+    TYPE_INSTALLATION,
+    TYPE_TELECHARGEMENT,
     TYPE_VERIFICATION,
     CreneauOccupe,
     CreneauOperations,
@@ -1519,6 +1521,209 @@ class ResultatsExecutionTest(SocleExecutionTest):
         self.assertCacheNettoye()
 
 
+class VueResultatOperationTest(SocleExecutionTest):
+    """Lien résultat/opération exposé pour le suivi (tâche 3.2).
+
+    Le lien est publié dès la création de la consignation, donc disponible
+    pendant l'exécution, et il reste associé à l'identité de l'opération admise
+    après sa clôture. Une autre opération du créneau, une réservation
+    abandonnée ou une exécution échouée avant la consignation ne reçoit jamais
+    le lien d'un essai antérieur.
+    """
+
+    def racine_resultats(self) -> Path:
+        return self.dossier_data / "results"
+
+    def dossiers_resultat(self) -> list[Path]:
+        racine = self.racine_resultats()
+        if not racine.is_dir():
+            return []
+        return sorted(chemin for chemin in racine.iterdir() if chemin.is_dir())
+
+    def demarrer_execution_bloquee(
+        self, service: ExecutionMoteur, paliers: Path, audios: tuple[str, ...]
+    ) -> None:
+        """Démarre une exécution dont le moteur attend la libération des paliers."""
+        self.liberer_paliers(paliers, 1)
+        service.reserver()
+        self.creneau.demarrer(
+            TYPE_EXECUTION,
+            lambda travailleur: service.lancer(self.demande(audios), travailleur),
+            cible="factice",
+        )
+
+    def test_aucun_lien_avant_toute_execution(self) -> None:
+        self.assertIsNone(self.service.derniere_execution())
+        self.assertIsNone(self.service.identifiant_resultat(0))
+        self.assertIsNone(self.service.identifiant_resultat(None))
+
+    def test_lien_publie_pendant_l_execution_puis_conserve_a_la_cloture(self) -> None:
+        for nom in ("a.wav", "b.wav"):
+            self.ecrire_audio(nom)
+        service, paliers = self.service_a_paliers()
+        self.service = service
+        audios = ("a.wav", "b.wav")
+        self.demarrer_execution_bloquee(service, paliers, audios)
+        attendre_fichier(paliers / "palier-2")
+        attendre_journal(self.creneau, "Audio « a.wav » transcrit")
+
+        pendant = self.creneau.instantane()
+        identifiant = service.identifiant_resultat(pendant.generation)
+        self.assertIsNotNone(identifiant)
+        self.assertTrue((self.racine_resultats() / str(identifiant)).is_dir())
+        # `derniere_execution` ne décrit que le cas clos : le lien actif ne
+        # dépend pas de cette vue-là.
+        self.assertIsNone(service.derniere_execution())
+        self.assertEqual(self.creneau.instantane().etat, ETAT_EN_COURS)
+
+        self.liberer_paliers(paliers, 2)
+        self.creneau.thread_travailleur.join(DELAI)
+
+        resultat = service.derniere_execution()
+        self.assertTerminee(resultat)
+        self.assertEqual(resultat.identifiant_resultat, identifiant)
+        self.assertEqual(
+            service.identifiant_resultat(pendant.generation), identifiant
+        )
+
+    def test_execution_interrompue_garde_le_lien_de_son_resultat(self) -> None:
+        for nom in ("a.wav", "b.wav"):
+            self.ecrire_audio(nom)
+        service, paliers = self.service_a_paliers()
+        self.service = service
+        audios = ("a.wav", "b.wav")
+        self.demarrer_execution_bloquee(service, paliers, audios)
+        attendre_fichier(paliers / "palier-2")
+        attendre_journal(self.creneau, "Audio « a.wav » transcrit")
+
+        pendant = self.creneau.instantane()
+        self.assertEqual(service.arreter_execution(), ARRET_DEMANDE)
+        self.creneau.thread_travailleur.join(DELAI)
+
+        resultat = service.derniere_execution()
+        self.assertEqual(resultat.etat, ETAT_INTERROMPUE)
+        self.assertEqual(self.creneau.instantane().etat, ETAT_CRENEAU_INTERROMPUE)
+        self.assertIsNotNone(resultat.identifiant_resultat)
+        self.assertTrue(
+            (
+                self.racine_resultats()
+                / str(resultat.identifiant_resultat)
+                / "run.json"
+            ).is_file()
+        )
+        self.assertEqual(
+            service.identifiant_resultat(pendant.generation),
+            resultat.identifiant_resultat,
+        )
+
+    def test_deux_executions_publient_chacune_leur_identifiant(self) -> None:
+        self.ecrire_audio("a.wav")
+        premier = self.executer(self.demande(("a.wav",)))
+        self.assertTerminee(premier)
+        premiere = self.creneau.instantane().generation
+        self.assertEqual(
+            self.service.identifiant_resultat(premiere), premier.identifiant_resultat
+        )
+
+        second = self.executer(self.demande(("a.wav",)))
+        self.assertTerminee(second)
+        seconde = self.creneau.instantane().generation
+
+        self.assertGreater(seconde, premiere)
+        self.assertNotEqual(second.identifiant_resultat, premier.identifiant_resultat)
+        self.assertEqual(
+            self.service.identifiant_resultat(seconde), second.identifiant_resultat
+        )
+        self.assertEqual(len(self.dossiers_resultat()), 2)
+
+    def test_echec_avant_consignation_ne_reprend_pas_l_ancien_identifiant(self) -> None:
+        self.ecrire_audio("a.wav")
+        premier = self.executer(self.demande(("a.wav",)))
+        self.assertTerminee(premier)
+        premiere = self.creneau.instantane().generation
+        self.assertEqual(
+            self.service.identifiant_resultat(premiere), premier.identifiant_resultat
+        )
+
+        with mock.patch.object(
+            module_execution_moteur.ConsignateurExecution,
+            "ouvrir",
+            return_value=False,
+        ):
+            second = self.executer(self.demande(("a.wav",)))
+
+        self.assertEqual(second.etat, ETAT_ECHOUEE)
+        self.assertIsNone(second.identifiant_resultat)
+        self.assertIn("enregistrement des résultats impossible", second.erreur or "")
+        seconde = self.creneau.instantane().generation
+        self.assertGreater(seconde, premiere)
+        self.assertIsNone(self.service.identifiant_resultat(seconde))
+        # Aucun dossier de résultat n'a été créé par l'essai en échec.
+        self.assertEqual(len(self.dossiers_resultat()), 1)
+
+    def test_autre_operation_ne_recoit_jamais_le_lien_d_un_essai(self) -> None:
+        self.ecrire_audio("a.wav")
+        premier = self.executer(self.demande(("a.wav",)))
+        self.assertTerminee(premier)
+        generation_execution = self.creneau.instantane().generation
+
+        for type_operation in (TYPE_INSTALLATION, TYPE_TELECHARGEMENT):
+            with self.subTest(type_operation=type_operation):
+                demarre = threading.Event()
+                fin = threading.Event()
+
+                def travail(travailleur: object) -> None:
+                    demarre.set()
+                    if not fin.wait(DELAI):
+                        raise AssertionError(
+                            "le test n'a pas libéré le travail de fond"
+                        )
+
+                self.creneau.demarrer(type_operation, travail, cible="factice")
+                try:
+                    self.assertTrue(
+                        demarre.wait(DELAI), "le travail de fond n'a pas démarré"
+                    )
+                    installation = self.creneau.instantane()
+                    self.assertEqual(
+                        installation.type_operation, type_operation
+                    )
+                    self.assertNotEqual(
+                        installation.generation, generation_execution
+                    )
+                    self.assertIsNone(
+                        self.service.identifiant_resultat(
+                            installation.generation
+                        )
+                    )
+                finally:
+                    fin.set()
+                    self.creneau.thread_travailleur.join(DELAI)
+
+        # L'essai antérieur reste décrit par sa propre génération, sans lien
+        # attribué à l'opération suivante.
+        self.assertEqual(
+            self.service.identifiant_resultat(generation_execution),
+            premier.identifiant_resultat,
+        )
+
+    def test_reservation_abandonnee_ne_publie_aucun_lien(self) -> None:
+        self.ecrire_audio("a.wav")
+        premier = self.executer(self.demande(("a.wav",)))
+        self.assertTerminee(premier)
+        generation = self.creneau.instantane().generation
+
+        self.service.reserver()
+        self.service.annuler_reservation()
+
+        self.assertFalse(self.service.en_cours())
+        self.assertEqual(self.creneau.instantane().generation, generation)
+        self.assertEqual(
+            self.service.identifiant_resultat(generation),
+            premier.identifiant_resultat,
+        )
+
+
 class ProcessusMoteurTest(unittest.TestCase):
     """Sous-processus : groupe propre, `terminate`, attente bornée puis `kill`."""
 
@@ -1714,7 +1919,7 @@ class EvaluerIssueTest(unittest.TestCase):
 
 
 class RoutesExecutionTest(SocleExecutionTest):
-    """Routes de lancement et d'arrêt : jeton, 303 vers /operation, refus 4xx."""
+    """Routes de lancement et d'arrêt : jeton, 303 vers Exécutions, refus 4xx."""
 
     def setUp(self) -> None:
         super().setUp()
@@ -1772,7 +1977,7 @@ class RoutesExecutionTest(SocleExecutionTest):
         )
         self.client = self.app.test_client()
 
-    def test_lancement_par_post_redirige_vers_operation(self) -> None:
+    def test_lancement_par_post_redirige_vers_executions(self) -> None:
         page = self.client.get("/executions", base_url=self.base_url())
         corps = page.get_data(as_text=True)
         self.assertEqual(page.status_code, 200)
@@ -1783,7 +1988,7 @@ class RoutesExecutionTest(SocleExecutionTest):
         reponse = self.poster("/executions/lancer")
 
         self.assertEqual(reponse.status_code, 303)
-        self.assertTrue(reponse.headers["Location"].endswith("/operation"))
+        self.assertEqual(reponse.headers["Location"], "/executions#operation")
         self.assertNotIn("Set-Cookie", reponse.headers)
         fil = self.creneau.thread_travailleur
         self.assertIsNotNone(fil)
@@ -1792,7 +1997,7 @@ class RoutesExecutionTest(SocleExecutionTest):
         resultat = self.service.derniere_execution()
         self.assertTerminee(resultat)
         self.assertEqual(resultat.audios[0].nom, "a.wav")
-        page = self.client.get("/operation", base_url=self.base_url())
+        page = self.client.get("/executions", base_url=self.base_url())
         self.assertEqual(page.status_code, 200)
         self.assertIn("Exécution terminée", page.get_data(as_text=True))
         self.assertCacheNettoye()
@@ -1881,7 +2086,7 @@ class RoutesExecutionTest(SocleExecutionTest):
         self.assertEqual(self.poster("/executions/lancer").status_code, 303)
         try:
             attendre_fichier(paliers / "palier-1")
-            page = self.client.get("/operation", base_url=self.base_url())
+            page = self.client.get("/executions", base_url=self.base_url())
             corps_operation = page.get_data(as_text=True)
             self.assertIn('action="/executions/arreter"', corps_operation)
             self.assertIn("Arrêter l'exécution", corps_operation)
@@ -1900,7 +2105,9 @@ class RoutesExecutionTest(SocleExecutionTest):
         resultat = self.service.derniere_execution()
         self.assertEqual(resultat.etat, ETAT_INTERROMPUE)
         self.assertEqual(self.creneau.instantane().etat, ETAT_CRENEAU_INTERROMPUE)
-        page = self.client.get("/operation?action=arret-demande", base_url=self.base_url())
+        page = self.client.get(
+            "/executions?action=arret-demande", base_url=self.base_url()
+        )
         corps = html.unescape(page.get_data(as_text=True))
         self.assertIn("Arrêt de l'exécution demandé", corps)
         # Seul le script local du squelette est présent : ni script incorporé
@@ -1919,7 +2126,9 @@ class RoutesExecutionTest(SocleExecutionTest):
 
         self.assertEqual(reponse.status_code, 303)
         self.assertIn("action=arret-incomplet", reponse.headers["Location"])
-        page = self.client.get("/operation?action=arret-incomplet", base_url=self.base_url())
+        page = self.client.get(
+            "/executions?action=arret-incomplet", base_url=self.base_url()
+        )
         corps = html.unescape(page.get_data(as_text=True))
         self.assertIn("n'a pas pu être terminé", corps)
 
@@ -1927,8 +2136,9 @@ class RoutesExecutionTest(SocleExecutionTest):
         reponse = self.poster("/executions/arreter")
 
         self.assertEqual(reponse.status_code, 303)
+        self.assertEqual(reponse.headers["Location"], "/executions#operation")
         self.assertEqual(self.creneau.instantane().etat, ETAT_LIBRE)
-        page = self.client.get("/operation", base_url=self.base_url())
+        page = self.client.get("/executions", base_url=self.base_url())
         corps = html.unescape(page.get_data(as_text=True))
         self.assertNotIn("Arrêt de l'exécution demandé", corps)
 

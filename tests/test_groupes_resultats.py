@@ -249,6 +249,10 @@ class PageResultatsTest(SocleWebTest):
         self.verifier_html_seul(corps)
         return html.unescape(corps)
 
+    def historique(self) -> str:
+        """Historique technique complet, désormais tenu par Exécutions (3.1)."""
+        return self.page("/executions")
+
     def test_groupes_recents_d_abord_et_tri_par_defaut_recent(self) -> None:
         ecrire_essai(self.dossier_data, ID_ANCIEN, cree_le="2024-01-01T01:01:01+00:00", empreinte=EMPREINTE_A, nom="ancien.wav", temps=0.5)
         ecrire_essai(self.dossier_data, ID_RECENT, cree_le="2024-01-03T01:01:01+00:00", empreinte=EMPREINTE_B, nom="recent.wav", temps=9.0)
@@ -296,7 +300,13 @@ class PageResultatsTest(SocleWebTest):
         ecrire_essai(self.dossier_data, ID_RECENT, cree_le="2024-01-03T01:01:01+00:00")
         corps = self.page()
         self.assertLess(corps.index("Transcription</span>"), corps.index("Empreinte SHA-256 complète"))
-        self.assertIn('tabindex="0" role="region" aria-label="Historique des exécutions"', corps)
+        # L'historique complet a quitté la page : un lien secondaire y mène.
+        self.assertIn('href="/executions#historique"', corps)
+        self.assertNotIn("Historique complet des exécutions", corps)
+        self.assertIn(
+            'tabindex="0" role="region" aria-label="Historique des exécutions"',
+            self.historique(),
+        )
 
     def test_variantes_proches_et_etats_visibles_dans_la_ligne(self) -> None:
         ecrire_essai(self.dossier_data, ID_ANCIEN, cree_le="2024-01-01T01:01:01+00:00", gguf="modele-q4.gguf", etat=ETAT_INTERROMPUE)
@@ -335,7 +345,7 @@ class PageResultatsTest(SocleWebTest):
 
         self.assertIn("Révision : non consignée", corps)
         self.assertIn("Révision : abcdef1", corps)
-        self.assertNotIn("None", corps[: corps.index("Historique complet")])
+        self.assertNotIn("None", corps)
 
     def test_revisions_au_meme_prefixe_restent_distinctes(self) -> None:
         for identifiant, revision in (
@@ -370,7 +380,7 @@ class PageResultatsTest(SocleWebTest):
         ecrire_essai(self.dossier_data, ID_RECENT, cree_le="2024-01-03T01:01:01+00:00", modele="autre/modele-a", empreinte=EMPREINTE_A)
 
         corps = self.page()
-        groupes = corps[: corps.index("Historique complet")]
+        groupes = corps
 
         self.assertIn("organisation/modele-a", groupes)
         self.assertIn("autre/modele-a", groupes)
@@ -379,7 +389,7 @@ class PageResultatsTest(SocleWebTest):
         ecrire_essai(self.dossier_data, ID_RECENT, cree_le="2024-01-03T01:01:01+00:00", modele="organisation/modele-a")
 
         corps = self.page()
-        groupes = corps[: corps.index("Historique complet")]
+        groupes = corps
 
         self.assertIn('class="resultat-modele" href=', groupes)
         self.assertIn(">modele-a</a>", groupes)
@@ -396,9 +406,14 @@ class PageResultatsTest(SocleWebTest):
 
     def test_dossier_des_resultats_dans_l_historique_secondaire(self) -> None:
         corps = self.page()
+        historique = self.historique()
 
-        self.assertIn("Dossier des résultats", corps)
-        self.assertLess(corps.index("Historique complet"), corps.index("Dossier des résultats"))
+        self.assertIn("Dossier des résultats", historique)
+        self.assertLess(
+            historique.index("Historique complet"),
+            historique.index("Dossier des résultats"),
+        )
+        self.assertNotIn("Dossier des résultats", corps)
 
     def test_modele_supprime_et_historique_complet_dans_un_detail(self) -> None:
         ecrire_essai(self.dossier_data, ID_ANCIEN, cree_le="2024-01-01T01:01:01+00:00", modele="organisation/modele-supprime", etat=ETAT_INTERROMPUE)
@@ -409,13 +424,19 @@ class PageResultatsTest(SocleWebTest):
 
         corps = self.page()
 
-        self.assertIn("organisation/modele-supprime", corps)
+        # Le nom court reste lisible dans la liste, même sans modèle local.
+        self.assertIn("modele-supprime", corps)
         self.assertIn(f'href="/resultats/{ID_ANCIEN}#audio-1"', corps)
-        historique = corps[corps.index("Historique complet des exécutions") :]
+        self.assertNotIn("<table", corps)
+        self.assertNotIn(ID_AUTRE, corps, "pas d'entrée illisible dans Résultats")
+        # L'historique complet, y compris l'entrée illisible et l'identité
+        # complète d'un modèle supprimé, reste tenu par Exécutions sans perte.
+        historique = self.historique()
+        historique = historique[historique.index("Historique complet des exécutions") :]
+        self.assertIn("organisation/modele-supprime", historique)
         self.assertIn(ID_AUTRE, historique)
         self.assertIn("non interprétable", historique)
         self.assertIn(ID_ANCIEN, historique)
-        self.assertNotIn("<table", corps[: corps.index("Historique complet des exécutions")])
 
 
 if __name__ == "__main__":

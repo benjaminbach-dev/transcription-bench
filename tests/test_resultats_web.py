@@ -311,16 +311,16 @@ class ResultatsWebTest(SocleWebTest):
     def test_page_resultats_vide_sans_creation_de_dossier(self) -> None:
         corps = self.page("/resultats")
 
-        self.assertIn("Aucune exécution enregistrée", corps)
-        self.assertIn(str(self.dossier_data / "results"), corps)
+        self.assertIn("Aucune transcription à regrouper", corps)
         # Le lien vers les groupes et le classement est mis en avant.
         self.assertIn('href="/resultats/comparaison"', corps)
         self.assertIn(">Comparer</a>", corps)
         self.assertIn('href="/resultats/aide"', corps)
-        self.assertIn('href="/"', corps)
+        # L'historique complet et le dossier des résultats sont dans Exécutions.
+        self.assertIn('href="/executions#historique"', corps)
         self.assertFalse(self.dossier_data.exists())
 
-    def test_liste_des_executions_ordre_etats_et_marques(self) -> None:
+    def test_historique_des_executions_ordre_etats_et_marques(self) -> None:
         recent = run_json(
             IDENTIFIANT,
             audios=(("a.wav", STATUT_OK), ("b.wav", STATUT_NON_TRAITE)),
@@ -331,7 +331,7 @@ class ResultatsWebTest(SocleWebTest):
             run_json("20240101-010101-11223344", etat=ETAT_ECHOUEE),
         )
 
-        corps = self.page("/resultats")
+        corps = self.page("/executions")
 
         self.assertIn(f'href="/resultats/{IDENTIFIANT}"', corps)
         self.assertLess(
@@ -555,7 +555,7 @@ class ResultatsWebTest(SocleWebTest):
         dossier.mkdir()
         (dossier / "run.json").write_text("{ pas du json", encoding="utf-8")
 
-        corps = self.page("/resultats")
+        corps = self.page("/executions")
 
         self.assertIn("non interprétable", corps)
         self.assertIn(IDENTIFIANT, corps)
@@ -574,7 +574,7 @@ class ResultatsWebTest(SocleWebTest):
         for run in (audios_invalides, statut_invalide):
             ecrire_execution(self.dossier_data, run)
 
-        corps = self.page("/resultats")
+        corps = self.page("/executions")
 
         self.assertIn("non interprétable", corps)
         self.assertIn("20240101-000000-00000001", corps)
@@ -599,12 +599,12 @@ class ResultatsWebTest(SocleWebTest):
         }
         self.assertEqual(avant, apres)
 
-    def test_liste_dossier_resultats_illisible_message_fixe(self) -> None:
+    def test_historique_dossier_resultats_illisible_message_fixe(self) -> None:
         # Un fichier à la place du dossier des résultats rend la liste illisible.
         self.dossier_data.mkdir(parents=True)
         (self.dossier_data / "results").write_text("pas un dossier", encoding="utf-8")
 
-        corps = self.page("/resultats")
+        corps = self.page("/executions")
 
         self.assertIn("n'a pas pu être lu", corps)
         self.assertNotIn("Traceback", corps)

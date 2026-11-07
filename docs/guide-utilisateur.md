@@ -135,7 +135,7 @@ La commande est la même sous Linux et sous Windows. Gardez ce terminal ouvert :
 Interface disponible : http://127.0.0.1:8765
 ```
 
-Ouvrez cette adresse dans votre navigateur. La page d'accueil s'affiche, avec un rappel que le prototype n'est pas validé cliniquement et un menu vers **Audios**, **Moteurs**, **Modèles**, **Exécutions**, **Résultats**, **Comparaisons** et **Opération**.
+Ouvrez cette adresse dans votre navigateur. La page **Résultats** s'affiche : l'adresse racine (`/`) y mène directement. Le menu propose six rubriques, dans cet ordre : **Résultats**, **Comparaisons**, **Exécutions**, **Modèles**, **Moteurs** et **Audios**. La rubrique de la page où vous êtes est signalée dans le menu.
 
 *Si ce n'est pas le cas.* Voir « port déjà utilisé », « commande introuvable » et « la page ne s'ouvre pas » dans le [dépannage](#13-dépannage). Pour choisir un autre port : `uv run --locked transcription-bench --port 8080`.
 
@@ -164,7 +164,7 @@ Pour l'exemple de ce guide, il faut le moteur transcribe.cpp.
 
 1. Ouvrez la page **Moteurs**.
 2. Repérez la ligne « transcribe.cpp (GGUF) » dont l'état est « non installé ».
-3. Cliquez sur **Installer ce moteur**, puis suivez l'avancement dans la page **Opération** (ou **Consulter le journal d'installation**).
+3. Cliquez sur **Installer ce moteur**, puis suivez l'avancement dans **Exécutions**, section **Opération longue** (ou **Consulter le journal d'installation**).
 
 *Vous devez voir.* À la fin, l'état de « transcribe.cpp (GGUF) » devient « prêt ». L'installation télécharge des éléments : sa durée et sa taille n'ont pas été mesurées pour ce guide.
 
@@ -190,7 +190,7 @@ Pour l'exemple, utilisez :
 1. Ouvrez la page **Modèles**.
 2. Dans **Vérifier un dépôt**, saisissez l'identifiant ci-dessus dans **Identifiant Hugging Face**, choisissez « transcribe.cpp (GGUF) » dans **Moteur installé**, laissez **Révision facultative** vide.
 3. Cliquez sur **Vérifier la compatibilité sans télécharger**. Si la page propose plusieurs variantes, cliquez sur le bouton qui porte le nom `whisper-large-v3-turbo-Q5_K_M.gguf` (il commence par « Vérifier avec »).
-4. Quand la page indique « Dépôt compatible », contrôlez la taille, puis cliquez sur **Télécharger ce modèle à la révision vérifiée**. Suivez l'avancement dans la page **Opération**.
+4. Quand la page indique « Dépôt compatible », contrôlez la taille, puis cliquez sur **Télécharger ce modèle à la révision vérifiée**. Suivez l'avancement dans **Exécutions**, section **Opération longue**.
 
 *Vous devez voir.* Le modèle apparaît dans **Modèles locaux prêts**.
 
@@ -214,11 +214,11 @@ Vérification : non éprouvé à froid. Ce modèle a été exécuté sous Linux 
 1. Ouvrez la page **Exécutions**.
 2. Dans **Nouvelle demande**, trouvez le bloc de votre modèle ; cochez un ou plusieurs audios ; laissez **Threads demandés** à la valeur proposée.
 3. Cliquez sur **Lancer l'exécution** (le bouton **Vérifier la demande (aucun lancement)** sert seulement à contrôler la demande).
-4. Suivez l'avancement dans la page **Opération** : cliquez sur **Actualiser** de temps en temps.
+4. Suivez l'avancement dans **Exécutions**, section **Opération longue** : l'état se met à jour automatiquement toutes les 3 secondes tant que l'opération est active. Si le suivi automatique s'interrompt, le lien **Actualiser** recharge l'état ; le journal technique reste replié et s'ouvre sur demande.
 
 *Vous devez voir.* L'état passe à « en cours », puis à « terminée ». Une seule transcription tourne à la fois. Le temps nécessaire dépend de la longueur de l'audio et de votre ordinateur (non mesuré pour ce guide).
 
-*Si ce n'est pas le cas.* Voir « transcription vide ou exécution interrompue » dans le [dépannage](#13-dépannage). Le bouton **Arrêter l'exécution** (page **Opération**) interrompt une exécution : les résultats déjà obtenus sont conservés.
+*Si ce n'est pas le cas.* Voir « transcription vide ou exécution interrompue » dans le [dépannage](#13-dépannage). Le bouton **Arrêter l'exécution** (page **Exécutions**) interrompt une exécution : les résultats déjà obtenus sont conservés.
 
 Vérification : non éprouvé à froid.
 
@@ -230,7 +230,7 @@ Vérification : non éprouvé à froid.
 
 Une marque **SYNTHÉTIQUE** seule signale un audio ou un texte de test : elle ne dit rien du moteur ni des mesures. Les marques **FACTICE** ou **MESURES SIMULÉES** signalent, elles, un moteur factice ou des valeurs simulées.
 
-*Historique.* Tous les essais, y compris les échecs, les interruptions et les résultats non interprétables, restent dans **Historique complet des exécutions**, replié sous la liste. Chaque exécution exploitable y ouvre son détail. Dans ce détail, le texte complet vient après le modèle et les mesures ; les mesures détaillées, les segments et les informations de l'exécution suivent dans des blocs que vous pouvez ouvrir.
+*Historique.* Tous les essais, y compris les échecs, les interruptions et les résultats non interprétables, restent dans **Exécutions**, sous **Historique complet des exécutions** ; le lien *historique complet des exécutions* de la page **Résultats** y mène. Chaque exécution exploitable y ouvre son détail. Dans ce détail, le texte complet vient après le modèle et les mesures ; les mesures détaillées, les segments et les informations de l'exécution suivent dans des blocs que vous pouvez ouvrir.
 
 Relisez toujours le texte en écoutant l'audio. Une phrase fluide peut être fausse.
 
@@ -277,10 +277,10 @@ Pour chaque cas : ce que vous voyez, la cause probable, que faire.
 | Pas de connexion Internet | Réseau coupé | Reconnectez-vous : moteur, vérification et téléchargement de modèle en ont besoin ; une fois tout installé, une transcription n'en a plus besoin |
 | Un audio est listé avec une erreur, ou « lecture impossible » | Fichier abîmé, vide, ou format non pris en charge | Vérifiez que le format est wav, mp3, m4a, ogg, opus ou flac ; réexportez le fichier |
 | « nom refusé » | Le nom ou la cible du fichier n'est pas accepté | Renommez le fichier simplement, sans sous-dossier ni lien |
-| Texte vide ou exécution « interrompue » ou « échouée » | Audio sans parole décodable, arrêt demandé, application fermée pendant le travail | Relancez une exécution ; la page **Opération** affiche la dernière erreur |
+| Texte vide ou exécution « interrompue » ou « échouée » | Audio sans parole décodable, arrêt demandé, application fermée pendant le travail | Relancez une exécution ; la page **Exécutions** affiche la dernière erreur |
 | « une autre instance utilise déjà ce dossier de données » dans le terminal | L'application est déjà lancée dans un autre terminal | Fermez l'autre instance (`Ctrl+C` dans son terminal), puis relancez |
 | Exécution marquée « abandonnée » dans **Résultats** | L'application a été fermée brutalement pendant le travail | Relancez l'application, puis une nouvelle exécution ; les audios sans résultat sont signalés non traités |
-| « Une opération longue est déjà en cours » | Une seule opération à la fois | Attendez la fin ou arrêtez-la depuis **Opération** |
+| « Une opération longue est déjà en cours » | Une seule opération à la fois | Attendez la fin ou arrêtez-la depuis **Exécutions** |
 
 ## Glossaire
 

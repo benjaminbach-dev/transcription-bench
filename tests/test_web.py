@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import html
-import re
 import tempfile
 import threading
 import unittest
@@ -87,7 +86,7 @@ class SocleWebTest(unittest.TestCase):
 
 class WebTest(SocleWebTest):
     def test_fabrique_sans_effet_de_bord(self) -> None:
-        reponse = self.client.get("/", base_url=self.base_url())
+        reponse = self.client.get("/resultats", base_url=self.base_url())
 
         self.assertEqual(reponse.status_code, 200)
         self.assertFalse(self.dossier_data.exists())
@@ -99,8 +98,8 @@ class WebTest(SocleWebTest):
         self.assertEqual(self.app.config["DOSSIER_DATA"], str(self.dossier_data))
         self.assertNotIn("Set-Cookie", reponse.headers)
 
-    def test_accueil_liste_les_dossiers_de_donnees(self) -> None:
-        reponse = self.client.get("/", base_url=self.base_url())
+    def test_executions_liste_les_dossiers_de_donnees(self) -> None:
+        reponse = self.client.get("/executions", base_url=self.base_url())
         corps = reponse.get_data(as_text=True)
 
         self.assertEqual(reponse.status_code, 200)
@@ -109,13 +108,13 @@ class WebTest(SocleWebTest):
             self.assertIn(str(self.dossier_data / nom), corps)
         self.verifier_html_seul(corps)
 
-    def test_accueil_echappe_le_contenu_dynamique(self) -> None:
+    def test_executions_echappe_le_contenu_dynamique(self) -> None:
         dossier_piege = self.dossier_data / "<script>alert(1)</script>"
         app = create_app(
             ConfigApplication(port=PORT_TEST, dossier_data=dossier_piege),
             self.services(),
         )
-        reponse = app.test_client().get("/", base_url=self.base_url())
+        reponse = app.test_client().get("/executions", base_url=self.base_url())
         corps = reponse.get_data(as_text=True)
 
         self.assertEqual(reponse.status_code, 200)
@@ -146,7 +145,10 @@ class WebTest(SocleWebTest):
         reponse = self.post_autorise("/dossiers/verifier")
 
         self.assertEqual(reponse.status_code, 303)
-        self.assertEqual(reponse.headers["Location"], "/?action=dossiers-verifies")
+        self.assertEqual(
+            reponse.headers["Location"],
+            "/executions?action=dossiers-verifies#diagnostics",
+        )
         # Corps d'une redirection 303 : pas encore une page de l'interface, donc
         # sans les deux feuilles, mais toujours sans script ni style.
         assert_sans_script_ni_style(self, reponse.get_data(as_text=True))
@@ -215,8 +217,10 @@ class ProtectionsRequetesTest(SocleWebTest):
         self.assertNotEqual(self.jeton(autre), self.jeton())
         self.assertTrue(self.jeton())
 
-    def test_accueil_contient_le_jeton_en_champ_cache(self) -> None:
-        corps = self.client.get("/", base_url=self.base_url()).get_data(as_text=True)
+    def test_executions_contient_le_jeton_en_champ_cache(self) -> None:
+        corps = self.client.get("/executions", base_url=self.base_url()).get_data(
+            as_text=True
+        )
 
         self.assertIn(f'name="{NOM_CHAMP_JETON}"', corps)
         self.assertIn(f'value="{self.jeton()}"', corps)
@@ -245,7 +249,7 @@ class ProtectionsRequetesTest(SocleWebTest):
     def test_localhost_et_adresse_locale_acceptes(self) -> None:
         for base in (self.base_url(), f"http://localhost:{PORT_TEST}"):
             with self.subTest(base=base):
-                page = self.client.get("/", base_url=base)
+                page = self.client.get("/resultats", base_url=base)
                 self.assertEqual(page.status_code, 200)
 
                 action = self.post_autorise("/dossiers/verifier", base_url=base)
@@ -400,90 +404,73 @@ class ProtectionsRequetesTest(SocleWebTest):
         self.assertEqual(self.appels, [self.dossier_data])
 
 
-class AccueilEtPagesReellesTest(SocleWebTest):
-    """Accueil complet (créneau, dossiers, liens) et pages réelles sans effet de bord."""
+class PagesReellesTest(SocleWebTest):
+    """Entrée directe, pages réelles et liens utiles, sans effet de bord."""
 
     def texte(self, chemin: str) -> str:
         reponse = self.client.get(chemin, base_url=self.base_url())
         self.assertEqual(reponse.status_code, 200, chemin)
         return html.unescape(reponse.get_data(as_text=True))
 
-    def test_accueil_affiche_creneau_dossiers_et_liens_utiles(self) -> None:
-        corps = self.texte("/")
+    def test_resultats_est_l_entree_et_renvoie_a_l_historique(self) -> None:
+        corps = self.texte("/resultats")
 
-        self.assertIn("<dt>État</dt>", corps)
-        self.assertIn("<dd>libre</dd>", corps)
-        self.assertIn("Aucun moteur n'est installé", corps)
-        self.assertIn("ne télécharge rien", corps)
-        self.assertIn("démarre l'exécution dans le créneau global", corps)
-        self.assertNotIn(
-            "comparaison côte à côte n'est pas encore disponible",
-            corps,
-            "l'accueil ne doit plus annoncer la comparaison comme indisponible (tâche 7.2)",
-        )
-        self.assertIn("Comparer des transcriptions d'un même audio", corps)
-        self.assertIn("empreinte SHA-256", corps)
+        self.assertIn("<h1>Résultats</h1>", corps)
+        self.assertIn('href="/resultats/comparaison"', corps)
+        self.assertIn('href="/resultats/aide"', corps)
+        # L'historique complet a quitté Résultats pour Exécutions (tâche 3.1) :
+        # un lien secondaire y mène, sans recréer de page d'accueil.
+        self.assertIn('href="/executions#historique"', corps)
         contenu = corps.split("<main>", 1)[1]
-        self.assertNotIn(
-            'href="/"',
-            contenu,
-            "l'accueil ne se lie pas à lui-même dans son contenu "
-            "(la navigation commune, elle, pointe vers l'accueil)",
-        )
+        self.assertNotIn('href="/"', contenu, "plus de lien interne vers l'accueil")
+        self.verifier_html_seul(corps)
+
+    def test_executions_montre_dossiers_et_verification_explicite(self) -> None:
+        corps = self.texte("/executions")
+
+        self.assertIn("<h2 id=\"diagnostics\">Dossiers de données</h2>", corps)
         for nom in DOSSIERS_DATA:
             self.assertIn(str(self.dossier_data / nom), corps)
         self.assertIn("(absent)", corps)
-
-        liens = set(re.findall(r'<a href="([^"]+)"', corps))
-        attendus = {
-            "/operation",
-            "/moteurs",
-            "/modeles",
-            "/audios",
-            "/executions",
-            "/resultats",
-            "/resultats/comparaison",
-        }
-        self.assertLessEqual(attendus, liens)
-        for lien in sorted(liens):
-            page = self.client.get(lien, base_url=self.base_url())
-            self.assertEqual(page.status_code, 200, lien)
-            self.verifier_html_seul(page.get_data(as_text=True))
-        self.assertFalse(self.dossier_data.exists())
-
-    def test_pages_reelles_sans_effet_de_bord(self) -> None:
-        # Les pages des moteurs (4.4), des modèles (5.4), des audios (6.1), des
-        # exécutions (6.2) et des résultats (7.1) sont réelles.
-        corps_resultats = self.texte("/resultats")
-        self.assertNotIn("Fonctionnalité non disponible", corps_resultats)
-        self.assertIn("Aucune exécution enregistrée", corps_resultats)
-        self.assertIn(str(self.dossier_data / "results"), corps_resultats)
-        self.assertIn('href="/"', corps_resultats)
-        self.verifier_html_seul(corps_resultats)
-        corps_moteurs = self.texte("/moteurs")
-        self.assertNotIn("Fonctionnalité non disponible", corps_moteurs)
-        self.assertIn("Moteurs", corps_moteurs)
-        corps_modeles = self.texte("/modeles")
-        self.assertNotIn("Fonctionnalité non disponible", corps_modeles)
-        self.assertIn("Modèles", corps_modeles)
-        corps_audios = self.texte("/audios")
-        self.assertNotIn("Fonctionnalité non disponible", corps_audios)
-        self.assertIn("Aucun fichier audio", corps_audios)
-        self.verifier_html_seul(corps_audios)
-        corps_executions = self.texte("/executions")
-        self.assertNotIn("Fonctionnalité non disponible", corps_executions)
-        self.assertIn("créneau global", corps_executions)
-        self.verifier_html_seul(corps_executions)
+        # La vérification reste une action POST explicite, jamais un GET.
+        self.assertIn('method="post" action="/dossiers/verifier"', corps)
+        self.assertIn("Vérifier les dossiers de données", corps)
+        self.assertIn(f'name="{NOM_CHAMP_JETON}"', corps)
+        self.verifier_html_seul(corps)
         self.assertFalse(
             self.dossier_data.exists(),
             "une page réelle a créé ou touché les dossiers de données",
         )
 
-    def test_accueil_reflete_une_operation_en_cours_et_lien_operation(self) -> None:
+    def test_liens_de_navigation_menent_a_des_pages_reelles(self) -> None:
+        for chemin in (
+            "/resultats",
+            "/resultats/comparaison",
+            "/executions",
+            "/modeles",
+            "/moteurs",
+            "/audios",
+        ):
+            with self.subTest(chemin=chemin):
+                corps = self.texte(chemin)
+                self.assertNotIn("Fonctionnalité non disponible", corps)
+                self.verifier_html_seul(corps)
+
+        self.assertIn("Aucune transcription à regrouper", self.texte("/resultats"))
+        self.assertIn("créneau global", self.texte("/executions"))
+        self.assertIn("Moteurs", self.texte("/moteurs"))
+        self.assertIn("Modèles", self.texte("/modeles"))
+        self.assertIn("Aucun fichier audio", self.texte("/audios"))
+        self.assertFalse(
+            self.dossier_data.exists(),
+            "une page réelle a créé ou touché les dossiers de données",
+        )
+
+    def test_executions_reflete_une_operation_en_cours(self) -> None:
         liberation = threading.Event()
         self.addCleanup(liberation.set)
         self.creneau.demarrer(
-            "execution", lambda travailleur: liberation.wait(60), cible="test accueil"
+            "execution", lambda travailleur: liberation.wait(60), cible="test suivi"
         )
 
         def terminer() -> None:
@@ -494,23 +481,97 @@ class AccueilEtPagesReellesTest(SocleWebTest):
                 thread.join(10)
 
         self.addCleanup(terminer)
-        corps = self.texte("/")
+        corps = self.texte("/executions")
 
-        self.assertIn("<dd>en cours</dd>", corps)
-        self.assertIn("<dd>exécution</dd>", corps)
-        self.assertIn("<dd>test accueil</dd>", corps)
+        self.assertIn('id="operation"', corps)
+        self.assertIn("État : en cours", corps)
+        self.assertIn("Type : exécution", corps)
+        self.assertIn("Cible : test suivi", corps)
+        self.assertIn("Journal", corps)
+        self.assertIn("Actualiser", corps)
 
-        page = self.texte("/operation")
-        self.assertIn("Journal", page)
-        self.assertIn('href="/"', page)
-        self.assertIn("Actualiser", page)
-
-    def test_accueil_apres_arret_indique_le_refus(self) -> None:
+    def test_executions_apres_arret_indique_le_refus(self) -> None:
         self.creneau.arreter()
 
-        corps = self.texte("/")
+        corps = self.texte("/executions")
 
         self.assertIn("Arrêt du serveur demandé", corps)
+
+
+class NavigationEtAnciensLiensTest(SocleWebTest):
+    """Navigation à six rubriques, redirections GET fixes et messages bornés."""
+
+    def test_racine_redirige_vers_resultats(self) -> None:
+        for chemin in ("/", "/?next=/modeles", "/?action=dossiers-verifies"):
+            with self.subTest(chemin=chemin):
+                reponse = self.client.get(chemin, base_url=self.base_url())
+
+                self.assertEqual(reponse.status_code, 302)
+                self.assertEqual(reponse.headers["Location"], "/resultats")
+                self.assertNotIn("Set-Cookie", reponse.headers)
+
+    def test_racine_ne_repercute_aucune_redirection_libre(self) -> None:
+        for cible in ("/modeles", "http://evil.example/x", "//evil.example"):
+            with self.subTest(cible=cible):
+                reponse = self.client.get(
+                    f"/?next={cible}", base_url=self.base_url()
+                )
+
+                self.assertEqual(reponse.status_code, 302)
+                self.assertEqual(reponse.headers["Location"], "/resultats")
+
+    def test_ancien_lien_operation_redirige_vers_executions(self) -> None:
+        reponse = self.client.get("/operation", base_url=self.base_url())
+
+        self.assertEqual(reponse.status_code, 302)
+        self.assertEqual(reponse.headers["Location"], "/executions#operation")
+        self.assertNotIn("Set-Cookie", reponse.headers)
+
+    def test_ancien_lien_operation_traduit_seulement_les_codes_d_arret(self) -> None:
+        for action in ("arret-demande", "arret-incomplet"):
+            with self.subTest(action=action):
+                reponse = self.client.get(
+                    f"/operation?action={action}", base_url=self.base_url()
+                )
+
+                self.assertEqual(reponse.status_code, 302)
+                self.assertEqual(
+                    reponse.headers["Location"],
+                    f"/executions?action={action}#operation",
+                )
+
+        for action in ("dossiers-verifies", "inconnu", "", "verification-lancee"):
+            with self.subTest(action=action):
+                reponse = self.client.get(
+                    f"/operation?action={action}", base_url=self.base_url()
+                )
+
+                self.assertEqual(reponse.status_code, 302)
+                self.assertEqual(reponse.headers["Location"], "/executions#operation")
+
+    def test_ancien_lien_operation_ne_repercute_aucun_autre_parametre(self) -> None:
+        reponse = self.client.get(
+            "/operation?action=arret-demande&next=http://evil.example/x",
+            base_url=self.base_url(),
+        )
+
+        self.assertEqual(reponse.status_code, 302)
+        self.assertEqual(
+            reponse.headers["Location"], "/executions?action=arret-demande#operation"
+        )
+
+    def test_redirections_aboutissent_sur_les_nouvelles_destinations(self) -> None:
+        for chemin, titre in (
+            ("/", "<h1>Résultats</h1>"),
+            ("/operation", "<h1>Exécutions</h1>"),
+        ):
+            with self.subTest(chemin=chemin):
+                reponse = self.client.get(
+                    chemin, base_url=self.base_url(), follow_redirects=True
+                )
+
+                self.assertEqual(reponse.status_code, 200)
+                self.assertIn(titre, reponse.get_data(as_text=True))
 
 
 if __name__ == "__main__":
