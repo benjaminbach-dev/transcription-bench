@@ -27,8 +27,10 @@ from transcription_bench.consultation_resultats import (
 )
 from transcription_bench.paths import ValeurRefusee
 from transcription_bench.resultats import (
+    ETAT_ECHOUEE,
     ETAT_INTERROMPUE,
     ETAT_TERMINEE,
+    STATUT_ERREUR,
     STATUT_OK,
 )
 from transcription_bench.web.vues_resultats import etats_ligne, vue_ligne
@@ -237,6 +239,28 @@ class VueLigneTest(unittest.TestCase):
             etat=ETAT_TERMINEE,
         )
         self.assertEqual(etats_ligne(entree), [])
+
+    def test_le_statut_porte_son_sujet_avant_l_etat(self) -> None:
+        # « audio : erreur » suivi de « en échec » se lit sans ambiguïté ; les
+        # deux badges nus (« erreur en échec ») formaient une fausse phrase.
+        entree = EntreeEmpreinte(
+            execution=ID_RECENT,
+            ordre=1,
+            nom="a.wav",
+            empreinte=EMPREINTE_A,
+            statut=STATUT_ERREUR,
+            libelle_statut="erreur",
+            libelle_etat="en échec",
+            partiel=True,
+            marques=("FACTICE",),
+            modele="m",
+            moteur="moteur",
+            etat=ETAT_ECHOUEE,
+        )
+
+        self.assertEqual(
+            etats_ligne(entree), ["audio : erreur", "en échec", "FACTICE"]
+        )
 
 
 class PageResultatsTest(SocleWebTest):
