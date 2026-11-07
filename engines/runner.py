@@ -294,12 +294,17 @@ def _executer_job(job: Job, registre: RegistreMoteurs) -> None:
         duree_chargement = DUREE_CHARGEMENT_SIMULEE_S
         pic_chargement = PIC_MEMOIRE_SIMULE_OCTETS
     # Instantané de RAM après le chargement, sans aucun CPU de chargement (D1).
-    # Un objet hors contrat D3 est écarté et signalé, jamais émis.
-    observation_chargement = _observation_systeme_emise(
-        releveur_systeme.observation_chargement(),
-        moment=MOMENT_CHARGEMENT,
-        mesures_simulees=factice,
-    )
+    # Un objet hors contrat D3 est écarté et signalé, jamais émis. Un échec
+    # imprévu du relevé reste sans effet : aucun arrêt du job (D1).
+    try:
+        observation_chargement = _observation_systeme_emise(
+            releveur_systeme.observation_chargement(),
+            moment=MOMENT_CHARGEMENT,
+            mesures_simulees=factice,
+        )
+    except Exception:
+        observation_chargement = None
+        print("Relevé système ignoré (chargement) : erreur imprévue", file=sys.stderr)
     evenement_chargement: dict[str, Any] = {
         "type": TYPE_CHARGEMENT,
         "duree_s": duree_chargement,
@@ -563,12 +568,17 @@ def _traiter_audio(
             temps_cpu = time.process_time() - cpu_debut
         # Les bornes du moteur sont arrêtées : le CPU système est lu avant la
         # sérialisation, puis la RAM disponible est relevée (design D1). Le pic
-        # mémoire du moteur est une mesure distincte, relevée ensuite.
-        observation_systeme = _observation_systeme_emise(
-            releveur_systeme.observation_audio(amorcage_systeme),
-            moment=MOMENT_AUDIO,
-            mesures_simulees=factice,
-        )
+        # mémoire du moteur est une mesure distincte, relevée ensuite. Un échec
+        # imprévu du relevé reste sans effet : aucun arrêt de l'audio (D1).
+        try:
+            observation_systeme = _observation_systeme_emise(
+                releveur_systeme.observation_audio(amorcage_systeme),
+                moment=MOMENT_AUDIO,
+                mesures_simulees=factice,
+            )
+        except Exception:
+            observation_systeme = None
+            print("Relevé système ignoré (audio) : erreur imprévue", file=sys.stderr)
         pic_audio = PIC_MEMOIRE_SIMULE_OCTETS if factice else pic_memoire()
         evenement: dict[str, Any] = {
             "type": TYPE_AUDIO,

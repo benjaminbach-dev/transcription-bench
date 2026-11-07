@@ -83,10 +83,11 @@ from __future__ import annotations
 
 import itertools
 import math
+import re
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from typing import Any
 
@@ -96,6 +97,9 @@ import psutil
 VERSION_METHODE = 1
 #: Identifiant de la méthode de relevé CPU employée, pas une promesse de mesure.
 METHODE_CPU = "psutil-cpu-percent-nonbloquant-v1"
+#: Numéro de version psutil acceptable (court, formaté), jamais un texte libre :
+#: ces deux valeurs sont des identifiants de protocole, pas des messages.
+_MOTIF_VERSION_PSUTIL = re.compile(r"\d{1,3}(\.\d{1,3}){1,3}[A-Za-z0-9.\-_+]{0,12}")
 #: Intervalle monotone minimal, en secondes, entre amorçage et lecture.
 INTERVALLE_MINIMUM_S = 0.1
 
@@ -150,10 +154,18 @@ def horodatage_utc() -> str:
 
 
 def _est_nombre_fini(valeur: Any) -> bool:
-    """Nombre réel fini ; un booléen est exclu bien qu'il soit un `int`."""
+    """Nombre réel fini ; un booléen est exclu bien qu'il soit un `int`.
+
+    Un entier gigantesque n'est pas convertible en flottant : `math.isfinite`
+    lève alors `OverflowError`, intercepté ici comme une valeur hors contrat
+    (jamais une exception de validation).
+    """
     if isinstance(valeur, bool) or not isinstance(valeur, (int, float)):
         return False
-    return math.isfinite(valeur)
+    try:
+        return math.isfinite(valeur)
+    except OverflowError:
+        return False
 
 
 def _est_entier_positif(valeur: Any) -> bool:
@@ -215,10 +227,11 @@ def _horodatage_valide(valeur: Any) -> bool:
     if not isinstance(valeur, str) or not valeur.strip():
         return False
     try:
-        datetime.fromisoformat(valeur)
+        instant = datetime.fromisoformat(valeur)
     except ValueError:
         return False
-    return True
+    # D3 : un instant ISO UTC ; une date seule ou sans décalage nul est refusée.
+    return instant.tzinfo is not None and instant.utcoffset() == timedelta(0)
 
 
 def _champs_manquants(objet: Mapping[str, Any], champs: tuple[str, ...]) -> list[str]:
@@ -250,6 +263,8 @@ def _valider_memoire(objet: Any) -> tuple[dict[str, Any] | None, str | None]:
         return None, "mémoire disponible hors contrat"
     if totale is not None and disponible is not None and disponible > totale:
         return None, "mémoire disponible supérieure à la mémoire totale"
+    if totale is None and disponible is not None:
+        return None, "mémoire disponible sans mémoire totale"
     if motif is not None and motif not in MOTIFS_ECRITS:
         return None, "motif de mémoire hors contrat"
     if motif is None and (totale is None or disponible is None):
@@ -294,10 +309,23 @@ def _valider_cpu(objet: Any) -> tuple[dict[str, Any] | None, str | None]:
         return None, "relevé CPU incomplet sans motif"
     if motif is not None and pourcentage is not None:
         return None, "motif CPU alors qu'un pourcentage est présent"
+    # D2 recroisé à la validation : sans motif, la fenêtre doit atteindre le
+    # seuil ; le motif d'intervalle trop court doit décrire une fenêtre
+    # réellement sous le seuil (absente ou courte).
+    if motif is None and intervalle < INTERVALLE_MINIMUM_S:
+        return None, "intervalle CPU sous le seuil minimal sans motif"
+    if (
+        motif == MOTIF_INTERVALLE_TROP_COURT
+        and intervalle is not None
+        and intervalle >= INTERVALLE_MINIMUM_S
+    ):
+        return None, "motif d'intervalle trop court pour une fenêtre suffisante"
     return (
         {
-            "pourcentage_moyen": pourcentage,
-            "intervalle_s": intervalle,
+            "pourcentage_moyen": (
+                float(pourcentage) if pourcentage is not None else None
+            ),
+            "intervalle_s": float(intervalle) if intervalle is not None else None,
             "motif": motif,
         },
         None,
@@ -328,12 +356,16 @@ def valider_observation_systeme(
         return None, "version de relevé système non entière"
     if version != VERSION_METHODE:
         return None, "version de relevé système non prise en charge"
+    # Version 1 : l'identifiant de méthode est fixe et la version de psutil est
+    # un court numéro formaté — jamais de texte libre ni de message d'OS (D3).
     methode = objet["methode_cpu"]
-    if not isinstance(methode, str) or not methode.strip():
-        return None, "méthode CPU absente"
+    if methode != METHODE_CPU:
+        return None, "méthode CPU hors contrat"
     version_psutil = objet["version_psutil"]
-    if not isinstance(version_psutil, str) or not version_psutil.strip():
-        return None, "version de psutil absente"
+    if not isinstance(version_psutil, str) or not _MOTIF_VERSION_PSUTIL.fullmatch(
+        version_psutil
+    ):
+        return None, "version de psutil hors contrat"
     provenance = objet["provenance"]
     if provenance not in PROVENANCES:
         return None, "provenance de relevé système inconnue"
@@ -364,7 +396,7 @@ def valider_observation_systeme(
 
 
 def _resultat_memoire(
-    releve_le: str,
+    releve_le: str | None,
     totale: int | None,
     disponible: int | None,
     motif: str | None,
@@ -471,7 +503,10 @@ class ReleveurSysteme:
         contrainte `available <= total` n'invalide que `disponible_octets`. Le
         motif porte sur l'instantané entier.
         """
-        releve_le = self._horodatage()
+        try:
+            releve_le = self._horodatage()
+        except Exception:  # jamais fatal : l'objet sera écarté, l'audio intact
+            return _resultat_memoire(None, None, None, MOTIF_LECTURE_IMPOSSIBLE)
         try:
             valeur = self._memoire()
         except Exception:

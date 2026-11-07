@@ -730,6 +730,147 @@ class ValidationObservationSystemeTest(unittest.TestCase):
         self.assertEqual(provenance_attendue(False), PROVENANCE_REELLE)
         self.assertEqual(provenance_attendue(None), PROVENANCE_REELLE)
 
+    def test_entier_geant_ecarte_sans_exception(self) -> None:
+        # Un entier gigantesque déclenche `OverflowError` dans `math.isfinite` :
+        # la validation doit l'écarter sans planter (jamais une perte d'audio).
+        for champ in ("pourcentage_moyen", "intervalle_s"):
+            with self.subTest(champ=champ):
+                cpu = dict(_cpu())
+                cpu[champ] = 10**400
+                normalise, motif = valider_observation_systeme(
+                    _observation(cpu=cpu), moment=MOMENT_AUDIO, mesures_simulees=False
+                )
+
+                self.assertIsNone(normalise)
+                self.assertTrue(motif)
+
+    def test_texte_libre_ecarte_pour_methode_et_version(self) -> None:
+        # Version 1 : identifiant de méthode fixe et numéro de version formaté.
+        for methode in (
+            "Traceback (most recent call last): OSError",
+            METHODE_CPU + "x",
+            METHODE_CPU + " " + "A" * 200,
+        ):
+            with self.subTest(methode=methode[:30]):
+                normalise, motif = valider_observation_systeme(
+                    _observation(methode_cpu=methode),
+                    moment=MOMENT_AUDIO,
+                    mesures_simulees=False,
+                )
+
+                self.assertIsNone(normalise)
+                self.assertIn("méthode CPU", motif or "")
+        for version in ("Traceback: [Errno 13] /home/x", "A" * 100, "7.2.2 beta"):
+            with self.subTest(version=version[:30]):
+                normalise, motif = valider_observation_systeme(
+                    _observation(version_psutil=version),
+                    moment=MOMENT_AUDIO,
+                    mesures_simulees=False,
+                )
+
+                self.assertIsNone(normalise)
+                self.assertIn("psutil", motif or "")
+
+    def test_seuil_intervalle_recroise_a_la_validation(self) -> None:
+        # D2 : sans motif, la fenêtre doit atteindre 0,1 s ; le motif
+        # d'intervalle trop court doit décrire une fenêtre réellement courte.
+        trop_court_sans_motif = {
+            "pourcentage_moyen": 50.0,
+            "intervalle_s": 0.001,
+            "motif": None,
+        }
+        normalise, motif = valider_observation_systeme(
+            _observation(cpu=trop_court_sans_motif),
+            moment=MOMENT_AUDIO,
+            mesures_simulees=False,
+        )
+
+        self.assertIsNone(normalise)
+        self.assertIn("seuil", motif or "")
+
+        motif_trompeur = {
+            "pourcentage_moyen": None,
+            "intervalle_s": 2.0,
+            "motif": MOTIF_INTERVALLE_TROP_COURT,
+        }
+        normalise, motif = valider_observation_systeme(
+            _observation(cpu=motif_trompeur),
+            moment=MOMENT_AUDIO,
+            mesures_simulees=False,
+        )
+
+        self.assertIsNone(normalise)
+        self.assertIn("trop court", motif or "")
+
+        # En revanche, la fenêtre courte observée avec son motif reste légale.
+        court_avec_motif = {
+            "pourcentage_moyen": None,
+            "intervalle_s": 0.05,
+            "motif": MOTIF_INTERVALLE_TROP_COURT,
+        }
+        normalise, motif = valider_observation_systeme(
+            _observation(cpu=court_avec_motif),
+            moment=MOMENT_AUDIO,
+            mesures_simulees=False,
+        )
+
+        self.assertIsNone(motif)
+        self.assertIsNotNone(normalise)
+
+    def test_instant_hors_utc_ecarte(self) -> None:
+        for instant in (
+            "2026-11-07",
+            "2026-11-07T10:00:00",
+            "2026-11-07T10:00:00+02:00",
+            "pas une date",
+        ):
+            with self.subTest(instant=instant):
+                normalise, motif = valider_observation_systeme(
+                    _observation(
+                        memoire_apres={
+                            "releve_le": instant,
+                            "totale_octets": 8 * 1024**3,
+                            "disponible_octets": 6 * 1024**3,
+                            "motif": None,
+                        }
+                    ),
+                    moment=MOMENT_AUDIO,
+                    mesures_simulees=False,
+                )
+
+                self.assertIsNone(normalise)
+                self.assertIn("instant", motif or "")
+
+    def test_memoire_disponible_sans_totale_ecartee(self) -> None:
+        normalise, motif = valider_observation_systeme(
+            _observation(
+                memoire_apres={
+                    "releve_le": "2026-11-07T10:00:00+00:00",
+                    "totale_octets": None,
+                    "disponible_octets": 3,
+                    "motif": MOTIF_VALEUR_INCOHERENTE,
+                }
+            ),
+            moment=MOMENT_AUDIO,
+            mesures_simulees=False,
+        )
+
+        self.assertIsNone(normalise)
+        self.assertIn("totale", motif or "")
+
+    def test_valeurs_normalisees_en_flottants(self) -> None:
+        normalise, motif = valider_observation_systeme(
+            _observation(
+                cpu={"pourcentage_moyen": 50, "intervalle_s": 1, "motif": None}
+            ),
+            moment=MOMENT_AUDIO,
+            mesures_simulees=False,
+        )
+
+        self.assertIsNone(motif)
+        self.assertIsInstance(normalise["cpu"]["pourcentage_moyen"], float)
+        self.assertIsInstance(normalise["cpu"]["intervalle_s"], float)
+
 
 class SondeDeFonctionnementPsutilTest(unittest.TestCase):
     """Sonde de fonctionnement réelle, pas une mesure de performance.
