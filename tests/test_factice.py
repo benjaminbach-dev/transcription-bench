@@ -32,11 +32,21 @@ from pathlib import Path
 from unittest import mock
 
 import numpy as np
+import psutil
 
 from engines.declarations import (
     DeclarationAdaptateur,
     Famille,
     declarations_fournies,
+)
+from engines.mesures_systeme import (
+    PROVENANCE_REELLE,
+    PROVENANCE_SIMULEE,
+    SIMULATION_CPU_POURCENTAGE,
+    SIMULATION_INTERVALLE_CPU_S,
+    SIMULATION_MEMOIRE_DISPONIBLE_OCTETS,
+    SIMULATION_MEMOIRE_TOTALE_OCTETS,
+    SIMULATION_RELEVE_LE,
 )
 from engines.protocole import (
     PREFIXE_EVENEMENT,
@@ -411,6 +421,111 @@ class BootstrapSansInstallationEditableTest(unittest.TestCase):
             f"engines={(self.copie / 'engines' / '__init__.py')}\n",
             resultat.stderr,
         )
+
+
+class ObservationsSimuleesTest(unittest.TestCase):
+    """Scénario simulé déterministe des relevés système (tâche 1.2).
+
+    Le moteur factice n'exécute aucune collecte réelle : les observations sont
+    des valeurs fixes marquées `simulee`, reproductibles d'une exécution à
+    l'autre, et aucune fonction de mesure de psutil n'est appelée.
+    """
+
+    def setUp(self) -> None:
+        self._temporaire = tempfile.TemporaryDirectory()
+        self.addCleanup(self._temporaire.cleanup)
+        self.dossier = Path(self._temporaire.name)
+
+    def _evenements(self) -> list[dict[str, object]]:
+        chemin = ecrire_job(
+            self.dossier,
+            [
+                ("court.wav", ecrire_signal(self.dossier, "court.f32", 2.0)),
+                ("long.wav", ecrire_signal(self.dossier, "long.f32", 31.0)),
+            ],
+        )
+        return executer_et_lire(chemin)
+
+    def test_deux_executions_donnent_des_observations_identiques(self) -> None:
+        premieres = self._evenements()
+        secondes = self._evenements()
+
+        # Toutes les mesures, observations simulées comprises, sont fixes : les
+        # deux exécutions produisent exactement les mêmes événements.
+        self.assertEqual(premieres, secondes)
+        self.assertEqual(
+            [evenement["type"] for evenement in premieres],
+            [TYPE_CHARGEMENT, TYPE_AUDIO, TYPE_AUDIO, TYPE_FIN],
+        )
+
+        chargement = premieres[0]["observation_systeme"]
+        self.assertEqual(chargement["provenance"], PROVENANCE_SIMULEE)
+        self.assertNotIn("cpu", chargement)
+        self.assertEqual(
+            chargement["memoire_apres"]["totale_octets"],
+            SIMULATION_MEMOIRE_TOTALE_OCTETS,
+        )
+        self.assertEqual(
+            chargement["memoire_apres"]["disponible_octets"],
+            SIMULATION_MEMOIRE_DISPONIBLE_OCTETS,
+        )
+        self.assertEqual(
+            chargement["memoire_apres"]["releve_le"], SIMULATION_RELEVE_LE
+        )
+
+        for evenement in premieres[1:3]:
+            with self.subTest(index=evenement["index"]):
+                observation = evenement["observation_systeme"]
+                self.assertEqual(observation["provenance"], PROVENANCE_SIMULEE)
+                self.assertEqual(
+                    observation["cpu"]["pourcentage_moyen"],
+                    SIMULATION_CPU_POURCENTAGE,
+                )
+                self.assertEqual(
+                    observation["cpu"]["intervalle_s"],
+                    SIMULATION_INTERVALLE_CPU_S,
+                )
+                self.assertIsNone(observation["cpu"]["motif"])
+                self.assertEqual(
+                    observation["memoire_apres"]["disponible_octets"],
+                    SIMULATION_MEMOIRE_DISPONIBLE_OCTETS,
+                )
+
+        # La provenance de chaque observation est cohérente avec la marque
+        # `mesures_simulees` de l'événement qui la porte.
+        for evenement in premieres:
+            if "observation_systeme" not in evenement:
+                continue
+            with self.subTest(type_evenement=evenement["type"]):
+                attendue = (
+                    PROVENANCE_SIMULEE
+                    if evenement["mesures_simulees"]
+                    else PROVENANCE_REELLE
+                )
+                self.assertEqual(
+                    evenement["observation_systeme"]["provenance"], attendue
+                )
+
+    def test_aucune_mesure_psutil_reelle(self) -> None:
+        def interdire(*arguments: object, **options: object) -> None:
+            raise AssertionError("aucune mesure psutil réelle en mode factice")
+
+        with (
+            mock.patch.object(psutil, "cpu_percent", interdire),
+            mock.patch.object(psutil, "virtual_memory", interdire),
+        ):
+            evenements = self._evenements()
+
+        self.assertEqual(
+            [evenement["type"] for evenement in evenements],
+            [TYPE_CHARGEMENT, TYPE_AUDIO, TYPE_AUDIO, TYPE_FIN],
+        )
+        for evenement in evenements[:3]:
+            with self.subTest(type_evenement=evenement["type"]):
+                self.assertEqual(
+                    evenement["observation_systeme"]["provenance"],
+                    PROVENANCE_SIMULEE,
+                )
 
 
 if __name__ == "__main__":

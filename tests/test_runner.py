@@ -15,6 +15,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
@@ -22,6 +23,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 import numpy as np
+import psutil
 
 from engines.declarations import (
     DeclarationAdaptateur,
@@ -29,6 +31,16 @@ from engines.declarations import (
     declarations_fournies,
 )
 from engines.hors_ligne import environnement_moteur
+from engines.mesures_systeme import (
+    PROVENANCE_REELLE,
+    PROVENANCE_SIMULEE,
+    SIMULATION_CPU_POURCENTAGE,
+    SIMULATION_INTERVALLE_CPU_S,
+    SIMULATION_MEMOIRE_DISPONIBLE_OCTETS,
+    SIMULATION_RELEVE_LE,
+    AmorcageCpu,
+    ReleveurSysteme,
+)
 from engines.protocole import (
     PREFIXE_EVENEMENT,
     TYPE_AUDIO,
@@ -931,6 +943,352 @@ class IsolementTest(unittest.TestCase):
         # quelconque, le runner importe son adaptateur puis échoue proprement
         # faute de modèle local, sans importer de module serveur.
         self.assertIn("chargement du modèle impossible", resultat.stderr)
+
+
+class ReleveurTrace(ReleveurSysteme):
+    """Relevé système réel (doubles injectés) dont chaque étape est journalisée.
+
+    Le journal sert à vérifier le périmètre temporel et les instants des
+    relevés, jamais une durée mesurée : aucune valeur réelle n'est comparée.
+    """
+
+    def __init__(self, journal: list[str], **injections: object) -> None:
+        super().__init__(**injections)
+        self.journal = journal
+
+    def amorcer_cpu(self) -> AmorcageCpu:
+        self.journal.append("amorcage_systeme")
+        return super().amorcer_cpu()
+
+    def lire_cpu(self, amorcage: AmorcageCpu) -> dict[str, object]:
+        self.journal.append("lecture_cpu")
+        return super().lire_cpu(amorcage)
+
+    def relever_memoire(self) -> dict[str, object]:
+        self.journal.append("memoire")
+        return super().relever_memoire()
+
+    def observation_chargement(self) -> dict[str, object]:
+        self.journal.append("observation_chargement")
+        return super().observation_chargement()
+
+    def observation_audio(self, amorcage: AmorcageCpu) -> dict[str, object]:
+        self.journal.append("observation_audio")
+        return super().observation_audio(amorcage)
+
+
+class CompteurCpuFixe:
+    """Compteur CPU factice : valeurs programmées, appels comptés."""
+
+    def __init__(self, valeurs: list[float]) -> None:
+        self.valeurs = list(valeurs)
+        self.appels = 0
+
+    def __call__(self, **options: object) -> float:
+        self.appels += 1
+        return self.valeurs.pop(0)
+
+
+class HorlogeFixe:
+    """Horloge monotone factice : instants programmés, dans l'ordre."""
+
+    def __init__(self, instants: list[float]) -> None:
+        self.instants = list(instants)
+
+    def __call__(self) -> float:
+        return self.instants.pop(0)
+
+
+#: RAM totale des instantanés de test : valeur distincte de celle du scénario
+#: simulé, pour que les deux modes ne puissent pas se confondre.
+TOTAL_MEMOIRE_DE_TEST = 16 * 1024**3
+
+
+class MemoireFixe:
+    """Instantanés mémoire programmés : RAM disponible variable, total fixe."""
+
+    def __init__(
+        self, disponibles: list[int], total: int = TOTAL_MEMOIRE_DE_TEST
+    ) -> None:
+        self.disponibles = list(disponibles)
+        self.total = total
+        self.appels = 0
+
+    def __call__(self) -> SimpleNamespace:
+        self.appels += 1
+        return SimpleNamespace(
+            total=self.total, available=self.disponibles.pop(0), free=1
+        )
+
+
+class HorlogeTracee:
+    """Proxy de `time` pour le runner : journalise les bornes, délègue la mesure."""
+
+    def __init__(self, journal: list[str]) -> None:
+        self.journal = journal
+
+    def perf_counter(self) -> float:
+        self.journal.append("borne_moteur")
+        return time.perf_counter()
+
+    def process_time(self) -> float:
+        self.journal.append("borne_moteur")
+        return time.process_time()
+
+
+class RelevesSystemeTest(unittest.TestCase):
+    """Relevés CPU/RAM aux frontières du runner (tâche 1.2), sans timing réel."""
+
+    def setUp(self) -> None:
+        self._temporaire = tempfile.TemporaryDirectory()
+        self.addCleanup(self._temporaire.cleanup)
+        self.dossier = Path(self._temporaire.name)
+        adaptateur.reinitialiser()
+        self.registre = registre_de_test()
+
+    def _releveur(
+        self,
+        journal: list[str],
+        *,
+        cpu: list[float],
+        horloge: list[float],
+        disponibles: list[int],
+    ) -> ReleveurTrace:
+        return ReleveurTrace(
+            journal,
+            cpu_percent=CompteurCpuFixe(cpu),
+            memoire=MemoireFixe(disponibles),
+            horloge=HorlogeFixe(horloge),
+        )
+
+    def _run(
+        self, chemin: Path, releveur: ReleveurSysteme, journal: list[str]
+    ) -> tuple[list[str], list[dict[str, object]]]:
+        """Exécute un job en traçant décodage, bornes et sérialisation."""
+        vrai_fromfile = np.fromfile
+        vrai_transcrire = adaptateur.transcrire
+
+        def fromfile(*arguments: object, **options: object) -> object:
+            journal.append("decodage")
+            return vrai_fromfile(*arguments, **options)
+
+        def transcrire(*arguments: object, **options: object) -> object:
+            journal.append("moteur")
+            return vrai_transcrire(*arguments, **options)
+
+        def emettre_trace(evenement: dict[str, object], flux: object = None) -> None:
+            journal.append(f"serialisation:{evenement['type']}")
+            emettre(evenement, flux)
+
+        with (
+            mock.patch(
+                "engines.runner.creer_releveur_systeme",
+                lambda *, factice: releveur,
+            ),
+            mock.patch(
+                "engines.runner.np", SimpleNamespace(fromfile=fromfile)
+            ),
+            mock.patch("engines.runner.time", HorlogeTracee(journal)),
+            mock.patch.object(adaptateur, "transcrire", transcrire),
+            mock.patch("engines.runner.emettre", emettre_trace),
+        ):
+            return executer_et_lire(chemin, self.registre)
+
+    def test_fenetre_systeme_entoure_les_bornes_de_l_inference(self) -> None:
+        journal: list[str] = []
+        releveur = self._releveur(
+            journal, cpu=[99.0, 12.5], horloge=[0.0, 2.5], disponibles=[1234]
+        )
+        chemin = ecrire_job(
+            self.dossier,
+            [("un.wav", ecrire_signal(self.dossier, "un.f32", 1.0, 1.0))],
+        )
+        _, evenements = self._run(chemin, releveur, journal)
+
+        self.assertEqual(
+            [evenement["type"] for evenement in evenements],
+            [TYPE_CHARGEMENT, TYPE_AUDIO, TYPE_FIN],
+        )
+        # Ordre attendu : le chargement relève sa RAM après sa borne ; l'audio
+        # décode, amorce la fenêtre système, exécute les bornes du moteur, lit
+        # le CPU système, relève la RAM, puis seulement sérialise l'événement.
+        self.assertEqual(
+            journal,
+            [
+                "borne_moteur",
+                "borne_moteur",
+                "observation_chargement",
+                "memoire",
+                f"serialisation:{TYPE_CHARGEMENT}",
+                "decodage",
+                "amorcage_systeme",
+                "borne_moteur",
+                "borne_moteur",
+                "moteur",
+                "borne_moteur",
+                "borne_moteur",
+                "observation_audio",
+                "lecture_cpu",
+                "memoire",
+                f"serialisation:{TYPE_AUDIO}",
+                f"serialisation:{TYPE_FIN}",
+            ],
+        )
+        self.assertIsNone(evenements[1]["observation_systeme"]["cpu"]["motif"])
+        self.assertEqual(
+            evenements[1]["observation_systeme"]["cpu"]["pourcentage_moyen"],
+            12.5,
+        )
+        self.assertNotIn("cpu", evenements[0]["observation_systeme"])
+
+    def test_un_instantane_ram_apres_le_chargement_et_apres_chaque_audio(self) -> None:
+        journal: list[str] = []
+        releveur = self._releveur(
+            journal,
+            cpu=[99.0, 0.0, 99.0, 0.0],
+            horloge=[0.0, 1.0, 2.0, 3.0],
+            disponibles=[7000, 6000, 5000],
+        )
+        chemin = ecrire_job(
+            self.dossier,
+            [
+                ("un.wav", ecrire_signal(self.dossier, "un.f32", 1.0, 1.0)),
+                ("deux.wav", ecrire_signal(self.dossier, "deux.f32", 1.0, 2.0)),
+            ],
+        )
+        _, evenements = self._run(chemin, releveur, journal)
+
+        # Une RAM disponible différente à chaque frontière : les instantanés ne
+        # sont ni mémoïsés ni recopiés d'une frontière à l'autre.
+        self.assertEqual(
+            [
+                evenement["observation_systeme"]["memoire_apres"][
+                    "disponible_octets"
+                ]
+                for evenement in evenements[:3]
+            ],
+            [7000, 6000, 5000],
+        )
+        for evenement in evenements[:3]:
+            with self.subTest(type_evenement=evenement["type"]):
+                memoire = evenement["observation_systeme"]["memoire_apres"]
+                self.assertEqual(memoire["totale_octets"], TOTAL_MEMOIRE_DE_TEST)
+                self.assertIsNone(memoire["motif"])
+                self.assertIsInstance(memoire["releve_le"], str)
+        self.assertEqual(journal.count("observation_chargement"), 1)
+        self.assertEqual(journal.count("memoire"), 3)
+
+    def test_releves_reels_et_simules_ne_se_melangent_jamais(self) -> None:
+        journal: list[str] = []
+        releveur = self._releveur(
+            journal, cpu=[99.0, 7.5], horloge=[0.0, 2.5], disponibles=[5000, 4321]
+        )
+        chemin = ecrire_job(
+            self.dossier,
+            [("un.wav", ecrire_signal(self.dossier, "un.f32", 1.0, 1.0))],
+        )
+        _, evenements = self._run(chemin, releveur, journal)
+
+        for evenement in evenements[:2]:
+            observation = evenement["observation_systeme"]
+            self.assertEqual(observation["provenance"], PROVENANCE_REELLE)
+            self.assertEqual(
+                observation["provenance"],
+                PROVENANCE_SIMULEE
+                if evenement["mesures_simulees"]
+                else PROVENANCE_REELLE,
+            )
+        observation = evenements[1]["observation_systeme"]
+        self.assertEqual(observation["cpu"]["pourcentage_moyen"], 7.5)
+        self.assertEqual(observation["cpu"]["intervalle_s"], 2.5)
+        self.assertEqual(observation["memoire_apres"]["disponible_octets"], 4321)
+        self.assertNotEqual(
+            observation["cpu"]["pourcentage_moyen"], SIMULATION_CPU_POURCENTAGE
+        )
+
+        # Sens inverse : le moteur factice n'injecte aucune valeur réelle et
+        # n'appelle aucune fonction de mesure de psutil (doubles qui lèvent).
+        def interdire(*arguments: object, **options: object) -> None:
+            raise AssertionError("aucune mesure psutil réelle en mode factice")
+
+        chemin_factice = ecrire_job(
+            self.dossier,
+            [("un.wav", ecrire_signal(self.dossier, "un.f32", 1.0, 1.0))],
+            moteur="factice",
+            famille="factice",
+        )
+        with (
+            mock.patch.object(psutil, "cpu_percent", interdire),
+            mock.patch.object(psutil, "virtual_memory", interdire),
+        ):
+            _, evenements_factices = executer_et_lire(
+                chemin_factice, creer_registre_fourni()
+            )
+
+        self.assertEqual(
+            [evenement["type"] for evenement in evenements_factices],
+            [TYPE_CHARGEMENT, TYPE_AUDIO, TYPE_FIN],
+        )
+        for evenement in evenements_factices[:2]:
+            with self.subTest(type_evenement=evenement["type"]):
+                observation = evenement["observation_systeme"]
+                self.assertIs(evenement["mesures_simulees"], True)
+                self.assertEqual(observation["provenance"], PROVENANCE_SIMULEE)
+                self.assertEqual(
+                    observation["memoire_apres"]["disponible_octets"],
+                    SIMULATION_MEMOIRE_DISPONIBLE_OCTETS,
+                )
+                self.assertEqual(
+                    observation["memoire_apres"]["releve_le"], SIMULATION_RELEVE_LE
+                )
+        cpu_factice = evenements_factices[1]["observation_systeme"]["cpu"]
+        self.assertEqual(cpu_factice["pourcentage_moyen"], SIMULATION_CPU_POURCENTAGE)
+        self.assertEqual(cpu_factice["intervalle_s"], SIMULATION_INTERVALLE_CPU_S)
+        self.assertNotEqual(cpu_factice["pourcentage_moyen"], 7.5)
+        self.assertNotEqual(
+            evenements_factices[1]["observation_systeme"]["memoire_apres"][
+                "disponible_octets"
+            ],
+            4321,
+        )
+
+    def test_audio_en_echec_ne_fabrique_aucune_observation(self) -> None:
+        adaptateur.reinitialiser(echec_appel=2)
+        journal: list[str] = []
+        releveur = self._releveur(
+            journal, cpu=[99.0, 12.5, 99.0],
+            horloge=[0.0, 2.5], disponibles=[1234, 1200],
+        )
+        chemin = ecrire_job(
+            self.dossier,
+            [
+                ("un.wav", ecrire_signal(self.dossier, "un.f32", 1.0, 1.0)),
+                ("deux.wav", ecrire_signal(self.dossier, "deux.f32", 1.0, 2.0)),
+            ],
+        )
+        _, evenements = self._run(chemin, releveur, journal)
+
+        self.assertEqual(
+            [evenement["type"] for evenement in evenements],
+            [TYPE_CHARGEMENT, TYPE_AUDIO, TYPE_AUDIO_ERREUR, TYPE_FIN],
+        )
+        # Aucune observation finale n'est inventée pour l'audio en échec, ni
+        # depuis l'état courant : la fenêtre amorcée n'est jamais lue.
+        self.assertNotIn("observation_systeme", evenements[2])
+        self.assertNotIn("observation_systeme", evenements[3])
+        self.assertEqual(journal.count("amorcage_systeme"), 2)
+        self.assertEqual(journal.count("lecture_cpu"), 1)
+        self.assertEqual(journal.count("memoire"), 2)
+        # Les relevés déjà produits restent intacts.
+        observation = evenements[1]["observation_systeme"]
+        self.assertEqual(observation["cpu"]["pourcentage_moyen"], 12.5)
+        self.assertEqual(observation["memoire_apres"]["disponible_octets"], 1200)
+        self.assertEqual(
+            evenements[0]["observation_systeme"]["memoire_apres"][
+                "disponible_octets"
+            ],
+            1234,
+        )
 
 
 if __name__ == "__main__":

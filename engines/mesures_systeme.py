@@ -7,7 +7,7 @@ dépôt est ajoutée à `sys.path` : il n'importe ni module du serveur ni
 bibliothèque de moteur, seulement la bibliothèque standard et `psutil`
 (7.2.2, déjà verrouillé dans les environnements). Rien ici n'écrit de fichier,
 n'émet d'événement ni ne lance d'inférence : l'intégration aux bornes du runner
-et la persistance relèvent des tâches 1.2 et 2.x.
+est faite en 1.2, la persistance relève des tâches 2.x.
 
 Méthode versionnée (version de méthode 1) : `psutil-cpu-percent-nonbloquant-v1`.
 Un relevé CPU est une fenêtre de deux appels à
@@ -60,18 +60,21 @@ ne deviennent que ces codes.
 
 Les objets produits suivent le contrat D3 (version 1) : `observation_chargement()`
 donne l'instantané mémoire du chargement, `observation_audio()` ajoute le relevé
-CPU de la fenêtre. La provenance vaut `reelle` par défaut ; les cas simulés
-déterministes (`simulee`) relèvent des tâches suivantes, seule la structure est
-prévue ici.
+CPU de la fenêtre. La provenance vaut `reelle` par défaut. Le mode factice du
+runner n'exécute aucune collecte réelle : `creer_releveur_simule()` fournit le
+même parcours (amorçage, lecture, instantanés) avec des valeurs fixes marquées
+`simulee`, documentées ci-dessous et reproductibles d'une exécution à l'autre.
 """
 
 from __future__ import annotations
 
+import itertools
 import math
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from typing import Any
 
 import psutil
@@ -96,6 +99,16 @@ MOTIFS_ECRITS = (
 PROVENANCE_REELLE = "reelle"
 PROVENANCE_SIMULEE = "simulee"
 PROVENANCES = (PROVENANCE_REELLE, PROVENANCE_SIMULEE)
+
+#: Scénario simulé du moteur factice (design D2) : valeurs arbitraires fixes,
+#: sans aucune valeur de mesure et sans description d'un ordinateur. Elles
+#: servent uniquement à exercer le même parcours que le relevé réel.
+SIMULATION_CPU_POURCENTAGE = 42.0
+SIMULATION_INTERVALLE_CPU_S = 1.0
+SIMULATION_MEMOIRE_TOTALE_OCTETS = 8 * 1024**3
+SIMULATION_MEMOIRE_DISPONIBLE_OCTETS = 6 * 1024**3
+#: Date du scénario : constante reproductible, jamais une lecture d'horloge.
+SIMULATION_RELEVE_LE = "1970-01-01T00:00:00+00:00"
 
 #: Sentinelle interne : distingue un champ mémoire absent d'une valeur `None`.
 _CHAMP_ABSENT = object()
@@ -190,9 +203,10 @@ class AmorcageCpu:
 class ReleveurSysteme:
     """Relevés système injectables : CPU global par fenêtre et instantanés mémoire.
 
-    Les fonctions `cpu_percent`, `memoire` et `horloge` sont injectables pour les
-    tests ; par défaut ce sont les fonctions psutil réelles et
-    `time.monotonic`. Le releveur ne conserve aucun état entre deux fenêtres.
+    Les fonctions `cpu_percent`, `memoire`, `horloge` et `horodatage` sont
+    injectables pour les tests et le scénario simulé ; par défaut ce sont les
+    fonctions psutil réelles, `time.monotonic` et l'instant UTC. Le releveur ne
+    conserve aucun état entre deux fenêtres.
     """
 
     def __init__(
@@ -201,6 +215,7 @@ class ReleveurSysteme:
         cpu_percent: Callable[..., Any] = psutil.cpu_percent,
         memoire: Callable[[], Any] = psutil.virtual_memory,
         horloge: Callable[[], Any] = time.monotonic,
+        horodatage: Callable[[], str] = horodatage_utc,
         provenance: str = PROVENANCE_REELLE,
     ) -> None:
         if provenance not in PROVENANCES:
@@ -208,6 +223,7 @@ class ReleveurSysteme:
         self._cpu_percent = cpu_percent
         self._memoire = memoire
         self._horloge = horloge
+        self._horodatage = horodatage
         self._provenance = provenance
         self._version_psutil = psutil.__version__
 
@@ -262,7 +278,7 @@ class ReleveurSysteme:
         contrainte `available <= total` n'invalide que `disponible_octets`. Le
         motif porte sur l'instantané entier.
         """
-        releve_le = horodatage_utc()
+        releve_le = self._horodatage()
         try:
             valeur = self._memoire()
         except Exception:
@@ -312,3 +328,54 @@ class ReleveurSysteme:
             "provenance": self._provenance,
             **contenu,
         }
+
+
+def _cpu_simule(**_options: Any) -> float:
+    """Retour CPU du scénario simulé : constante fixe, jamais psutil."""
+    return SIMULATION_CPU_POURCENTAGE
+
+
+def _memoire_simulee() -> SimpleNamespace:
+    """Retour mémoire du scénario simulé : constantes fixes, jamais psutil."""
+    return SimpleNamespace(
+        total=SIMULATION_MEMOIRE_TOTALE_OCTETS,
+        available=SIMULATION_MEMOIRE_DISPONIBLE_OCTETS,
+    )
+
+
+def _horloge_simulee() -> Callable[[], float]:
+    """Horloge du scénario : 0,0 puis 1,0 puis 2,0… → intervalle de 1,0 s.
+
+    Le compteur est propre à l'instance créée : deux exécutions rejouent la même
+    suite, une fenêtre par audio consommant deux instants (amorçage puis
+    lecture), comme le relevé réel.
+    """
+    compteur = itertools.count()
+    return lambda: float(next(compteur)) * SIMULATION_INTERVALLE_CPU_S
+
+
+def creer_releveur_simule() -> ReleveurSysteme:
+    """Scénario simulé déterministe du moteur factice (design D2).
+
+    Le parcours est celui du relevé réel (mêmes objets, même enveloppe D3),
+    avec des entrées fixes et une provenance `simulee`. Aucune fonction de
+    mesure de psutil n'est appelée : seul `psutil.__version__` est lu comme
+    attribut du module, pour nommer la bibliothèque dont le protocole est
+    employé ; ce n'est jamais une mesure de l'ordinateur.
+    """
+    return ReleveurSysteme(
+        cpu_percent=_cpu_simule,
+        memoire=_memoire_simulee,
+        horloge=_horloge_simulee(),
+        horodatage=lambda: SIMULATION_RELEVE_LE,
+        provenance=PROVENANCE_SIMULEE,
+    )
+
+
+def creer_releveur_systeme(*, factice: bool) -> ReleveurSysteme:
+    """Relevé réel, ou scénario simulé déterministe pour le moteur factice.
+
+    Seul point de choix employé par le runner : aucun mélange n'est possible,
+    puisque les deux modes ne partagent aucune entrée de mesure.
+    """
+    return creer_releveur_simule() if factice else ReleveurSysteme()

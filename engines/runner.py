@@ -9,9 +9,10 @@ modèle une seule fois, traite les audios un par un et émet des événements
 préfixés sur stdout (`engines.protocole`). Il n'écrit aucun résultat : le
 serveur seul écrit `run.json` et les résultats d'audios (tâches 6.3 et 6.4).
 
-Le runner n'importe ni Flask ni aucun module du serveur. Il importe `numpy`
-et, sous Windows seulement, `psutil` à l'exécution : les environnements de
-moteur fournissent donc leurs propres dépendances, numpy compris, contrôlées à
+Le runner n'importe ni Flask ni aucun module du serveur. Il importe `numpy`,
+et `psutil` par `engines.mesures_systeme` (relevés système) comme pour le pic
+mémoire sous Windows (`peak_wset`) : les environnements de moteur fournissent
+donc leurs propres dépendances, numpy et psutil compris, contrôlées à
 l'installation (tâche 4.4).
 
 Job (JSON UTF-8). Les chemins sont absolus ou relatifs au dossier du job :
@@ -71,6 +72,19 @@ sous Linux (Kio vers octets) et `psutil.Process().memory_info().peak_wset` sous
 Windows (octets, psutil 7.2.2). Si ce champ manque, la mesure est absente
 (`None`) : aucun repli inventé.
 
+Relevés système (`engines.mesures_systeme`, design D1/D2 du change
+`mesurer-charge-systeme`) : un instantané de RAM disponible est pris juste après
+le chargement, puis, pour chaque audio, le compteur CPU global du système est
+amorcé juste avant les bornes d'inférence et lu juste après leur arrêt, avant la
+sérialisation de l'événement ; un second instantané de RAM suit. La fenêtre
+système ne couvre donc ni le décodage ni le chargement, et le CPU système reste
+distinct du temps CPU du moteur. Les objets produits sont attachés de façon
+additive au dictionnaire de l'événement sous `observation_systeme` ; leur
+contrat d'événement et leur persistance restent à définir (tâches 2.1 et 2.2).
+Un audio en échec n'obtient aucune observation fabriquée. Le moteur factice
+reçoit un scénario simulé déterministe marqué `simulee` (`creer_releveur_simule`)
+et n'appelle aucune fonction de mesure de psutil.
+
 Moteur factice (tâche 4.3) : seule une déclaration portant `factice=True`, fixée
 par le code du dépôt et jamais par le job, est exécutée malgré des familles non
 qualifiées. Ses mesures ne sont pas des mesures du runner : elles sont
@@ -114,6 +128,7 @@ from engines.declarations import (
     motif_famille_non_executable,
 )
 from engines.hors_ligne import mode_hors_ligne, options_modele
+from engines.mesures_systeme import ReleveurSysteme, creer_releveur_systeme
 from engines.protocole import (
     TYPE_AUDIO,
     TYPE_AUDIO_ERREUR,
@@ -248,6 +263,8 @@ def _executer_job(job: Job, registre: RegistreMoteurs) -> None:
     adaptateur, declaration, famille = _charger_adaptateur(job, registre)
     factice = declaration.factice
     provenance = {"factice": factice, "mesures_simulees": factice}
+    # Relevé réel, ou scénario simulé déterministe du moteur factice (design D2).
+    releveur_systeme = creer_releveur_systeme(factice=factice)
     reglages = MappingProxyType(job.reglages)
 
     debut_chargement = time.perf_counter()
@@ -265,11 +282,14 @@ def _executer_job(job: Job, registre: RegistreMoteurs) -> None:
         # Les compteurs réels ne sont jamais émis pour le factice.
         duree_chargement = DUREE_CHARGEMENT_SIMULEE_S
         pic_chargement = PIC_MEMOIRE_SIMULE_OCTETS
+    # Instantané de RAM après le chargement, sans aucun CPU de chargement (D1).
+    observation_chargement = releveur_systeme.observation_chargement()
     emettre(
         {
             "type": TYPE_CHARGEMENT,
             "duree_s": duree_chargement,
             "pic_memoire_octets": pic_chargement,
+            "observation_systeme": observation_chargement,
             **provenance,
         }
     )
@@ -287,6 +307,7 @@ def _executer_job(job: Job, registre: RegistreMoteurs) -> None:
                 reglages,
                 factice,
                 famille.duree_native,
+                releveur_systeme,
             )
         except Exception as exception:  # un audio en erreur ne bloque pas le lot
             audios_erreur += 1
@@ -434,6 +455,7 @@ def _traiter_audio(
     reglages: Mapping[str, Any],
     factice: bool,
     duree_native: DureeNative | None,
+    releveur_systeme: ReleveurSysteme,
 ) -> dict[str, Any]:
     """Transcrit un audio en un appel natif ou en fenêtres fixes de 30 s.
 
@@ -441,6 +463,12 @@ def _traiter_audio(
     valant `natif`) ; sinon l'audio est découpé en fenêtres de 30 s sans
     recouvrement. Le factice n'a aucune durée native : il reste découpé, ce qui
     préserve son comportement de test.
+
+    Le relevé système de l'audio suit le design D1 : la fenêtre CPU est amorcée
+    juste avant les bornes d'inférence, puis lue juste après leur arrêt et avant
+    la sérialisation, suivie de l'instantané de RAM disponible. Une erreur
+    d'audio interrompt le traitement avant cette lecture : aucune observation
+    finale n'est alors fabriquée.
     """
     # Un fichier brut float32 doit contenir un nombre entier d'échantillons :
     # on refuse avant lecture plutôt que de laisser numpy interpréter un
@@ -480,6 +508,9 @@ def _traiter_audio(
         threads_appliques: int | None = None
         premiere_fenetre = True
         nb_fenetres = 0
+        # Fenêtre CPU système : amorcée juste avant les bornes d'inférence, donc
+        # après le décodage et le chargement du modèle (design D1).
+        amorcage_systeme = releveur_systeme.amorcer_cpu()
         debut = time.perf_counter()
         cpu_debut = time.process_time()
         for position, fin in bornes:
@@ -511,11 +542,14 @@ def _traiter_audio(
             # ci-dessus ne sont ni conservés ni émis.
             duree_transcription = duree_audio * RTF_SIMULE
             temps_cpu = duree_transcription * FACTEUR_TEMPS_CPU_SIMULE
-            pic_audio = PIC_MEMOIRE_SIMULE_OCTETS
         else:
             duree_transcription = time.perf_counter() - debut
             temps_cpu = time.process_time() - cpu_debut
-            pic_audio = pic_memoire()
+        # Les bornes du moteur sont arrêtées : le CPU système est lu avant la
+        # sérialisation, puis la RAM disponible est relevée (design D1). Le pic
+        # mémoire du moteur est une mesure distincte, relevée ensuite.
+        observation_systeme = releveur_systeme.observation_audio(amorcage_systeme)
+        pic_audio = PIC_MEMOIRE_SIMULE_OCTETS if factice else pic_memoire()
         return {
             "type": TYPE_AUDIO,
             "index": index,
@@ -533,6 +567,7 @@ def _traiter_audio(
             "decoupage": decoupage,
             "nb_fenetres": nb_fenetres,
             "pic_memoire_octets": pic_audio,
+            "observation_systeme": observation_systeme,
             "reglages_effectifs": reglages_effectifs,
             "langue_imposee": langue_imposee,
             "threads_demandes": threads_demandes,
