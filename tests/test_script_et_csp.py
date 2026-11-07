@@ -174,16 +174,22 @@ class VerificateurScriptTest(unittest.TestCase):
                 '<script src="/app.js" src="https://cdn.example/app.js" defer></script>'
             )
         )
-        ouvert = analyser(page('<script src="/app.js" defer>alert(1)'))
+        scripts = '<script src="/app.js" defer>alert(1)'
+        ouvert = analyser(page(scripts))
 
         self.assertEqual(
             [valeur for _, nom, valeur in double.attributs if nom == "src"],
             ["/app.js", "https://cdn.example/app.js"],
         )
+        # Le script resté ouvert est compté comme tel et rejeté ; le texte final
+        # qui le suit n'est pas exigé ici : selon la version de la bibliothèque
+        # standard, `html.parser` ne transmet pas à `handle_data` les données
+        # d'un contenu CDATA non terminé (texte laissé dans `rawdata`). Le rejet
+        # ne dépend donc pas de ce tampon, mais de `scripts_non_fermes`.
         self.assertEqual(ouvert.scripts_non_fermes, 1)
-        self.assertTrue(ouvert.scripts_contenus[0].startswith("alert(1)"))
-        # Un script non fermé avale la fin du document : contenu non vide.
-        self.assertTrue(ouvert.scripts_contenus[0])
+        self.assertEqual(len(ouvert.scripts_contenus), 1)
+        with self.assertRaises(AssertionError):
+            assert_html_seul(self, page(scripts))
 
     def test_page_sans_script_acceptee(self) -> None:
         self.assertEqual(assert_html_seul(self, page()).balises_de("script"), [])

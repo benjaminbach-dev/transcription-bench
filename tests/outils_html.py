@@ -97,9 +97,12 @@ class PageHtml(HTMLParser):
 
     def close(self) -> None:
         super().close()
-        # Un `<script>` non fermé ne produit aucun `handle_endtag` : son contenu
-        # restant est quand même retenu comme contenu incorporé, et le script
-        # reste signalé comme non fermé par `scripts_non_fermes`.
+        # Un `<script>` non fermé ne produit aucun `handle_endtag` : le texte
+        # déjà analysé reste retenu comme contenu incorporé et le script reste
+        # signalé comme non fermé par `scripts_non_fermes`. Le texte final, lui,
+        # dépend de la version de la bibliothèque standard (contenu CDATA non
+        # terminé : données laissées dans `rawdata`, sans `handle_data`) ; le
+        # rejet s'appuie sur `scripts_non_fermes`, pas sur ce tampon.
         for nom, contenu in self._captures:
             if nom == "script":
                 self.scripts_contenus.append("".join(contenu).strip())
@@ -221,10 +224,11 @@ def _page_sans_style(cas, corps: str) -> PageHtml:
 def assert_script_local(cas, page: PageHtml) -> None:
     """Vérifie que le seul script éventuel est le fichier local `/app.js` en `defer`.
 
-    Refusés : script incorporé (contenu non vide, y compris sans balise de
-    fermeture), fichier arbitraire ou distant, attribut répété ou inattendu,
-    script sans `defer`, script auto-fermant et second script. La page peut
-    n'avoir aucun script : l'interface reste complète sans lui.
+    Refusés : script incorporé (contenu non vide), script resté ouvert (compté
+    par `scripts_non_fermes`, même si son texte final n'est pas capturé), fichier
+    arbitraire ou distant, attribut répété ou inattendu, script sans `defer`,
+    script auto-fermant et second script. La page peut n'avoir aucun script :
+    l'interface reste complète sans lui.
     """
     scripts = page.balises_de("script")
     cas.assertLessEqual(len(scripts), 1, f"un seul script admis : {len(scripts)}")
