@@ -1,17 +1,30 @@
 {% extends "base.html" %}
 {% import "formats.html" as formats %}
+{% import "composants.html" as composants %}
 {% block page_courante %}resultats{% endblock %}
 {% block titre %}Résultats — transcription-bench{% endblock %}
 {% block contenu %}
 <h1>Résultats</h1>
-<p class="prose"><a href="{{ url_for('comparaisons') }}">Comparer des transcriptions d'un même audio</a> — <a href="{{ url_for('aide_resultats') }}">Comprendre les indicateurs</a> — <a href="{{ url_for('resultats') }}">Actualiser</a></p>
+<div><a href="{{ url_for('comparaisons') }}">Comparer</a> · <a href="{{ url_for('aide_resultats') }}">Comprendre les indicateurs</a></div>
 {% if erreur_dossier %}
 <p class="callout danger prose" role="status">{{ erreur_dossier }}</p>
 {% endif %}
-<p class="prose">Exécutions enregistrées, de la plus récente à la plus ancienne ; chaque ligne ouvre le détail de ses audios.</p>
+{% if groupes %}
+<div class="small">Trier : {% for valeur, libelle in criteres_tri %}{% if valeur == tri %}<strong>{{ libelle }}</strong>{% else %}<a href="{{ url_for('resultats', tri=valeur) }}">{{ libelle }}</a>{% endif %}{% if not loop.last %} · {% endif %}{% endfor %}</div>
+{% for groupe in groupes %}
+{{ composants.groupe_resultats(groupe) }}
+{% endfor %}
+{% elif not erreur_dossier and not executions %}
+<p class="callout prose">Aucune exécution enregistrée pour l'instant. Une exécution apparaît ici dès que la page des exécutions en a lancé une ; les résultats déjà produits restent consultables même si le modèle local est supprimé ensuite.</p>
+{% elif not erreur_dossier %}
+<p class="callout prose">Aucun résultat exploitable à regrouper par audio : chaque transcription doit consigner une empreinte valide. L'historique complet reste consultable ci-dessous.</p>
+{% endif %}
+<details>
+<summary>Historique complet des exécutions ({{ executions | length }})</summary>
 <p class="prose small">Dossier des résultats : <strong>{{ dossier }}</strong>.</p>
 {% if executions %}
-<div class="overflow-auto">
+<p class="prose small">De la plus récente à la plus ancienne, y compris les échecs, les interruptions et les résultats non interprétables. Chaque exécution exploitable ouvre son détail.</p>
+<div class="overflow-auto" tabindex="0" role="region" aria-label="Historique des exécutions">
 <table>
 <thead>
 <tr><th>Exécution</th><th>Créée le</th><th>Modèle</th><th>État</th><th>Marques</th></tr>
@@ -31,7 +44,7 @@
 </div>
 <details>
 <summary>Moteur, audios traités et durée de chaque exécution</summary>
-<div class="overflow-auto">
+<div class="overflow-auto" tabindex="0" role="region" aria-label="Mesures des exécutions">
 <table>
 <thead>
 <tr><th>Exécution</th><th>Moteur</th><th>Audios traités</th><th>Durée totale de l'opération</th></tr>
@@ -49,8 +62,7 @@
 </table>
 </div>
 </details>
-{% elif not erreur_dossier %}
-<p class="callout prose">Aucune exécution enregistrée pour l'instant. Une exécution apparaît ici dès que la page des exécutions en a lancé une ; les résultats déjà produits restent consultables même si le modèle local est supprimé ensuite.</p>
 {% endif %}
+</details>
 <p class="prose"><a href="{{ url_for('accueil') }}">Retour à l'accueil</a></p>
 {% endblock %}

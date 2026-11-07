@@ -34,8 +34,17 @@ et hypothèses ; ne jamais présenter une transcription fluide comme médicaleme
 - uv et Python 3.12 géré par uv ; ne pas modifier le Python système.
 - Environnement du serveur séparé de ceux des moteurs ; aucune bibliothèque de
   moteur importée dans le serveur. CPU uniquement, sans GPU ni Vulkan.
-- HTML sans JavaScript, avec feuilles de style locales (Sumi.css et `app.css`, jamais de CDN) ;
-  une seule opération longue, sans file d'attente.
+- HTML rendu par Jinja/Flask, fonctionnel sans JavaScript ; amélioration progressive
+  autorisée par un seul fichier local `/app.js` vanilla chargé avec `defer`, sans
+  dépendance, CDN ni étape de compilation. Aucun script inline, attribut `on…`,
+  `eval`, `new Function` ou code issu des modèles ; CSP stricte selon le design D6
+  de `refondre-parcours-resultats`, sans `unsafe-inline` ni `unsafe-eval`.
+- Feuilles de style locales uniquement : Sumi.css figé et `app.css` applicative
+  (composants, tailles, espacements et grille), palette Flexoki et contrastes
+  clair/sombre conservés ; aucune seconde bibliothèque CSS ni CDN.
+- Conserver les validations serveur, Host/Origin/CSRF, le confinement des chemins
+  et l'échappement ; aucune action modificatrice par GET. Une seule opération
+  longue, sans file d'attente.
 - Installations et téléchargements explicites ; inférences exclusivement locales
   et hors ligne, sans exécution de code distant.
 

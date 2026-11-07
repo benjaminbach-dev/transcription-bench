@@ -425,7 +425,9 @@ class PageAudiosTest(SocleAudiosTest):
         brut = client.get("/audios", base_url=BASE_URL).get_data(as_text=True)
 
         self.assertIn(nom, corps)
-        self.assertNotIn("<script", brut)
+        # Le nom brut n'apparaît jamais : il est échappé. Le squelette charge
+        # par ailleurs son unique script local, d'où le contrôle sur le nom.
+        self.assertNotIn(nom, brut)
         self.assertIn("&lt;script&gt;", brut)
         self.verifier_html_seul(brut)
 

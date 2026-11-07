@@ -287,7 +287,7 @@ class ResultatsWebTest(SocleWebTest):
         self.assertIn(str(self.dossier_data / "results"), corps)
         # Le lien vers les groupes et le classement est mis en avant.
         self.assertIn('href="/resultats/comparaison"', corps)
-        self.assertIn("Comparer des transcriptions d'un même audio", corps)
+        self.assertIn(">Comparer</a>", corps)
         self.assertIn('href="/resultats/aide"', corps)
         self.assertIn('href="/"', corps)
         self.assertFalse(self.dossier_data.exists())

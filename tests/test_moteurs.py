@@ -753,7 +753,9 @@ class PageMoteursWebTest(SocleMoteurs):
         self.assertIn('action="/moteurs/engine-echec/installer"', corps)
         self.assertNotIn('action="/moteurs/factice/installer"', corps)
         self.assertIn('href="/moteurs/engine-pret/journal"', corps)
-        self.assertNotIn("<script", corps)
+        # Le squelette charge son unique script local ; aucun autre n'est écrit.
+        self.assertEqual(corps.count("<script"), 1)
+        self.assertIn('<script src="/app.js" defer></script>', corps)
 
         self.creneau.arreter(0.05)
         thread = self.creneau.thread_travailleur
@@ -795,7 +797,10 @@ class PageMoteursWebTest(SocleMoteurs):
 
         self.assertEqual(reponse.status_code, 200)
         self.assertIn("&lt;script&gt;alert(1)&lt;/script&gt; &amp; suite", corps)
-        self.assertNotIn("<script", corps)
+        # Le contenu du journal n'est jamais du balisage actif ; le seul script
+        # de la page reste celui du squelette commun.
+        self.assertNotIn("<script>alert(1)</script>", corps)
+        self.assertEqual(corps.count("<script"), 1)
         self.assertNotIn("style=", corps)
 
     def test_post_installation_sans_jeton_refuse_sans_io(self) -> None:

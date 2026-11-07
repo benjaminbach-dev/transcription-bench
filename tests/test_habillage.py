@@ -20,6 +20,7 @@ from pathlib import Path
 
 from tests.outils_html import ELEMENTS_INTERDITS, assert_html_seul
 from tests.test_comparaison_resultats import EMPREINTE_A, resultat_empreinte
+from tests.test_feuilles import lire_feuille, regles
 from tests.test_consultation_resultats import (
     IDENTIFIANT,
     IDENTIFIANT_ANCIEN,
@@ -28,6 +29,7 @@ from tests.test_consultation_resultats import (
     run_json,
 )
 from tests.test_web import SocleWebTest
+from transcription_bench.web.app import NOM_FEUILLE_APP
 
 DOSSIER_GABARITS = (
     Path(__file__).resolve().parents[1]
@@ -56,6 +58,36 @@ CLASSES_AUTORISEES = frozenset(
         "prose",
     }
 )
+
+# Tâche 1.3 : classes du composant de résultat. Elles ne sont admises que dans
+# `composants.html`, qui doit les employer toutes, et doivent avoir une règle
+# dans `app.css` : aucune classe orpheline ni inventée dans un autre gabarit.
+GABARIT_COMPOSANT = "composants.html"
+CLASSES_COMPOSANT_RESULTAT = frozenset(
+    {
+        "resultat-compact",
+        "resultat-titre",
+        "resultat-groupe",
+        "resultat-modele",
+        "resultat-audio",
+        "resultat-secondaire",
+        "resultat-libelle",
+        "resultat-mesures",
+        "resultat-mesure",
+        "resultat-mesure-temps",
+        "resultat-mesure-ram",
+        "resultat-mesure-cpu",
+        "resultat-valeur",
+        "resultat-valeur-absente",
+        "resultat-etats",
+        "resultat-etat",
+        "resultat-section",
+        "resultat-alerte",
+        "resultat-mesure-moteur",
+        "resultat-mesure-date",
+    }
+)
+MOTIF_SELECTEUR_CLASSE = re.compile(r"\.([A-Za-z][\w-]*)")
 
 # Liens de la navigation commune, dans l'ordre exigé par la spec.
 LIENS_NAVIGATION = (
@@ -232,14 +264,42 @@ class GabaritsTest(unittest.TestCase):
     def test_classes_litterales_autorisees(self) -> None:
         for nom, source in self.sources.items():
             with self.subTest(gabarit=nom):
+                autorisees = CLASSES_AUTORISEES
+                if nom == GABARIT_COMPOSANT:
+                    autorisees = CLASSES_AUTORISEES | CLASSES_COMPOSANT_RESULTAT
                 self.assertLessEqual(
                     classes_litterales(source),
-                    CLASSES_AUTORISEES,
+                    autorisees,
                     f"classe hors liste dans {nom}",
                 )
 
+    def test_classes_du_composant_reservees_a_son_gabarit(self) -> None:
+        utilisees = classes_litterales(self.sources[GABARIT_COMPOSANT])
+        self.assertLessEqual(utilisees, CLASSES_AUTORISEES | CLASSES_COMPOSANT_RESULTAT)
+        for classe in CLASSES_COMPOSANT_RESULTAT:
+            self.assertIn(classe, self.sources[GABARIT_COMPOSANT])
+        for nom, source in self.sources.items():
+            if nom == GABARIT_COMPOSANT:
+                continue
+            with self.subTest(gabarit=nom):
+                self.assertEqual(
+                    classes_litterales(source) & CLASSES_COMPOSANT_RESULTAT,
+                    set(),
+                    f"classe du composant de résultat employée dans {nom}",
+                )
+
+    def test_classes_du_composant_definies_dans_app_css(self) -> None:
+        feuille = regles(lire_feuille(NOM_FEUILLE_APP))
+        definies: set[str] = set()
+        for selecteur in feuille:
+            definies.update(MOTIF_SELECTEUR_CLASSE.findall(selecteur))
+        self.assertLessEqual(CLASSES_COMPOSANT_RESULTAT, definies)
+
     def test_aucun_element_ni_attribut_interdit(self) -> None:
-        interdits = ("<script", "<style", "<iframe", "<object", "<img", "<dialog")
+        # `<script` n'est plus interdit en bloc : le squelette commun charge
+        # l'unique script local `/app.js` en `defer` (design D6). Tout autre
+        # script, incorporé ou non, reste refusé par le contrôle ci-dessous.
+        interdits = ("<style", "<iframe", "<object", "<img", "<dialog")
         for nom, source in self.sources.items():
             with self.subTest(gabarit=nom):
                 for interdit in interdits:
@@ -254,6 +314,20 @@ class GabaritsTest(unittest.TestCase):
                         MOTIF_GESTIONNAIRE.search(ligne),
                         f"attribut de gestionnaire d'événement dans {nom} : {ligne}",
                     )
+
+        # Un seul gabarit écrit un script, une seule fois, avec le fichier local
+        # en `defer` : ni script incorporé, ni fichier arbitraire ou distant.
+        self.assertEqual(
+            {
+                nom: source.count("<script")
+                for nom, source in self.sources.items()
+                if "<script" in source
+            },
+            {"base.html": 1},
+        )
+        self.assertIn(
+            '<script src="/app.js" defer></script>', self.sources["base.html"]
+        )
 
     def test_deux_feuilles_locales_dans_l_ordre(self) -> None:
         base = self.sources["base.html"]
@@ -274,9 +348,9 @@ class GabaritsTest(unittest.TestCase):
                 for position, ligne in enumerate(lignes):
                     if ligne == "<table>":
                         self.assertGreater(position, 0, nom)
-                        self.assertEqual(
+                        self.assertRegex(
                             lignes[position - 1],
-                            '<div class="overflow-auto">',
+                            r'^<div class="overflow-auto"(?: [^<>]*)?>$',
                             f"tableau sans conteneur défilant dans {nom}",
                         )
                     if ligne == "</table>":
@@ -375,9 +449,9 @@ class GabaritsTest(unittest.TestCase):
 
     def test_chaque_page_a_son_titre(self) -> None:
         for nom, source in self.sources.items():
-            if nom in ("base.html", "formats.html"):
-                # `base.html` porte le titre par défaut, `formats.html` est un
-                # fichier de macros sans page propre.
+            if nom in ("base.html", "formats.html", GABARIT_COMPOSANT):
+                # `base.html` porte le titre par défaut, `formats.html` et
+                # `composants.html` sont des fichiers de macros sans page propre.
                 continue
             with self.subTest(gabarit=nom):
                 self.assertIsNotNone(MOTIF_BLOC_TITRE.search(source), nom)
@@ -725,9 +799,12 @@ class HabillagePageTest(SocleWebTest):
         self.assertEqual(len(page.balises_de("nav")), 1, "navigation présente")
 
     def test_classes_rendues_autorisees(self) -> None:
+        # Les classes du composant de résultat sont admises dans les pages qui
+        # le rendent (tâche 1.4) ; aucune autre classe hors liste n'est tolérée.
+        autorisees = CLASSES_AUTORISEES | CLASSES_COMPOSANT_RESULTAT
         for chemin, page in self.pages_a_controler().items():
             with self.subTest(chemin=chemin):
-                self.assertLessEqual(page.classes, CLASSES_AUTORISEES, page.classes)
+                self.assertLessEqual(page.classes, autorisees, page.classes)
 
     def test_aucun_attribut_interdit_dans_les_pages(self) -> None:
         for chemin, page in self.pages_a_controler().items():

@@ -11,10 +11,13 @@ aussi les routes inexistantes. Le jeton est propre à chaque `create_app` et
 reste sans session ni cookie. Les pages restent volontairement limitées à ce qui
 est réellement implémenté : aucun succès n'est affiché pour une fonction absente.
 
-Deux routes GET servent les feuilles de style du paquet, jamais un dossier
-statique : `/sumi.css` (copie figée de Sumi.css, MIT) et `/app.css` (complément
-du projet), avec type explicite, `nosniff` et `no-cache`. Le chemin lu est
-construit depuis ce module, jamais depuis la requête.
+Trois routes GET servent les ressources du paquet, jamais un dossier statique :
+`/sumi.css` (copie figée de Sumi.css, MIT), `/app.css` (complément du projet) et
+`/app.js` (unique script local, chargé `defer`), avec type explicite, `nosniff` et
+`no-cache`. Le chemin lu est construit depuis ce module, jamais depuis la requête.
+Les réponses HTML portent une politique de sécurité des contenus stricte (D6),
+pages d'erreur comprises, sans `unsafe-inline` ni `unsafe-eval` ; elle ne remplace
+ni le contrôle `Host`, ni celui d'`Origin`, ni le jeton anti-CSRF.
 
 Les mutations passent par le créneau unique injecté : la vérification des
 dossiers s'exécute sous son verrou et est refusée (409) pendant une opération
@@ -31,8 +34,9 @@ threads, réglages déclarés), la valide par le service de la tâche 6.2, et so
 bouton de lancement démarre l'exécution dans le créneau global (tâche 6.3) ; la
 page `/operation` affiche l'instantané du créneau et permet d'arrêter
 l'exécution active. Aucune route ne transmet d'objet Flask au travail de fond.
-La page des résultats (tâche 7.1) liste les exécutions enregistrées, des plus
-récentes aux plus anciennes, et ouvre le détail d'une transcription : texte,
+La page Résultats (tâche 1.4) regroupe les essais par empreinte audio, tri commun
+appliqué dans chaque groupe ; son historique complet des exécutions (tâche 7.1)
+reste dans un détail secondaire. Le détail d'une transcription : texte,
 segments, métadonnées, mesures et marques, en lecture seule. Le détail
 individuel (tâche 3.2) suit la même tête de lecture qu'une carte de comparaison
 — trois indicateurs puis texte complet — avec l'annotation du pic mémoire
@@ -68,6 +72,7 @@ from transcription_bench.audios import FORMATS_AUDIO, AudioListe, lister_audios
 from transcription_bench.consultation_resultats import (
     LIBELLES_TRI,
     REPERE_RTF,
+    TRI_RECENT,
     ConsultationResultats,
     LectureResultatsImpossible,
     ResultatIntrouvable,
@@ -122,13 +127,25 @@ from transcription_bench.paths import (
     ValeurRefusee,
     preparer_dossiers_data,
 )
+from transcription_bench.web.vues_resultats import vues_groupes
 
 LIMITE_CORPS_APPLICATION = 64 * 1024
 NOM_CHAMP_JETON = "jeton_csrf"
 TYPE_FEUILLE = "text/css; charset=utf-8"
+TYPE_SCRIPT = "text/javascript; charset=utf-8"
+# Dossier des ressources locales du paquet (feuilles et script), jamais servi
+# comme répertoire : chaque route lit un nom fixe décidé dans ce module.
 DOSSIER_FEUILLES = Path(__file__).resolve().parent / "ressources"
 NOM_FEUILLE_SUMI = "sumi.min.css"
 NOM_FEUILLE_APP = "app.css"
+NOM_SCRIPT_APP = "app.js"
+# Design D6 : tout est restreint à l'origine locale ; aucun script incorporé,
+# aucune évaluation dynamique, aucune frame et aucune base d'URL modifiable.
+POLITIQUE_CONTENU = (
+    "default-src 'self'; script-src 'self'; style-src 'self'; "
+    "connect-src 'self'; img-src 'self'; object-src 'none'; "
+    "form-action 'self'; frame-ancestors 'none'; base-uri 'none'"
+)
 CHAMP_SELECTION_COMPARAISON = "transcription"
 CHAMP_TRI_CLASSEMENT = "tri"
 TYPE_FORMULAIRE = "application/x-www-form-urlencoded"
@@ -333,6 +350,19 @@ def create_app(config: ConfigApplication, services: ServicesApplication) -> Flas
         if request.method == "POST":
             _verifier_post(jeton, origines)
 
+    @application.after_request
+    def ajouter_politique_contenu(reponse: Response) -> Response:
+        """Pose la CSP sur les réponses HTML, pages d'erreur réelles comprises.
+
+        Le type est lu sur la réponse finale : un rendu Jinja, une page d'erreur
+        404/405/500 et le corps d'une redirection sont tous du HTML. Les
+        ressources locales (feuilles, script) ne la reçoivent pas : elle décrit
+        ce que le document peut charger, pas son propre type.
+        """
+        if reponse.mimetype == "text/html":
+            reponse.headers["Content-Security-Policy"] = POLITIQUE_CONTENU
+        return reponse
+
     _enregistrer_routes(
         application,
         config,
@@ -347,8 +377,8 @@ def create_app(config: ConfigApplication, services: ServicesApplication) -> Flas
     return application
 
 
-def _reponse_feuille(nom_fichier: str) -> Response:
-    """Feuille de style figée du paquet, servie hors ligne avec des en-têtes fixes.
+def _reponse_ressource(nom_fichier: str, type_mime: str) -> Response:
+    """Ressource locale figée du paquet, servie hors ligne avec des en-têtes fixes.
 
     Le fichier est désigné par une constante de ce module, jamais par la requête :
     aucune valeur reçue ne peut conduire à un autre fichier. Le type est posé
@@ -356,7 +386,7 @@ def _reponse_feuille(nom_fichier: str) -> Response:
     """
     contenu = (DOSSIER_FEUILLES / nom_fichier).read_bytes()
     reponse = Response(contenu, status=200)
-    reponse.headers["Content-Type"] = TYPE_FEUILLE
+    reponse.headers["Content-Type"] = type_mime
     reponse.headers["X-Content-Type-Options"] = "nosniff"
     reponse.headers["Cache-Control"] = "no-cache"
     return reponse
@@ -408,6 +438,11 @@ def _page_erreur(code: int, message: str) -> tuple[str, int]:
     return render_template("erreur.html", code=code, message=message), code
 
 
+def _lien_resultat(identifiant: str) -> str:
+    """Adresse locale du détail d'une exécution, construite par la route fixe."""
+    return url_for("resultat_detail", identifiant=identifiant)
+
+
 def _message_moteurs(moteurs: tuple[EtatMoteur, ...]) -> str:
     """Phrase d'accueil honnête selon l'inventaire local des moteurs réels."""
     prets = [moteur for moteur in moteurs if moteur.etat == ETAT_PRET and not moteur.factice]
@@ -447,12 +482,17 @@ def _enregistrer_routes(
     @application.get("/sumi.css")
     def feuille_sumi() -> Response:
         """Copie figée de Sumi.css, servie depuis le paquet, sans réseau."""
-        return _reponse_feuille(NOM_FEUILLE_SUMI)
+        return _reponse_ressource(NOM_FEUILLE_SUMI, TYPE_FEUILLE)
 
     @application.get("/app.css")
     def feuille_app() -> Response:
         """Feuille complémentaire du projet, chargée après Sumi.css."""
-        return _reponse_feuille(NOM_FEUILLE_APP)
+        return _reponse_ressource(NOM_FEUILLE_APP, TYPE_FEUILLE)
+
+    @application.get("/app.js")
+    def script_app() -> Response:
+        """Unique script local, chargé `defer` par le squelette commun (D6)."""
+        return _reponse_ressource(NOM_SCRIPT_APP, TYPE_SCRIPT)
 
     @application.get("/audios")
     def audios() -> str:
@@ -675,19 +715,35 @@ def _enregistrer_routes(
 
     @application.get("/resultats")
     def resultats() -> str:
-        """Liste les exécutions enregistrées, des plus récentes aux plus anciennes."""
+        """Résultats groupés par audio, puis historique complet des exécutions.
+
+        Le critère `tri` vaut `recent` par défaut et s'applique dans chaque groupe
+        seulement ; un critère inconnu ou répété est refusé (400). L'historique
+        `lister` reste entier dans un détail secondaire de la page.
+        """
         try:
+            tri = analyser_tri(
+                request.args.getlist(CHAMP_TRI_CLASSEMENT), defaut=TRI_RECENT
+            )
+        except ValeurRefusee:
+            return _page_erreur(400, MESSAGE_TRI_REFUSE)
+        try:
+            groupes = service_resultats.groupes_par_empreinte(tri)
             executions_enregistrees = service_resultats.lister()
         except LectureResultatsImpossible:
+            groupes = ()
             executions_enregistrees = ()
             erreur_dossier = MESSAGE_RESULTATS_INACCESSIBLES
         else:
             erreur_dossier = None
         return render_template(
             "resultats.html",
+            groupes=vues_groupes(groupes, _lien_resultat),
             executions=executions_enregistrees,
             dossier=service_resultats.dossier_resultats,
             erreur_dossier=erreur_dossier,
+            tri=tri,
+            criteres_tri=tuple(LIBELLES_TRI.items()),
             repere_rtf=REPERE_RTF,
         )
 

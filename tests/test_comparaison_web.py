@@ -1289,6 +1289,9 @@ class ListeParResultatWebTest(SocleWebTest):
             IDENTIFIANT_QUATRIEME,
         ):
             self.assertIn(f'href="/resultats/{identifiant}"', historique)
+        # L'ordre se lit dans l'historique complet seulement : l'identifiant
+        # exploitable figure aussi dans son groupe, plus haut dans la page.
+        historique = historique[historique.index("Historique complet") :]
         self.assertLess(
             historique.index(IDENTIFIANT_QUATRIEME), historique.index(IDENTIFIANT_TIERS)
         )

@@ -1,0 +1,123 @@
+{# Composant compact de résultat, partagé (tâches 1.3 et 1.4, design D2, D3 et D6).
+
+   Fichier de macros, sans page propre : `resultats.html` l'emploie par
+   `groupe_resultats`. Les mappings viennent de `web/vues_resultats.py`.
+
+   Contrat de `resultat_compact(resultat)` : un mapping ou un objet portant
+   `modele`, `lien` (adresse du détail, facultative), `moteur`, `date_essai`
+   (ISO ou absent), `variante`, `indicateurs` (durée de transcription, pic
+   mémoire, occupation CPU, temps CPU : `IndicateursAudio` ou mapping de mêmes
+   clés), `annotation_ram`, `materiel_alerte`, `etats` (libellés courts) et
+   `duree_audio` (libellé facultatif, seulement si les durées d'un groupe
+   divergent). Tout champ absent donne « non consigné » ou « non mesuré » ; une
+   valeur invalide donne « indisponible » par les formateurs de
+   `indicateurs_resultats`, jamais zéro.
+
+   Disposition : une ligne par essai. Sur bureau, le modèle occupe la colonne de
+   gauche et les cinq valeurs (temps, RAM, CPU, moteur, date) se suivent à
+   droite ; en petit écran, tout se replie en blocs étiquetés, sans défilement
+   horizontal. Le pic mémoire est un pic cumulatif du moteur quand
+   `annotation_ram` est renseignée : seule la mention courte « pic cumulatif »
+   s'affiche, l'explication complète reste dans le détail.
+
+   `entete_groupe_audio` donne le titre d'un groupe par empreinte : nom du
+   fichier, durée décodée commune ou mention de durées divergentes, et empreinte
+   courte pour distinguer deux fichiers de même nom. L'empreinte complète reste
+   dans un détail. Jamais la durée d'un lot. #}
+
+{% macro resultat_compact(resultat) -%}
+{%- set indicateurs = resultat.indicateurs | default({}, true) -%}
+{%- set duree = indicateurs.duree_transcription_s | default(none) -%}
+{%- set pic = indicateurs.pic_memoire_octets | default(none) -%}
+{%- set occupation = indicateurs.occupation_cpu | default(none) -%}
+{%- set temps_cpu = indicateurs.temps_cpu_s | default(none) -%}
+{%- if occupation is not none -%}
+{%- set cpu = formater_pourcentage_premier_niveau(occupation) -%}
+{%- elif temps_cpu is not none -%}
+{%- set cpu = "non interprétable" -%}
+{%- else -%}
+{%- set cpu = "non mesuré" -%}
+{%- endif -%}
+{%- set temps_affiche = formater_duree_premier_niveau(duree) -%}
+{%- set ram_affichee = formater_memoire_premier_niveau(pic) -%}
+{%- set absences = ("non mesuré", "non interprétable", "indisponible") -%}
+<div class="resultat-compact">
+<div class="resultat-titre">
+{%- if resultat.lien %}
+<a class="resultat-modele" href="{{ resultat.lien }}">{{ resultat.modele or "modèle non consigné" }}</a>
+{%- else %}
+<span class="resultat-modele">{{ resultat.modele or "modèle non consigné" }}</span>
+{%- endif %}
+{%- if resultat.variante %}
+<span class="resultat-secondaire">Variante : {{ resultat.variante }}</span>
+{%- endif %}
+{%- if resultat.revision %}
+<span class="resultat-secondaire">Révision : {{ resultat.revision }}</span>
+{%- endif %}
+{%- if resultat.duree_audio %}
+<span class="resultat-secondaire">{{ resultat.duree_audio }}</span>
+{%- endif %}
+</div>
+<div class="resultat-mesures">
+<div class="resultat-mesure resultat-mesure-temps">
+<span class="resultat-libelle">Transcription</span>
+<span class="resultat-valeur{% if temps_affiche in absences %} resultat-valeur-absente{% endif %}">{{ temps_affiche }}</span>
+</div>
+<div class="resultat-mesure resultat-mesure-ram">
+<span class="resultat-libelle">RAM moteur</span>
+<span class="resultat-valeur{% if ram_affichee in absences %} resultat-valeur-absente{% endif %}">{{ ram_affichee }}</span>
+{% if resultat.annotation_ram and pic is not none %}<span class="resultat-secondaire">pic cumulatif</span>{% endif %}
+</div>
+<div class="resultat-mesure resultat-mesure-cpu">
+<span class="resultat-libelle">CPU moteur</span>
+<span class="resultat-valeur{% if cpu in absences %} resultat-valeur-absente{% endif %}">{{ cpu }}</span>
+</div>
+<div class="resultat-mesure resultat-mesure-moteur">
+<span class="resultat-libelle">Moteur</span>
+<span class="resultat-secondaire">{{ resultat.moteur or "moteur non consigné" }}</span>
+</div>
+<div class="resultat-mesure resultat-mesure-date">
+<span class="resultat-libelle">Date</span>
+<span class="resultat-secondaire">{{ formater_date_courte(resultat.date_essai) }}</span>
+</div>
+</div>
+{% if resultat.etats %}
+<div class="resultat-etats">{% for etat in resultat.etats %}<span class="resultat-etat">{{ etat }}</span>{% endfor %}</div>
+{% endif %}
+{% if resultat.materiel_alerte %}
+<div class="resultat-alerte">{{ resultat.materiel_alerte }}</div>
+{% endif %}
+</div>
+{%- endmacro %}
+
+{% macro entete_groupe_audio(nom, duree_audio_s, empreinte_courte=none, empreinte=none, durees_divergentes=false) -%}
+<div class="resultat-groupe">
+<h2 class="resultat-audio">{{ nom or "fichier non consigné" }}</h2>
+{% if durees_divergentes %}
+<span class="resultat-secondaire">Durée non commune aux essais : chaque ligne indique la sienne.</span>
+{% else %}
+<span class="resultat-secondaire">Audio : {{ formater_duree_premier_niveau(duree_audio_s) }}{% if empreinte_courte %} · Empreinte {{ empreinte_courte }}{% endif %}</span>
+{% endif %}
+{% if durees_divergentes and empreinte_courte %}<span class="resultat-secondaire">Empreinte {{ empreinte_courte }}</span>{% endif %}
+</div>
+{%- endmacro %}
+
+{% macro groupe_resultats(groupe) -%}
+<section class="resultat-section">
+{{ entete_groupe_audio(groupe.nom, groupe.duree_audio_s, groupe.empreinte_courte, groupe.empreinte, groupe.durees_divergentes) }}
+{% for ligne in groupe.reelles %}
+{{ resultat_compact(ligne) }}
+{% endfor %}
+{% if groupe.simulees %}
+<h3>Mesures simulées de cet audio</h3>
+<div class="resultat-secondaire">Classées à part des mesures observées, sans distinction de performance.</div>
+{% for ligne in groupe.simulees %}
+{{ resultat_compact(ligne) }}
+{% endfor %}
+{% endif %}
+<details>
+<summary>Empreinte SHA-256 complète</summary>
+<span class="resultat-secondaire">{{ groupe.empreinte }}</span>
+</details>
+</section>
+{%- endmacro %}

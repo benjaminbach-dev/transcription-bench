@@ -52,11 +52,89 @@ JETONS_COULEUR = (
     "--s-warning",
     "--s-danger",
     "--s-code-bg",
+    "--s-resultat-temps",
+    "--s-resultat-ram",
+    "--s-resultat-cpu",
+    "--s-resultat-secondaire",
+)
+
+# Tâche 1.3 : jetons de taille et de grille du composant de résultat. Ce ne sont
+# pas des couleurs : ils sont déclarés dans le bloc clair `:root` seulement.
+JETONS_TAILLE_RESULTAT = (
+    "--s-resultat-taille-modele",
+    "--s-resultat-taille-valeur",
+    "--s-resultat-taille-texte",
+    "--s-resultat-taille-secondaire",
+)
+JETON_GRILLE_RESULTAT = "--s-resultat-grille"
+
+# Propriétés admises pour le composant de résultat : mise en page (grille,
+# flexbox d'états), espacement, bordure, taille, graisse et couleur de texte.
+# Aucune propriété de positionnement, de fond, de défilement ou de largeur fixe.
+PROPRIETES_RESULTAT = frozenset(
+    {
+        "display",
+        "gap",
+        "padding",
+        "border",
+        "border-top",
+        "flex-wrap",
+        "align-items",
+        "grid-column",
+        "grid-template-columns",
+        "margin",
+        "margin-bottom",
+        "font-size",
+        "font-weight",
+        "color",
+        *JETONS_TAILLE_RESULTAT,
+        JETON_GRILLE_RESULTAT,
+    }
 )
 
 PROPRIETES_AUTORISEES = frozenset(
-    {"white-space", "overflow-wrap", "min-width", "--s-btn", "--s-btn-on", *JETONS_COULEUR}
+    {
+        "white-space",
+        "overflow-wrap",
+        "min-width",
+        "--s-btn",
+        "--s-btn-on",
+        *JETONS_COULEUR,
+        *PROPRIETES_RESULTAT,
+    }
 )
+
+# Couleurs du composant de résultat tirées de la palette officielle Flexoki
+# (tailwind/namespaced.css du dépôt kepano/flexoki, échelle 50 à 950) : cyan 700
+# et 300 pour le temps, violet 600 et 300 pour la RAM, orange 700 et 300 pour le
+# CPU, base 700 et 400 pour les libellés. Aucune teinte hors palette.
+PALETTE_FLEXOKI_RESULTAT = {
+    "clair": {"#1c6c66", "#5e409d", "#9d4310", "#575653"},
+    "sombre": {"#5abdac", "#a699d0", "#ec8b49", "#9f9d96"},
+}
+JETONS_COULEUR_RESULTAT = (
+    "--s-resultat-temps",
+    "--s-resultat-ram",
+    "--s-resultat-cpu",
+    "--s-resultat-secondaire",
+)
+# Surfaces sur lesquelles le composant de résultat s'affiche, par thème : fond
+# de page, feuille, carte et section de carte (toutes les quatre, comme D6).
+SURFACES_RESULTAT = ("--s-bg", "--s-surface", "--s-card", "--s-card-section")
+PAIRES_CONTRASTE_RESULTAT = tuple(
+    (jeton, surface) for jeton in JETONS_COULEUR_RESULTAT for surface in SURFACES_RESULTAT
+)
+# Tailles minimales du design D2/D6, en rem : modèle 1,125 gras, valeurs
+# temps/RAM/CPU 1,25, métadonnées et libellés 0,875, états et texte 1.
+TAILLES_MINIMALES_RESULTAT = (
+    (".resultat-modele", "--s-resultat-taille-modele", 1.125),
+    (".resultat-valeur", "--s-resultat-taille-valeur", 1.25),
+    (".resultat-secondaire", "--s-resultat-taille-secondaire", 0.875),
+    (".resultat-libelle", "--s-resultat-taille-secondaire", 0.875),
+    (".resultat-etat", "--s-resultat-taille-texte", 1.0),
+)
+MOTIF_REM = re.compile(r"([0-9]+(?:\.[0-9]+)?)rem")
+MOTIF_VAR = re.compile(r"var\((--s-[a-z0-9-]+)\)")
 
 # `min-width` n'est admis que pour les `pre` des cellules (voir
 # `test_largeur_minimale_des_transcriptions_dans_les_cellules`) : ailleurs, il
@@ -620,6 +698,102 @@ class FeuilleComplementaireTest(SocleFeuillesTest):
         for nom, partie in (("clair", self.clair), ("sombre", self.sombre)):
             jetons = jetons_couleur(partie)
             for premier, second in PAIRES_CONTRASTE:
+                with self.subTest(theme=nom, paire=f"{premier}/{second}"):
+                    mesure = contraste(jetons[premier], jetons[second])
+                    self.assertGreaterEqual(
+                        mesure,
+                        CONTRASTE_MINIMAL,
+                        f"{nom} : {premier} {jetons[premier]} sur {second} "
+                        f"{jetons[second]} ne donne que {mesure:.2f}",
+                    )
+
+    def test_tailles_du_composant_de_resultat(self) -> None:
+        # Chaque sélecteur lit sa taille dans un jeton de `:root` ; la valeur
+        # résolue doit atteindre le minimum du design, en rem. Le modèle est
+        # aussi en gras, comme le demande D2.
+        feuille = regles(self.css)
+        jetons = {
+            propriete: valeur
+            for propriete, valeur in declarations(self.clair)
+            if propriete.startswith("--s-resultat-taille-")
+        }
+        self.assertEqual(set(jetons), set(JETONS_TAILLE_RESULTAT))
+        for selecteur, jeton, minimum in TAILLES_MINIMALES_RESULTAT:
+            with self.subTest(selecteur=selecteur):
+                self.assertIn(selecteur, feuille)
+                reference = feuille[selecteur]["font-size"]
+                self.assertEqual(MOTIF_VAR.fullmatch(reference).group(1), jeton)
+                mesure = MOTIF_REM.fullmatch(jetons[jeton])
+                self.assertIsNotNone(mesure, jetons[jeton])
+                self.assertGreaterEqual(float(mesure.group(1)), minimum)
+        self.assertEqual(feuille[".resultat-modele"]["font-weight"], "700")
+
+    def test_absences_moins_saillantes_et_sans_coupure_forcee(self) -> None:
+        feuille = regles(self.css)
+        absence = feuille[".resultat-mesure .resultat-valeur-absente"]
+        self.assertEqual(absence["font-size"], "var(--s-resultat-taille-secondaire)")
+        self.assertEqual(absence["font-weight"], "400")
+        self.assertEqual(absence["color"], "var(--s-resultat-secondaire)")
+        self.assertEqual(absence["overflow-wrap"], "normal")
+        self.assertEqual(feuille[".resultat-valeur"]["overflow-wrap"], "normal")
+
+    def test_grille_du_composant_sans_largeur_fixe(self) -> None:
+        # Mobile sans défilement horizontal : la piste de chaque mesure se borne
+        # à 100 % du conteneur, sans largeur fixe ni `min-width`.
+        feuille = regles(self.css)
+        grille = declarations(self.clair)
+        valeurs = {propriete: valeur for propriete, valeur in grille}
+        self.assertIn(JETON_GRILLE_RESULTAT, valeurs)
+        self.assertIn("min(100%", valeurs[JETON_GRILLE_RESULTAT])
+        self.assertIn("minmax(", valeurs[JETON_GRILLE_RESULTAT])
+        self.assertEqual(
+            feuille[".resultat-mesures"]["grid-template-columns"],
+            f"var({JETON_GRILLE_RESULTAT})",
+        )
+        for selecteur, declaration in feuille.items():
+            if selecteur.startswith(".resultat-"):
+                with self.subTest(selecteur=selecteur):
+                    # `overflow-wrap` coupe les mots et reste permis ; seuls les
+                    # défilements et les largeurs figées sont interdits.
+                    interdites = [
+                        propriete
+                        for propriete in declaration
+                        if propriete in ("overflow", "overflow-x", "overflow-y")
+                        or propriete.endswith("width")
+                    ]
+                    self.assertEqual(interdites, [], selecteur)
+
+    def test_couleurs_du_composant_dans_la_palette_flexoki(self) -> None:
+        # Protection contre une teinte saisie à la main : chaque jeton est une
+        # valeur de la palette officielle retenue, et ses sélecteurs la lisent.
+        for nom, partie, palette in (
+            ("clair", self.clair, PALETTE_FLEXOKI_RESULTAT["clair"]),
+            ("sombre", self.sombre, PALETTE_FLEXOKI_RESULTAT["sombre"]),
+        ):
+            jetons = jetons_couleur(partie)
+            for jeton in JETONS_COULEUR_RESULTAT:
+                with self.subTest(theme=nom, jeton=jeton):
+                    self.assertIn(jetons[jeton].lower(), palette)
+        feuille = regles(self.css)
+        self.assertEqual(
+            feuille[".resultat-mesure-temps .resultat-valeur"]["color"],
+            "var(--s-resultat-temps)",
+        )
+        self.assertEqual(
+            feuille[".resultat-mesure-ram .resultat-valeur"]["color"],
+            "var(--s-resultat-ram)",
+        )
+        self.assertEqual(
+            feuille[".resultat-mesure-cpu .resultat-valeur"]["color"],
+            "var(--s-resultat-cpu)",
+        )
+
+    def test_contraste_des_jetons_de_resultat(self) -> None:
+        # Tâche 1.3 : chaque couleur du composant atteint 4,5 sur chacune des
+        # quatre surfaces de son thème, clair comme sombre.
+        for nom, partie in (("clair", self.clair), ("sombre", self.sombre)):
+            jetons = jetons_couleur(partie)
+            for premier, second in PAIRES_CONTRASTE_RESULTAT:
                 with self.subTest(theme=nom, paire=f"{premier}/{second}"):
                     mesure = contraste(jetons[premier], jetons[second])
                     self.assertGreaterEqual(

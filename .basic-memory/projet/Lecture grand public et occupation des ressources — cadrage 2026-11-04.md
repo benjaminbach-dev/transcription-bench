@@ -65,3 +65,20 @@ Contexte : après la refonte Sumi (base 931e2a5), demande d'une lecture plus rap
 - [status] Accord explicite de commit/push après revue finale et vérifications, sans implémentation. La réserve de consentement sur la réconciliation est levée ; la nouvelle recette UI et les 20 tâches de réalisation restent à faire.
 
 - [validation] Revue finale advisor après réconciliation le 2026-11-07 : prêt à publier, aucun bloquant. Collecte/stockage inchangés, validations utilisateur bornées et absence d'implémentation confirmées. Précisions éditoriales intégrées : bloc explicitement repliable et référence des formats à la nouvelle refonte.
+
+## Début de la refonte — lot 1 partiel, 2026-11-07
+
+- [decision] Application de `refondre-parcours-resultats` demandée : un worker distinct par tâche, relecture/corrections du principal, navigator Sonnet 5.5 / medium puis rapport transmis à advisor Opus 5.5 / medium en fin de lot ; corrections et push avant le lot suivant. Repli worker explicitement décidé : Haiku 5.5 / high si défaut indisponible. Aucun archivage demandé.
+- [validation] `AGENTS.md` autorise désormais JS local vanilla en amélioration progressive et CSS applicative ; modification demandée au principal puis `/reload` effectué et règles chargées vérifiées. Pas de dépendance ajoutée.
+- [status] Tâches 1.1–1.4 réalisées et cochées : route JS/CSP, composant compact, liste Résultats groupée par empreinte et tris internes, historique intégral conservé provisoirement dans un détail secondaire. Données historiques non réécrites ; aucun moteur réel ni poids installé.
+- [validation] Principal : suite complète locale de 949 tests réussie en 25,512 s, commande `uv run --locked --offline python -m unittest discover -s tests -t .`, validation OpenSpec stricte et diffcheck réussis. Ces preuves ne sont pas des vérifications Windows ni des mesures de modèles.
+- [validation] Navigator sur serveur éphémère et données intégralement fabriquées : clair réel, bureau 1280 × 800 et mobile 360 × 800 ; après corrections, quatre entrées complètes bureau (y ≈ 276–642), première entrée complète mobile (y ≈ 361–573), aucun débordement horizontal ; tris, cas longs/dégradés, défilement de l'historique au clavier observés. Les fixtures sans marques servent seulement au rendu courant, jamais à des performances réelles.
+- [validation] Advisor Opus 5.5 / medium, rapport navigator transmis puis corrections et contrôle final : code 1.1–1.4 conforme, aucun bloquant/majeur de code restant ; 119 tests ciblés supplémentaires relancés par l'advisor.
+- [blocker] Tâche 1.5 volontairement ouverte : outils Playwright exposés sans émulation de thème sombre ni désactivation JS. Clair vérifié par matchMedia ; aucune injection CSS/JS substitutive. Demande d'accord utilisateur distinct pour traiter l'outillage hors dépôt ; lot 2 non commencé tant que le préalable visuel n'est pas levé.
+- [limit] Petits reliquats : espacement tri/groupe, listes fermées de classes héritées, libellés de tri, ancre audio dans le détail. Sans JS non observé (recette 6.1 à venir). Aucun commit/push/CI/synchronisation/archivage à ce stade : lot 1 encore partiel.
+
+### Décision de clôture 1.5 et reprise avant compactage — 2026-11-07
+
+- [decision] Le propriétaire demande explicitement de considérer le contrôle sombre comme validé et de continuer, outillage reporté : 1.5 cochée sur cette acceptation, sans observation du sombre ni preuve inventée. Cette décision remplace le blocage historique décrit ci-dessus ; aucun accord de modification MCP ni dispense du mode sans JS n'est déduit.
+- [status] `refondre-parcours-resultats` : 5/20, lot 1 validé avec cette limite acceptée ; aucun commit/push encore effectué au moment de la pause demandée avant compactage. Publier le lot 1 puis reprendre 2.1 selon l'orchestration prescrite.
+- [next] Point de reprise détaillé, état des fichiers et méthode worker/navigator/advisor : [[Reprise refonte parcours résultats — lot 1 et orchestration 2026-11-07]].

@@ -6,6 +6,10 @@
 <title>{% block titre %}transcription-bench{% endblock %}</title>
 <link rel="stylesheet" href="/sumi.css">
 <link rel="stylesheet" href="/app.css">
+{# Seul script exécutable : le fichier local `/app.js`, chargé `defer` (design
+   D6). Aucun script incorporé, aucun attribut `on…`, aucune ressource
+   distante : l'interface reste complète sans lui. #}
+<script src="/app.js" defer></script>
 </head>
 <body>
 {# `page_courante` désigne le lien de la navigation à signaler. Une page de

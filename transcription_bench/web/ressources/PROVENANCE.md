@@ -26,10 +26,12 @@ chargée depuis un réseau à l'ouverture d'une page.
 
 ## `app.css` (route `/app.css`)
 
-Feuille complémentaire du projet, chargée après `sumi.min.css`, limitée à trois
+Feuille complémentaire du projet, chargée après `sumi.min.css`, limitée à quatre
 rôles : retours à la ligne et coupures, surcharge des jetons de couleur de Sumi
-avec la palette Flexoki, couleur des boutons d'action destructrice. Elle ne
-contient aucune police ni ressource externe.
+avec la palette Flexoki, couleur des boutons d'action destructrice, et composant
+compact de résultat (jetons `--s-resultat-*` de taille, de couleur et de grille,
+règles `resultat-*` de la macro `composants.html`). Elle ne contient aucune police
+ni ressource externe.
 
 - Palette : [Flexoki](https://github.com/kepano/flexoki), © Steph Ango, licence
   MIT ; le texte intégral est joint dans `LICENSE-Flexoki`. L'avis de licence

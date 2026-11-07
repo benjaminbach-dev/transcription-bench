@@ -593,6 +593,24 @@ class EntreeEmpreinte:
     reglages: tuple[Paire, ...] = ()
     reglages_bruts: Mapping[str, Any] = field(default_factory=dict)
     reglages_distinctifs: tuple[Paire, ...] = ()
+    # Variante GGUF consignée du modèle (`result.json`), `None` si absente.
+    variante: str | None = None
+    # Révision figée du modèle (`result.json`, « Révision figée »), `None` si absente.
+    revision: str | None = None
+    # Durée décodée de CET audio : jamais une durée commune supposée.
+    duree_decodee_s: float | int | None = None
+    # Mention de matériel comparée aux autres essais du même audio.
+    materiel_alerte: str | None = None
+
+    @property
+    def indicateurs(self) -> IndicateursAudio:
+        """Trois indicateurs de premier niveau de cet essai, ratios compris."""
+        return _indicateurs_audio(self.mesures, self.materiel)
+
+    @property
+    def annotation_ram(self) -> str | None:
+        """Annotation du pic mémoire cumulatif, `None` pour le premier audio."""
+        return _annotation_ram(self.ordre)
 
     @property
     def simule(self) -> bool:
@@ -633,6 +651,22 @@ class GroupeEmpreinte:
     def entrees_simulees(self) -> tuple[EntreeEmpreinte, ...]:
         """Résultats à mesures simulées, classés à part des résultats réels."""
         return tuple(entree for entree in self.entrees if entree.simule)
+
+    @property
+    def duree_decodee_commune_s(self) -> float | int | None:
+        """Durée décodée commune à tout le groupe, ou `None`.
+
+        Une valeur n'est commune que si chaque essai la consigne à l'identique :
+        une durée divergente ou partiellement absente ne donne jamais une fausse
+        durée commune.
+        """
+        durees = {entree.duree_decodee_s for entree in self.entrees}
+        return next(iter(durees)) if len(durees) == 1 else None
+
+    @property
+    def durees_divergentes(self) -> bool:
+        """Vrai si les essais du groupe ne consignent pas tous la même durée."""
+        return len({entree.duree_decodee_s for entree in self.entrees}) > 1
 
 
 @dataclass(frozen=True)
@@ -907,9 +941,10 @@ class ConsultationResultats:
         interprétable et consigne une empreinte valide : un résultat absent, une
         empreinte absente ou d'une autre forme n'apparaît dans aucun groupe et
         n'est donc jamais comparable. Deux fichiers de même nom et d'empreintes
-        différentes forment deux groupes distincts. L'ordre des groupes suit les
-        exécutions, des plus récentes aux plus anciennes ; une exécution refusée
-        est ignorée. Chaque groupe conserve toutes ses transcriptions, sans
+        différentes forment deux groupes distincts. Les groupes sont ordonnés par
+        leur essai le plus récent, quel que soit `tri` : le critère ne classe que
+        les essais à l'intérieur de chaque groupe. Une exécution refusée est
+        ignorée. Chaque groupe conserve toutes ses transcriptions, sans
         dédoublonnage : les résultats observés d'abord, puis les mesures
         simulées, chacun des deux ensembles classé par `tri` (`temps` par défaut)
         selon `trier_entrees`.
@@ -936,13 +971,16 @@ class ConsultationResultats:
                 groupes.setdefault(empreinte, []).append(
                     _entree(execution, plan, transcription, empreinte, materiel)
                 )
+        groupes_recents = sorted(
+            groupes.items(), key=lambda paire: _cle_recence(paire[1]), reverse=True
+        )
         return tuple(
             GroupeEmpreinte(
                 empreinte=empreinte,
                 noms=tuple(sorted({entree.nom for entree in entrees})),
-                entrees=_entrees_du_groupe(entrees, tri),
+                entrees=_entrees_du_groupe(_avec_alerte_materiel(entrees), tri),
             )
-            for empreinte, entrees in groupes.items()
+            for empreinte, entrees in groupes_recents
         )
 
     def comparer(
@@ -1124,16 +1162,17 @@ def analyser_selection(texte: str) -> tuple[str, int]:
     return identifiant, int(ordre)
 
 
-def analyser_tri(valeurs: Sequence[str] | str) -> str:
+def analyser_tri(valeurs: Sequence[str] | str, defaut: str = TRI_DEFAUT) -> str:
     """Critère de classement demandé, borné aux quatre critères connus.
 
-    Une demande absente vaut `TRI_DEFAUT` (temps de transcription). Un critère
-    inconnu, vide ou fourni plusieurs fois est refusé par `ValeurRefusee` : la
-    lecture ne choisit jamais un critère parmi plusieurs et ne devine rien.
+    Une demande absente vaut `defaut` (temps de transcription par défaut ; la
+    page Résultats emploie `recent`). Un critère inconnu, vide ou fourni
+    plusieurs fois est refusé par `ValeurRefusee` : la lecture ne choisit jamais
+    un critère parmi plusieurs et ne devine rien.
     """
     demandes = (valeurs,) if isinstance(valeurs, str) else tuple(valeurs)
     if not demandes:
-        return TRI_DEFAUT
+        return defaut
     if len(demandes) > 1:
         raise ValeurRefusee("tri refusé : un seul critère de classement attendu")
     if demandes[0] not in LIBELLES_TRI:
@@ -1292,6 +1331,40 @@ def _entree(
         etat=execution.etat,
         reglages=reglages,
         reglages_bruts=reglages_bruts,
+        variante=_champ(transcription.modele, "Variante GGUF"),
+        revision=_texte(_champ(transcription.modele, "Révision figée")),
+        duree_decodee_s=transcription.duree_decodee_s,
+    )
+
+
+def _cle_recence(entrees: Sequence[EntreeEmpreinte]) -> tuple[tuple[int, float], str]:
+    """Clé d'un groupe : son essai le plus récent, puis l'identifiant d'exécution.
+
+    Sert à ordonner les groupes indépendamment du critère de classement interne.
+    """
+    recent = max(
+        entrees, key=lambda entree: (_horodatage(entree.date_essai), entree.execution)
+    )
+    return _horodatage(recent.date_essai), recent.execution
+
+
+def _avec_alerte_materiel(
+    entrees: Sequence[EntreeEmpreinte],
+) -> tuple[EntreeEmpreinte, ...]:
+    """Entrées d'un même audio, chacune avec sa mention de matériel.
+
+    La mention compare le matériel de l'essai aux seuls autres essais du même
+    audio, comme le détail individuel ; aucun matériel local n'est substitué.
+    """
+    return tuple(
+        replace(
+            entree,
+            materiel_alerte=_alerte_materiel(
+                entree.materiel,
+                [autre.materiel for autre in entrees if autre is not entree],
+            ),
+        )
+        for entree in entrees
     )
 
 

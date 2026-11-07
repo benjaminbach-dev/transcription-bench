@@ -1903,7 +1903,10 @@ class RoutesExecutionTest(SocleExecutionTest):
         page = self.client.get("/operation?action=arret-demande", base_url=self.base_url())
         corps = html.unescape(page.get_data(as_text=True))
         self.assertIn("Arrêt de l'exécution demandé", corps)
-        self.assertNotIn("<script", corps)
+        # Seul le script local du squelette est présent : ni script incorporé
+        # ni fichier arbitraire.
+        self.assertEqual(corps.count("<script"), 1)
+        self.assertIn('<script src="/app.js" defer></script>', corps)
         self.assertNotIn("<style", corps)
         self.assertCacheNettoye()
 

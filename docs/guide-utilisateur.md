@@ -224,15 +224,17 @@ Vérification : non éprouvé à froid.
 
 ## 10. Lire un résultat
 
-*Faites ceci.* Ouvrez la page **Résultats**, puis cliquez sur l'identifiant de votre exécution. Pour comprendre les trois repères, ouvrez **Comprendre les indicateurs** depuis la page.
+*Faites ceci.* Ouvrez la page **Résultats**. Les essais sont regroupés par audio : le nom du fichier et sa durée figurent en titre de chaque groupe. Le tri par défaut présente les essais les plus récents en premier dans chaque groupe ; les liens Temps de transcription, Moins de RAM et CPU le moins occupé changent l'ordre des essais de chaque groupe, jamais l'ordre des audios. Cliquez sur le nom d'un modèle pour ouvrir le texte et le détail de cet essai. Pour comprendre les repères, ouvrez **Comprendre les indicateurs** depuis la page.
 
-*Vous devez voir.* Pour chaque audio : le modèle et le moteur en titre, trois mesures (**Transcription**, **Mémoire max**, **CPU du moteur**), puis le texte transcrit en entier. Les mesures détaillées, les segments horodatés et les informations de l'exécution suivent dans des blocs que vous pouvez ouvrir ; la date courte s'affiche au-dessus des audios, et l'horodatage complet reste dans **Résumé de l'exécution**. Les mesures dépendent de votre ordinateur : elles ne disent rien de la qualité du texte ni des performances d'un autre poste.
+*Vous devez voir.* Une ligne par essai : le modèle (et sa variante GGUF si elle est consignée), puis **Transcription**, **RAM moteur** et **CPU moteur**, le moteur et la date courte. Si les durées décodées d'un audio divergent, le groupe le signale et chaque ligne donne la durée de son propre essai ; deux fichiers de même nom se distinguent par leur empreinte courte. Les états restent visibles sur la ligne : résultat en erreur, exécution interrompue, marques. Les mesures simulées sont classées à part, sous leur propre titre. Les mesures dépendent de votre ordinateur : elles ne disent rien de la qualité du texte ni des performances d'un autre poste.
 
 Une marque **SYNTHÉTIQUE** seule signale un audio ou un texte de test : elle ne dit rien du moteur ni des mesures. Les marques **FACTICE** ou **MESURES SIMULÉES** signalent, elles, un moteur factice ou des valeurs simulées.
 
+*Historique.* Tous les essais, y compris les échecs, les interruptions et les résultats non interprétables, restent dans **Historique complet des exécutions**, replié sous la liste. Chaque exécution exploitable y ouvre son détail. Dans ce détail, le texte complet vient après le modèle et les mesures ; les mesures détaillées, les segments et les informations de l'exécution suivent dans des blocs que vous pouvez ouvrir.
+
 Relisez toujours le texte en écoutant l'audio. Une phrase fluide peut être fausse.
 
-Vérification : non éprouvé à froid.
+Vérification : non éprouvé à froid. Les tests synthétiques couvrent le regroupement et les tris, pas la mise en page à l'écran.
 
 ## 11. Comparer deux résultats
 
