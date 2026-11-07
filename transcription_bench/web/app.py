@@ -838,13 +838,21 @@ def _enregistrer_routes(
 
     @application.get("/modeles")
     def modeles() -> str:
-        """Inventaire local d'abord, ajout secondaire après (tâche 5.1).
+        """Inventaire local d'abord, ajout secondaire après (tâches 5.1, 5.2).
 
         L'inventaire des modèles prêts est le premier contenu fonctionnel de la
-        page ; l'ajout (vérification puis téléchargement) vient ensuite. Chaque
-        modèle prêt porte la référence locale déjà acceptée en GET par
-        `/executions`, pour l'action « Utiliser », et l'état `actif` d'un modèle
-        visé par l'opération en cours. Aucune lecture n'écrit de fichier.
+        page ; l'ajout (vérification puis téléchargement) est un accordéon
+        replié qui le suit, avec l'explication générale. Il n'est ouvert
+        d'emblée qu'après une vérification, pour que le résultat, un refus ou un
+        choix GGUF reste visible sans geste ; l'ouvrir soi-même est un choix
+        local du navigateur. Ce GET ne vérifie aucun dépôt et ne télécharge
+        rien : les routes POST distinctes restent seules admises à le faire, et
+        le gabarit ne porte ni soumission automatique ni appel réseau. Les
+        tailles prévisionnelles y sont lisibles en Mio/Gio, les octets bruts
+        restant dans le détail technique. Chaque modèle prêt porte la référence
+        locale déjà acceptée en GET par `/executions`, pour l'action
+        « Utiliser », et l'état `actif` d'un modèle visé par l'opération en
+        cours. Aucune lecture n'écrit de fichier.
         """
         resultat = service_modeles.dernier_resultat()
         try:

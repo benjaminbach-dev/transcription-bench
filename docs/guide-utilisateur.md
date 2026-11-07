@@ -181,18 +181,18 @@ Pour l'exemple, utilisez :
 | Identifiant Hugging Face | `handy-computer/whisper-large-v3-turbo-gguf` |
 | Moteur | transcribe.cpp (GGUF) |
 | Fichier à choisir | `whisper-large-v3-turbo-Q5_K_M.gguf` |
-| Taille à télécharger | environ 620 Mo (valeur indicative, non vérifiée à froid ; la page l'affiche en octets avant tout téléchargement) |
+| Taille à télécharger | environ 620 Mo (valeur indicative, non vérifiée à froid ; la page l'affiche en Mio ou Gio après la vérification, avant tout téléchargement) |
 
 « Hugging Face » est le site qui héberge ces modèles.
 
 *Faites ceci.*
 
-1. Ouvrez la page **Modèles**.
+1. Ouvrez la page **Modèles**. La liste **Modèles locaux prêts** vient en premier ; juste après, le panneau replié **Ajouter un modèle** contient le formulaire d'ajout. Ouvrez-le : l'ouvrir ne vérifie aucun dépôt et ne télécharge rien.
 2. Dans **Vérifier un dépôt**, saisissez l'identifiant ci-dessus dans **Identifiant Hugging Face**, choisissez « transcribe.cpp (GGUF) » dans **Moteur installé**, laissez **Révision facultative** vide.
-3. Cliquez sur **Vérifier la compatibilité sans télécharger**. Si la page propose plusieurs variantes, cliquez sur le bouton qui porte le nom `whisper-large-v3-turbo-Q5_K_M.gguf` (il commence par « Vérifier avec »).
-4. Quand la page indique « Dépôt compatible », contrôlez la taille, puis cliquez sur **Télécharger ce modèle à la révision vérifiée**. Suivez l'avancement dans **Exécutions**, section **Opération longue**.
+3. Cliquez sur **Vérifier la compatibilité sans télécharger** : cette étape lit seulement la fiche du dépôt, sans télécharger de poids. La page rouvre le panneau **Ajouter un modèle** et y affiche le résultat. Si plusieurs variantes sont proposées, cliquez sur le bouton qui porte le nom `whisper-large-v3-turbo-Q5_K_M.gguf` (il commence par « Vérifier avec »).
+4. Quand la page indique « Dépôt compatible », contrôlez la taille annoncée sous **Taille à télécharger**, en Mio ou Gio (les valeurs exactes en octets restent dans le détail « Fichiers du modèle et identifiants »), puis cliquez sur **Télécharger ce modèle à la révision vérifiée**. Le téléchargement est une action séparée : il ne commence qu'après ce clic. Suivez l'avancement dans **Exécutions**, section **Opération longue**.
 
-*Vous devez voir.* Le modèle apparaît dans **Modèles locaux prêts**.
+*Vous devez voir.* Le panneau **Ajouter un modèle** reste ouvert tant qu'une vérification a un résultat, puis le modèle apparaît dans **Modèles locaux prêts**.
 
 *Si ce n'est pas le cas.* Voir « modèle refusé ou introuvable », « téléchargement interrompu » et « pas de connexion Internet » dans le [dépannage](#13-dépannage).
 

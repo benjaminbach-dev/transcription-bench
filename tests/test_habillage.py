@@ -21,6 +21,7 @@ from pathlib import Path
 from tests.outils_html import ELEMENTS_INTERDITS, assert_html_seul
 from tests.test_comparaison_resultats import EMPREINTE_A, resultat_empreinte
 from tests.test_feuilles import lire_feuille, regles
+from tests.test_modeles_web import FausseGestion
 from tests.test_consultation_resultats import (
     IDENTIFIANT,
     IDENTIFIANT_ANCIEN,
@@ -29,6 +30,9 @@ from tests.test_consultation_resultats import (
     run_json,
 )
 from tests.test_web import SocleWebTest
+from transcription_bench.compatibilite_modeles import RAISON_FICHIER_GGUF_NON_CHOISI
+from transcription_bench.moteurs import ETAT_PRET, EtatMoteur
+from transcription_bench.verification_modeles import ResultatVerification
 from transcription_bench.web.app import NOM_FEUILLE_APP
 
 DOSSIER_GABARITS = (
@@ -147,6 +151,8 @@ MOTIF_BLOC_COURANTE = re.compile(
 
 DELAI = 5.0
 IDENTIFIANT_DETAIL = "20240103-000000-0000dead"
+#: Moteur réel prêt simulé : seul un tel moteur ouvre le formulaire d'ajout.
+MOTEUR_PRET = "moteur-de-test"
 
 # Design D8 : contenus qui restent visibles sans ouvrir d'accordéon.
 CONTENU_TOUJOURS_VISIBLE = frozenset({"pre", "button"})
@@ -843,23 +849,78 @@ class HabillagePageTest(SocleWebTest):
         # boutons d'action ne sont jamais enfermés dans un accordéon fermé (un
         # `details` qui contient une erreur porte `open`).
         for chemin, page in self.pages_a_controler().items():
-            for bloc in analyser_details(page.corps).blocs:
-                if bloc.ouvert:
+            with self.subTest(chemin=chemin):
+                self.assertEqual(
+                    self.violations_details_fermes(chemin, page.corps), [], chemin
+                )
+
+    def exception_details_fermes(self, chemin: str, resume: str, tag: str) -> bool:
+        """Exceptions étroites et commentées à la règle D8, bloc par bloc."""
+        # Diagnostic volontairement secondaire (D1), pas une action de
+        # lancement ou d'arrêt à garder au premier plan.
+        if (chemin == "/executions" and
+                resume == "Emplacement des dossiers" and
+                tag == "button"):
+            return True
+        # Formulaire d'ajout replié (tâche 5.2) : la règle D8 protège les
+        # actions principales (lancement, arrêt) et les erreurs, pas les
+        # contrôles d'un formulaire secondaire. L'exception reste étroite :
+        # seulement les `button` du bloc « Ajouter un modèle » de /modeles,
+        # jamais un `pre`, ni une classe danger/warning, ni un autre bloc ni
+        # une autre page.
+        return (
+            chemin == "/modeles"
+            and resume == "Ajouter un modèle"
+            and tag == "button"
+        )
+
+    def violations_details_fermes(self, chemin: str, corps: str) -> list[str]:
+        """Contenus à garder visibles trouvés dans un `details` fermé."""
+        violations: list[str] = []
+        for bloc in analyser_details(corps).blocs:
+            if bloc.ouvert:
+                continue
+            for tag, attributs in bloc.balises:
+                emplacement = f"{chemin}/{bloc.resume}: <{tag}>"
+                if self.exception_details_fermes(chemin, bloc.resume, tag):
                     continue
-                for tag, attributs in bloc.balises:
-                    with self.subTest(chemin=chemin, resume=bloc.resume, balise=tag):
-                        # Diagnostic volontairement secondaire (D1), pas une
-                        # action de lancement ou d'arrêt à garder au premier plan.
-                        if (chemin == "/executions" and
-                                bloc.resume == "Emplacement des dossiers" and
-                                tag == "button"):
-                            continue
-                        self.assertNotIn(tag, CONTENU_TOUJOURS_VISIBLE, bloc.resume)
-                        classes = set((attributs.get("class") or "").split())
-                        self.assertFalse(
-                            classes & CLASSES_TOUJOURS_VISIBLES, bloc.resume
+                classes = set((attributs.get("class") or "").split())
+                if tag in CONTENU_TOUJOURS_VISIBLE:
+                    violations.append(emplacement)
+                elif classes & CLASSES_TOUJOURS_VISIBLES:
+                    violations.append(f"{emplacement} {sorted(classes)}")
+                elif attributs.get("role") == "status":
+                    violations.append(f"{emplacement} role=status")
+        return violations
+
+    def test_exception_du_formulaire_d_ajout_limitee_aux_boutons(self) -> None:
+        # L'exception de la tâche 5.2 ne couvre que les boutons du bloc
+        # d'ajout de /modeles : un `pre`, un encart danger ou un autre bloc
+        # restent signalés.
+        bloc = '<details><summary>Ajouter un modèle</summary>{}</details>'
+        bouton = bloc.format("<button>V</button>")
+        self.assertEqual(
+            self.violations_details_fermes("/modeles", bouton), [],
+        )
+        for contenu in (
+            "<pre>journal</pre>",
+            '<p class="callout danger">refus</p>',
+            '<p class="callout warning">alerte</p>',
+            '<p role="status">état</p>',
+        ):
+            with self.subTest(contenu=contenu):
+                self.assertEqual(
+                    len(
+                        self.violations_details_fermes(
+                            "/modeles", bloc.format(contenu)
                         )
-                        self.assertNotEqual(attributs.get("role"), "status")
+                    ),
+                    1,
+                )
+        # Une autre page ne bénéficie d'aucune exception pour ce même bloc.
+        self.assertEqual(
+            len(self.violations_details_fermes("/executions", bouton)), 1
+        )
 
     def test_diagnostics_secondaires_fermes_avec_verification_accessible(self) -> None:
         page = self.pages_a_controler()["/executions"]
@@ -870,6 +931,80 @@ class HabillagePageTest(SocleWebTest):
         self.assertFalse(bloc.ouvert)
         self.assertIn("button", [tag for tag, _ in bloc.balises])
         self.assertIn('action="/dossiers/verifier"', page.corps)
+
+    def page_modeles_avec_resultat(self, resultat=None):
+        """Page Modèles rendue avec un moteur prêt et un résultat éventuel.
+
+        Le service factice de `tests.test_modeles_web` lève une erreur à la
+        moindre vérification, suppression ou téléchargement : rendre la page
+        prouve qu'un GET ne sollicite aucun dépôt.
+        """
+        app = self.construire_app(
+            self.services(
+                modeles=FausseGestion(
+                    resultat=resultat,
+                    moteurs=(EtatMoteur(MOTEUR_PRET, "Moteur de test", ETAT_PRET),),
+                )
+            )
+        )
+        reponse = app.test_client().get("/modeles", base_url=self.base_url())
+        self.assertEqual(reponse.status_code, 200)
+        return assert_html_seul(self, reponse.get_data(as_text=True))
+
+    def bloc_ajout(self, page):
+        """Bloc `details` de l'espace d'ajout de la page Modèles."""
+        blocs = analyser_details(page.corps).blocs
+        trouves = [bloc for bloc in blocs if bloc.resume == "Ajouter un modèle"]
+        self.assertEqual(len(trouves), 1, [bloc.resume for bloc in blocs])
+        return trouves[0]
+
+    def test_ajout_replie_sans_verification(self) -> None:
+        # Tâche 5.2 : l'ajout est un accordéon fermé par défaut ; seuls les
+        # contrôles de son propre formulaire y restent, jamais un encart.
+        page = self.page_modeles_avec_resultat()
+        bloc = self.bloc_ajout(page)
+
+        self.assertFalse(bloc.ouvert)
+        self.assertIn("button", [tag for tag, _ in bloc.balises])
+        self.assertNotIn("pre", [tag for tag, _ in bloc.balises])
+        classes = {
+            classe
+            for _, attributs in bloc.balises
+            for classe in (attributs.get("class") or "").split()
+        }
+        self.assertFalse(classes & CLASSES_TOUJOURS_VISIBLES, sorted(classes))
+        # Le bloc fermé ne contient que des contrôles de formulaire : la règle
+        # D8 n'y est satisfaite que par l'exception étroite ci-dessus.
+        self.assertEqual(
+            self.violations_details_fermes("/modeles", page.corps), [], page.corps
+        )
+        self.assertIn("Ajouter un modèle", page.corps)
+
+    def test_ajout_ouvert_apres_un_refus_avec_motif_et_choix_visibles(self) -> None:
+        # Tâche 5.2 : le refus et les choix GGUF restent visibles parce que
+        # l'accordéon d'ajout est ouvert dès qu'une vérification a un résultat.
+        refus = ResultatVerification(
+            accepte=False,
+            identifiant="org/modele",
+            moteur=MOTEUR_PRET,
+            famille=None,
+            commit=None,
+            raison=RAISON_FICHIER_GGUF_NON_CHOISI,
+            message="plusieurs fichiers GGUF autonomes",
+            gguf_candidats=("modele-a.gguf", "modele-b.gguf"),
+        )
+        page = self.page_modeles_avec_resultat(refus)
+        bloc = self.bloc_ajout(page)
+
+        self.assertTrue(bloc.ouvert, "refus enfermé dans un panneau fermé")
+        classes = {
+            classe
+            for _, attributs in bloc.balises
+            for classe in (attributs.get("class") or "").split()
+        }
+        self.assertIn("danger", classes)
+        self.assertIn("Vérifier avec modele-a.gguf", page.corps)
+        self.assertIn("Vérifier avec modele-b.gguf", page.corps)
 
     def test_journal_replie_pendant_une_operation(self) -> None:
         # Design D5 : le résumé et l'arrêt restent visibles, le journal

@@ -231,6 +231,176 @@ class ModelesWebTest(SocleWebTest):
         self.assertIn('href="/moteurs"', corps[: corps.index('id="ajouter-un-modele"')])
         self.assertNotIn('href="#ajouter-un-modele"', corps)
 
+    def test_ajout_replie_par_defaut_sans_solliciter_de_depot(self) -> None:
+        # Tâche 5.2 : l'espace d'ajout est un accordéon fermé par défaut ;
+        # l'afficher ne vérifie aucun dépôt et ne télécharge rien, et son
+        # ouverture reste un choix local du navigateur, sans script.
+        corps = self.page()
+
+        self.assertIn('<details id="ajouter-un-modele">', corps)
+        self.assertIn("<summary>Ajouter un modèle</summary>", corps)
+        self.assertIn('action="/modeles/verifier"', corps)
+        self.assertNotIn('action="/modeles/telecharger"', corps)
+        self.assertEqual(self.verification_client.appels_infos, [])
+        self.assertEqual(self.telechargement.appels, [])
+        self.assertFalse(self.dossier_data.exists())
+
+    def test_get_sans_verification_ni_telechargement_meme_repete(self) -> None:
+        # Le service factice lève une erreur à toute action : rendre la page
+        # plusieurs fois ne sollicite ni dépôt ni téléchargement et ne pose
+        # aucun script ni contrôle d'ouverture automatique.
+        app = self.construire_app(
+            self.services(
+                modeles=FausseGestion(
+                    moteurs=(EtatMoteur(MOTEUR, "Moteur de test", ETAT_PRET),)
+                )
+            )
+        )
+        client = app.test_client()
+        for _ in range(2):
+            reponse = client.get("/modeles", base_url=self.base_url())
+            self.assertEqual(reponse.status_code, 200)
+            corps = reponse.get_data(as_text=True)
+            self.verifier_html_seul(corps)
+
+        self.assertNotIn("autofocus", corps)
+        self.assertNotIn("onload", corps)
+        self.assertIn('<details id="ajouter-un-modele">', corps)
+
+    def test_retour_de_verification_ouvre_l_ajout(self) -> None:
+        # Tâche 5.2 : le retour POST 303 d'une vérification rouvre l'accordéon
+        # pour que son résultat reste visible sans geste supplémentaire.
+        corps = self.verifier_depuis_la_page()
+
+        self.assertIn('<details id="ajouter-un-modele" open>', corps)
+        self.assertIn("Taille à télécharger :", corps)
+
+    def resultat_accepte_avec_tailles(self) -> ResultatVerification:
+        """Résultat accepté aux tailles connues, sans aucun dépôt réel."""
+        return ResultatVerification(
+            accepte=True,
+            identifiant="org/modele",
+            moteur=MOTEUR,
+            famille="whisper",
+            commit=COMMIT,
+            id_resolu="org/modele",
+            fichiers=(
+                FichierVerifie("model.bin", 300_000_000),
+                FichierVerifie("config.json", 1024),
+            ),
+            taille_totale=300_001_024,
+            message="famille whisper reconnue",
+        )
+
+    def test_taille_previsionnelle_lisible_brute_en_detail(self) -> None:
+        # Tâche 5.2 : les tailles annoncées par la vérification sont lisibles
+        # près du bouton de téléchargement ; les octets bruts restent dans le
+        # seul détail technique (tâche 5.3).
+        app = self.construire_app(
+            self.services(
+                modeles=FausseGestion(
+                    resultat=self.resultat_accepte_avec_tailles(),
+                    moteurs=(EtatMoteur(MOTEUR, "Moteur de test", ETAT_PRET),),
+                )
+            )
+        )
+        corps = (
+            app.test_client()
+            .get("/modeles", base_url=self.base_url())
+            .get_data(as_text=True)
+        )
+
+        self.assertIn('<details id="ajouter-un-modele" open>', corps)
+        rendu = html.unescape(corps)
+        self.assertIn("Taille à télécharger : 286,1 Mio, fichiers retenus :", rendu)
+        self.assertIn("model.bin : 286,1 Mio", rendu)
+        self.assertIn("config.json : < 0,1 Mio", rendu)
+        self.assertIn("Télécharger ce modèle à la révision vérifiée", rendu)
+
+        technique = corps.index(
+            "<summary>Fichiers du modèle et identifiants</summary>"
+        )
+        premier_niveau = corps[
+            corps.index("Dépôt compatible") : technique
+        ]
+        self.assertIsNone(
+            re.search(r"\d+ octets", premier_niveau),
+            "taille en octets bruts au premier niveau du résultat",
+        )
+        self.assertIn("300001024 octets", corps[technique:])
+        self.assertIn("300000000 octets", corps[technique:])
+
+    def test_choix_gguf_au_meme_endroit_que_le_refus(self) -> None:
+        # Spec « Ajout secondaire explicite » : le motif du refus et les choix
+        # de fichier GGUF restent visibles ensemble, jamais répétés dans
+        # l'inventaire des modèles prêts.
+        refus = ResultatVerification(
+            accepte=False,
+            identifiant="org/modele",
+            moteur=MOTEUR,
+            famille=None,
+            commit=COMMIT,
+            raison=RAISON_FICHIER_GGUF_NON_CHOISI,
+            message="plusieurs fichiers GGUF autonomes",
+            gguf_candidats=("modele-a.gguf", "modele-b.gguf"),
+        )
+        modele = ModeleLocal(
+            moteur=MOTEUR,
+            cle="d" * 64,
+            identifiant="org/modele",
+            id_resolu="org/modele",
+            commit=COMMIT,
+            famille="whisper",
+            fichier_gguf=None,
+            fichiers=(FichierVerifie("model.bin", 3),),
+            taille_disque=3,
+            date="2026-10-25",
+        )
+        app = self.construire_app(
+            self.services(
+                modeles=FausseGestion(
+                    resultat=refus,
+                    inventaire=(modele,),
+                    moteurs=(EtatMoteur(MOTEUR, "Moteur de test", ETAT_PRET),),
+                )
+            )
+        )
+        corps = (
+            app.test_client()
+            .get("/modeles", base_url=self.base_url())
+            .get_data(as_text=True)
+        )
+
+        self.assertIn('<details id="ajouter-un-modele" open>', corps)
+        self.assertIn("Dépôt refusé", corps)
+        self.assertLess(
+            corps.index("Dépôt refusé"), corps.index("Variantes GGUF proposées")
+        )
+        for candidat in ("modele-a.gguf", "modele-b.gguf"):
+            with self.subTest(candidat=candidat):
+                self.assertEqual(corps.count(f"Vérifier avec {candidat}"), 1)
+
+        inventaire = self.inventaire_rendu(corps)
+        self.assertNotIn("Variantes GGUF proposées", inventaire)
+        self.assertNotIn("Vérifier avec", inventaire)
+
+    def test_verification_sans_telechargement_puis_confirmation_dediee(self) -> None:
+        # Tâche 5.2 : vérifier et télécharger restent deux actions séparées.
+        corps = self.verifier_depuis_la_page()
+
+        self.assertEqual(self.telechargement.appels, [])
+        self.assertFalse((self.dossier_data / "models").exists())
+        self.assertIn('action="/modeles/verifier"', corps)
+        self.assertIn('action="/modeles/telecharger"', corps)
+
+        reponse = self.post_autorise(
+            "/modeles/telecharger", donnees={"empreinte": self.empreinte(corps)}
+        )
+        self.assertEqual(reponse.status_code, 303)
+        self.attendre()
+        self.assertEqual(len(self.telechargement.appels), 1)
+        self.assertEqual(len(self.verification_client.appels_infos), 1)
+
     def test_explication_generale_unique(self) -> None:
         cle = self.preparer_modele_pret()
         corps = self.page()

@@ -70,10 +70,13 @@
 {# Une seule explication générale sur la page : elle n'est répétée ni dans
    chaque modèle ni dans l'espace d'ajout. #}
 <p class="prose">Un modèle prêt est un dossier local complet, vérifié à une révision figée ; un dossier incomplet, interrompu ou sans inventaire cohérent n'est jamais proposé. L'ajout commence par vérifier un dépôt : seules les métadonnées et les petits fichiers de configuration sont lus, aucun poids n'est téléchargé, et le téléchargement reste une action explicite exécutée seule dans le créneau d'opération longue. La suppression retire les fichiers locaux du modèle ; les transcriptions et mesures déjà consignées ne sont pas modifiées.</p>
-<article id="ajouter-un-modele">
-<header>
-<h2>Ajouter un modèle</h2>
-</header>
+{# L'ajout reste au second plan (spec « Ajout secondaire explicite ») : un
+   accordéon fermé par défaut, placé après l'inventaire et l'explication
+   générale. Il n'est ouvert d'emblée qu'après une vérification, pour que le
+   résultat, un refus ou un choix GGUF reste visible sans geste ; l'ouvrir
+   soi-même est un choix local du navigateur, sans script ni requête. #}
+<details id="ajouter-un-modele"{% if resultat is not none %} open{% endif %}>
+<summary>Ajouter un modèle</summary>
 <h3>Vérifier un dépôt</h3>
 {% if moteurs %}
 <form method="post" action="{{ url_for('verifier_modele') }}">
@@ -90,19 +93,27 @@
 {% else %}
 <p class="prose">Aucun moteur réel n'est installé sur ce poste : la vérification et le téléchargement de modèles restent indisponibles. L'installation d'un moteur doit d'abord être validée sur un PC ; le serveur de développement n'installe aucun moteur réel et ne télécharge aucun poids. Le moteur factice ne charge aucun modèle et n'a donc pas besoin de dépôt à vérifier.</p>
 {% endif %}
-</article>
-<article>
-<header>
-<h2>Dernière vérification</h2>
-</header>
+<h3>Dernière vérification</h3>
 {% if resultat is none %}
 <p class="prose">Aucune vérification effectuée depuis le démarrage.</p>
 {% elif resultat.accepte %}
 <p class="prose">Dépôt compatible : famille {{ resultat.famille }}, identifiant canonique {{ resultat.id_resolu }}, commit {{ resultat.commit }}.</p>
 <p class="prose">Identifiant demandé : {{ resultat.identifiant }} ; moteur : {{ resultat.moteur }}{% if resultat.fichier_gguf %} ; variante GGUF choisie : {{ resultat.fichier_gguf }}{% endif %}.</p>
+{# Tailles prévisionnelles lisibles près de l'action de téléchargement ; les
+   valeurs brutes en octets restent dans le détail technique ci-dessous. #}
+{% if resultat.taille_totale is not none %}
+<p class="prose">Taille à télécharger : {{ formater_taille_modele(resultat.taille_totale) }}, fichiers retenus :</p>
+{% else %}
+<p class="prose">Taille à télécharger : inconnue, au moins une taille de fichier manque. Fichiers retenus :</p>
+{% endif %}
+<ul class="prose">
+{% for fichier in resultat.fichiers %}
+<li>{{ fichier.nom }} : {{ formater_taille_modele(fichier.taille) }}</li>
+{% endfor %}
+</ul>
 <details>
 <summary>Fichiers du modèle et identifiants</summary>
-<p class="prose">Fichiers retenus et tailles distantes :</p>
+<p class="prose">Fichiers retenus et tailles distantes en octets :</p>
 <ul class="prose">
 {% for fichier in resultat.fichiers %}
 <li>{{ fichier.nom }} : {% if fichier.taille is not none %}{{ fichier.taille }} octets{% else %}taille inconnue{% endif %}</li>
@@ -121,7 +132,9 @@
 </form>
 {% endif %}
 {% else %}
-{# Une erreur de vérification reste visible, hors de tout panneau fermé. #}
+{# Un refus reste visible : cet accordéon est ouvert tant qu'un résultat
+   existe, et un motif ou un choix GGUF n'est jamais enfermé dans un panneau
+   fermé. #}
 <p class="callout danger prose">Dépôt refusé{% if resultat.raison %} ({{ resultat.raison }}){% endif %} : {{ resultat.message }}</p>
 {% if resultat.fichiers_manquants %}
 <p class="callout danger prose">Fichiers manquants : {{ resultat.fichiers_manquants | join(', ') }}.</p>
@@ -147,5 +160,5 @@
 </ul>
 {% endif %}
 {% endif %}
-</article>
+</details>
 {% endblock %}
