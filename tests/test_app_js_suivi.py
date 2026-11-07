@@ -69,6 +69,7 @@ class HarnaisSuiviTest(unittest.TestCase):
             cwd=RACINE,
             capture_output=True,
             text=True,
+            encoding="utf-8",  # stdout de Node, indépendant de la locale Windows
             timeout=DELAI_HARNAIS_S,
             check=False,
         )
