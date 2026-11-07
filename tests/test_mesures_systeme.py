@@ -23,6 +23,7 @@ from types import SimpleNamespace
 
 import psutil
 
+from engines import mesures_systeme as module_mesures_systeme
 from engines.mesures_systeme import (
     CHAMPS_CPU,
     CHAMPS_MEMOIRE,
@@ -408,6 +409,15 @@ class ObjetsDObservationTest(unittest.TestCase):
 
         with self.assertRaises(ValueError):
             ReleveurSysteme(provenance="estimee")
+
+    def test_aucun_observateur_periodique_ni_attente_dans_le_module(self) -> None:
+        """Relevé ponctuel seulement : ni fil, minuterie, ni attente (D1/D2)."""
+        attributs = vars(module_mesures_systeme)
+        for interdit in ("threading", "Thread", "Timer", "ThreadPoolExecutor"):
+            self.assertNotIn(interdit, attributs)
+        # Aucune méthode d'abonnement ou de démarrage d'observateur n'est exposée.
+        noms = [nom for nom in dir(module_mesures_systeme) if "observateur" in nom]
+        self.assertEqual(noms, [])
 
 
 def _memoire(**remplacements: object) -> dict[str, object]:

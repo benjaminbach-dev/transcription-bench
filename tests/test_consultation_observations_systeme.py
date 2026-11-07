@@ -43,7 +43,11 @@ from transcription_bench.consultation_resultats import (
     ObservationSystemeVue,
 )
 from transcription_bench.indicateurs_resultats import ratio_cpu
-from transcription_bench.resultats import STATUT_NON_TRAITE, STATUT_OK
+from transcription_bench.resultats import (
+    ETAT_ABANDONNEE,
+    STATUT_NON_TRAITE,
+    STATUT_OK,
+)
 
 GIO = 1024**3
 RELEVE_SIMULE = "2024-01-02T03:04:20+00:00"
@@ -588,6 +592,50 @@ class AucuneValeurLocaleTest(SocleConsultationTest):
         # Un ancien fichier reste explicitement non mesuré, sans valeur locale.
         self.assertEqual(ancien.mesures.observation_chargement.etat, "absent")
         self.assertEqual(ancien.audios[0].observation_systeme.etat, "absent")
+
+    def test_lecture_d_un_essai_abandonne_ne_complete_aucun_releve(self) -> None:
+        """Essai abandonné après l'audio 1 : absence explicite pour l'audio 2."""
+        run = run_json(
+            etat=ETAT_ABANDONNEE,
+            audios=(("a.wav", STATUT_OK), ("b.wav", STATUT_NON_TRAITE)),
+            mesures=mesures_execution(**{CLE_OBSERVATION_CHARGEMENT: observation()}),
+        )
+        premier = result_json(
+            run["audios"][0],
+            mesures_extra={CLE_OBSERVATION_AUDIO: observation(cpu=cpu_systeme())},
+        )
+        ecrire_execution(self.donnees, run, (premier,))
+
+        with mock.patch.object(
+            psutil, "cpu_percent", side_effect=AssertionError("mesure locale")
+        ) as cpu_percent, mock.patch.object(
+            psutil, "virtual_memory", side_effect=AssertionError("mesure locale")
+        ) as memoire:
+            detail = self.service.detail(IDENTIFIANT)
+
+        cpu_percent.assert_not_called()
+        memoire.assert_not_called()
+
+        # L'essai abandonné garde son instantané de chargement et le relevé déjà
+        # écrit de l'audio terminé, tels quels.
+        chargement = detail.mesures.observation_chargement
+        self.assertTrue(chargement.lisible)
+        self.assertEqual(chargement.provenance, PROVENANCE_SIMULEE)
+        audio = detail.audios[0].observation_systeme
+        self.assertTrue(audio.lisible)
+        assert audio.cpu is not None and audio.memoire_apres is not None
+        self.assertEqual(audio.cpu.pourcentage_moyen, 90.0)
+        self.assertEqual(audio.memoire_apres.totale_octets, 8 * GIO)
+
+        # L'audio non terminé reste explicitement non mesuré : ni observation
+        # simulée, ni valeur du poste courant, ni clé écartée.
+        second = detail.audios[1].observation_systeme
+        self.assertEqual(second.etat, "absent")
+        self.assertFalse(second.cle_presente)
+        self.assertFalse(second.lisible)
+        self.assertIsNone(second.cpu)
+        self.assertIsNone(second.memoire_apres)
+        self.assertIsNone(second.provenance)
 
 
 if __name__ == "__main__":

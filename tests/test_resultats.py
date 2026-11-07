@@ -687,6 +687,37 @@ class ConsignateurExecutionTest(unittest.TestCase):
         self.assertTrue(consignateur.enregistrer_audio(audio))
         return consignateur, self._lire_audio(consignateur, "1-a.wav")
 
+    def _consigner_chargement_et_audio_releve(
+        self,
+    ) -> tuple[ConsignateurExecution, dict[str, Any], dict[str, Any]]:
+        """Consigne chargement et premier audio relevés, sans clore l'exécution.
+
+        Reproduit l'état d'un essai interrompu ou abandonné après l'audio 1 :
+        `run.json` reste `running`, aucun résultat n'existe pour l'audio 2.
+        """
+        consignateur = self.ouvrir()
+        chargement = observation_chargement()
+        self.assertTrue(
+            consignateur.enregistrer_mesures(
+                {
+                    "type": "chargement",
+                    "duree_s": 1.2,
+                    "pic_memoire_octets": 1024,
+                    "factice": True,
+                    "mesures_simulees": True,
+                    "observation_systeme": chargement,
+                }
+            )
+        )
+        audio = audio_transcrit()
+        objet_audio = observation_audio()
+        evenement = dict(audio.evenement or {})
+        evenement["observation_systeme"] = objet_audio
+        audio = replace(audio, evenement=evenement)
+        self.assertTrue(consignateur.enregistrer_mesures(evenement))
+        self.assertTrue(consignateur.enregistrer_audio(audio))
+        return consignateur, chargement, objet_audio
+
     def test_observation_systeme_du_chargement_persistee(self) -> None:
         objet = observation_chargement()
 
@@ -1004,6 +1035,111 @@ class ConsignateurExecutionTest(unittest.TestCase):
 
         self.assertEqual(chemin.read_bytes(), avant)
         self.assertNotIn("observation_systeme", json.loads(avant)["mesures"])
+
+    def test_abandon_conserve_releves_et_fichiers_finalises(self) -> None:
+        """Clôture en abandonné : relevés conservés, rien de fabriqué (D3)."""
+        consignateur, chargement, objet_audio = (
+            self._consigner_chargement_et_audio_releve()
+        )
+        dossier = Path(consignateur.dossier or "")
+        finalises = (
+            dossier / "1-a.wav" / "result.json",
+            dossier / "1-a.wav" / "transcription.txt",
+        )
+        avant = {
+            chemin: (chemin.read_bytes(), chemin.stat().st_mtime_ns)
+            for chemin in finalises
+        }
+        journal_avant = (dossier / "run.log").read_bytes()
+        contenu = self.lire("run.json")
+        self.assertEqual(contenu["etat"], ETAT_EN_COURS)
+        self.assertEqual(
+            contenu["mesures"]["observation_systeme_chargement"], chargement
+        )
+
+        final = abandonner_execution(
+            dossier, contenu, fin="2026-01-01T12:00:00+00:00"
+        )
+
+        self.assertEqual(final["etat"], "abandoned")
+        self.assertEqual(final["fin"], "2026-01-01T12:00:00+00:00")
+        # L'instantané du chargement traverse la clôture sans être retouché.
+        self.assertEqual(final["mesures"]["observation_systeme_chargement"], chargement)
+        self.assertEqual(
+            [plan["statut"] for plan in final["audios"]],
+            [STATUT_OK, STATUT_NON_TRAITE],
+        )
+        relu = self.lire("run.json")
+        self.assertEqual(relu["etat"], "abandoned")
+        self.assertEqual(relu["mesures"]["observation_systeme_chargement"], chargement)
+        # Aucune clé d'observation n'est ajoutée aux plans d'audios.
+        for plan in relu["audios"]:
+            self.assertNotIn("observation_systeme", plan)
+
+        # Les fichiers finalisés de l'audio 1 gardent leurs octets et leur date :
+        # ni réécriture, ni marque rétrospective d'incomplétude.
+        for chemin, (octets, mtime) in avant.items():
+            self.assertEqual(chemin.read_bytes(), octets, chemin.name)
+            self.assertEqual(chemin.stat().st_mtime_ns, mtime, chemin.name)
+        self.assertEqual((dossier / "run.log").read_bytes(), journal_avant)
+        premier = self.lire("result.json", "1-a.wav")
+        self.assertEqual(premier["statut"], STATUT_OK)
+        self.assertEqual(premier["mesures"]["observation_systeme"], objet_audio)
+        self.assertIsNone(premier["erreur"])
+
+        # L'audio non terminé n'obtient aucun résultat : son absence de relevé
+        # reste explicite, jamais reconstruite depuis l'ordinateur courant.
+        self.assertFalse((dossier / "2-b.wav").exists())
+        self.assertEqual(
+            sorted(chemin.name for chemin in dossier.iterdir()),
+            ["1-a.wav", "run.json", "run.log"],
+        )
+        self.assertEqual(relu["progression"], {"audios_traites": 1, "audios_total": 2})
+
+    def test_un_autre_essai_ne_complete_jamais_les_releves_manquants(self) -> None:
+        """Aucun relevé d'un autre essai ne remplit un essai abandonné."""
+        consignateur, chargement, _ = self._consigner_chargement_et_audio_releve()
+        dossier = Path(consignateur.dossier or "")
+        abandonner_execution(dossier, self.lire("run.json"))
+        arborescence = {
+            str(chemin.relative_to(dossier)): chemin.read_bytes()
+            for chemin in sorted(dossier.rglob("*"))
+            if chemin.is_file()
+        }
+
+        autre = self.creer_consignateur()
+        self.addCleanup(autre.fermer)
+        self.assertTrue(autre.ouvrir(), autre.erreur)
+        audio = audio_transcrit(index=1, nom="b.wav")
+        evenement = dict(audio.evenement or {})
+        evenement["observation_systeme"] = observation_audio()
+        audio = replace(audio, evenement=evenement)
+        self.assertTrue(autre.enregistrer_mesures(evenement))
+        self.assertTrue(autre.enregistrer_audio(audio))
+        self.assertTrue(
+            autre.clore(
+                resultat_execution(etat=ETAT_EXECUTION_TERMINEE, audios=(audio,))
+            )
+        )
+
+        # Le premier essai n'a pas bougé et n'a toujours aucun résultat d'audio 2.
+        self.assertEqual(
+            {
+                str(chemin.relative_to(dossier)): chemin.read_bytes()
+                for chemin in sorted(dossier.rglob("*"))
+                if chemin.is_file()
+            },
+            arborescence,
+        )
+        self.assertFalse((dossier / "2-b.wav").exists())
+        self.assertEqual(
+            self.lire("run.json")["mesures"]["observation_systeme_chargement"],
+            chargement,
+        )
+        # Le second essai, lui, possède son propre relevé pour son audio.
+        self.assertIsNotNone(
+            self._lire_audio(autre, "2-b.wav")["mesures"]["observation_systeme"]
+        )
 
     def test_mesures_non_finies_ou_invalides_jamais_retenues(self) -> None:
         consignateur = self.ouvrir()

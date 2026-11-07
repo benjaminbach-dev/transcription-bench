@@ -7,11 +7,13 @@ mesures reçues sont simulées et ne représentent aucun PC. Aucun test n'écrit
 sous le `data/` du dépôt : le dossier de données est temporaire.
 
 Pour rendre les cas d'arrêt, d'occupation du créneau et de plantage
-déterministes sans couture de rappel, deux commandes de test enveloppent le
+déterministes sans couture de rappel, des commandes de test enveloppent le
 runner avec le même interpréteur : l'une bloque dans l'adaptateur factice
-jusqu'à ce que le test écrive un fichier de libération (paliers), l'autre émet
-chaque événement deux fois. Le chemin nominal utilise `commande_runner` sans
-enveloppe.
+jusqu'à ce que le test écrive un fichier de libération (paliers), une autre
+émet chaque événement deux fois, une autre émet une erreur tardive pour un
+audio déjà fini, et une dernière fait échouer un audio du moteur en attachant un
+relevé système à son événement d'erreur. Le chemin nominal utilise
+`commande_runner` sans enveloppe.
 """
 
 from __future__ import annotations
@@ -39,6 +41,7 @@ from engines.mesures_systeme import (
     SIMULATION_CPU_POURCENTAGE,
     SIMULATION_INTERVALLE_CPU_S,
     SIMULATION_MEMOIRE_DISPONIBLE_OCTETS,
+    SIMULATION_MEMOIRE_TOTALE_OCTETS,
     SIMULATION_RELEVE_LE,
     VERSION_METHODE,
 )
@@ -59,6 +62,11 @@ from tests.test_audios import ecrire_wav
 from tests.test_executions import declaration_avec_reglages, modele_prete
 from transcription_bench.audios import decoder_audio, lister_audios
 from transcription_bench import execution_moteur as module_execution_moteur
+from transcription_bench.consultation_resultats import (
+    CLE_OBSERVATION_AUDIO,
+    CLE_OBSERVATION_CHARGEMENT,
+    ConsultationResultats,
+)
 from transcription_bench.execution_moteur import (
     ARRET_AUCUN,
     ARRET_DEMANDE,
@@ -137,6 +145,90 @@ def transcrire(*arguments, **options):
 
 
 factice.transcrire = transcrire
+chemin_job, chemin_runner = sys.argv[1], sys.argv[2]
+sys.argv = ["runner.py", chemin_job]
+runpy.run_path(chemin_runner, run_name="__main__")
+"""
+
+CODE_AUDIO_ERREUR_TARDIVE = """
+import runpy
+import sys
+
+import engines.protocole as protocole
+
+_emettre = protocole.emettre
+
+
+def emettre(evenement, flux=None):
+    _emettre(evenement, flux)
+    if evenement.get("type") == "audio" and evenement.get("index") == 0:
+        tardif = dict(evenement)
+        tardif["type"] = "audio_erreur"
+        tardif["erreur"] = "erreur tardive simulée"
+        tardif["observation_systeme"] = {
+            "version": 1,
+            "methode_cpu": "psutil-cpu-percent-nonbloquant-v1",
+            "version_psutil": "7.2.2",
+            "provenance": "simulee",
+            "cpu": {"pourcentage_moyen": 99.0, "intervalle_s": 1.0, "motif": None},
+            "memoire_apres": {
+                "releve_le": "1970-01-01T00:00:00+00:00",
+                "totale_octets": 1,
+                "disponible_octets": 1,
+                "motif": None,
+            },
+        }
+        _emettre(tardif, flux)
+
+
+protocole.emettre = emettre
+chemin_job, chemin_runner = sys.argv[1], sys.argv[2]
+sys.argv = ["runner.py", chemin_job]
+runpy.run_path(chemin_runner, run_name="__main__")
+"""
+
+CODE_AUDIO_EN_ERREUR_AVEC_OBSERVATION = """
+import runpy
+import sys
+
+import engines.adaptateurs.factice as factice
+import engines.protocole as protocole
+
+_original = factice.transcrire
+_emettre = protocole.emettre
+appels = [0]
+
+
+def transcrire(*arguments, **options):
+    appels[0] += 1
+    if appels[0] == 2:
+        raise RuntimeError("erreur de transcription simulée")
+    return _original(*arguments, **options)
+
+
+def emettre(evenement, flux=None):
+    if evenement.get("type") == "audio_erreur":
+        # Un émetteur tiers attache un relevé système à un audio en échec : il ne
+        # doit jamais être persisté comme mesure finale de cet audio.
+        evenement = dict(evenement)
+        evenement["observation_systeme"] = {
+            "version": 1,
+            "methode_cpu": "psutil-cpu-percent-nonbloquant-v1",
+            "version_psutil": "7.2.2",
+            "provenance": "simulee",
+            "cpu": {"pourcentage_moyen": 99.0, "intervalle_s": 1.0, "motif": None},
+            "memoire_apres": {
+                "releve_le": "1970-01-01T00:00:00+00:00",
+                "totale_octets": 1,
+                "disponible_octets": 1,
+                "motif": None,
+            },
+        }
+    _emettre(evenement, flux)
+
+
+factice.transcrire = transcrire
+protocole.emettre = emettre
 chemin_job, chemin_runner = sys.argv[1], sys.argv[2]
 sys.argv = ["runner.py", chemin_job]
 runpy.run_path(chemin_runner, run_name="__main__")
@@ -268,6 +360,19 @@ def attendre_condition(condition, description: str, delai: float = DELAI) -> Non
 def attendre_fichier(chemin: Path) -> None:
     """Attend l'apparition d'un marqueur écrit par le processus enfant."""
     attendre_condition(chemin.exists, f"marqueur jamais créé : {chemin.name}")
+
+
+def lire_json_si_ecrit(chemin: Path) -> Any:
+    """Contenu d'un JSON déjà écrit, ou `None` tant qu'il est absent ou partiel.
+
+    Sert aux attentes pendant l'exécution : un fichier remplacé atomiquement est
+    soit absent, soit complet, et un instant de lecture ne doit jamais faire
+    échouer l'attente.
+    """
+    try:
+        return json.loads(chemin.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
 
 
 def _processus_termine(pid: int) -> bool:
@@ -1491,6 +1596,263 @@ class ResultatsExecutionTest(SocleExecutionTest):
         self.assertIsNotNone(run["mesures"]["duree_operation_s"])
         self.assertIsNotNone(run["mesures"]["pic_memoire_octets"])
         self.assertTrue(run["mesures"]["pic_memoire_partiel"])
+        self.assertCacheNettoye()
+
+    # -- observations système après interruption ou échec (tâche 2.3, D3) ----
+
+    def executer_et_interrompre_apres_le_premier_audio(
+        self, audios: tuple[str, ...] = ("a.wav", "b.wav")
+    ) -> tuple[Path, Any, dict[str, Any]]:
+        """Lance l'exécution, attend l'audio 1 consigné, puis l'interrompt.
+
+        Le moteur factice enveloppé est bloqué à l'entrée de l'audio 2 par un
+        palier : le test attend l'état (marqueur du moteur puis résultat du
+        premier audio réellement écrit) au lieu d'une durée arbitraire. Renvoie
+        le dossier de résultat, le `ResultatExecution` et les instantanés pris
+        avant l'arrêt, pour vérifier ensuite l'absence de réécriture.
+        """
+        for nom in audios:
+            self.ecrire_audio(nom)
+        service, paliers = self.service_a_paliers()
+        self.service = service
+        self.liberer_paliers(paliers, 1)
+        service.reserver()
+        self.creneau.demarrer(
+            TYPE_EXECUTION,
+            lambda travailleur: service.lancer(self.demande(audios), travailleur),
+            cible="factice",
+        )
+        try:
+            attendre_fichier(paliers / "palier-2")
+            dossier = self.attendre_premier_audio_releve()
+            self.assertEqual(service.arreter_execution(), ARRET_DEMANDE)
+        finally:
+            self.creneau.thread_travailleur.join(DELAI)
+        self.assertFalse(self.creneau.thread_travailleur.is_alive())
+        resultat = service.derniere_execution()
+        finalises = (
+            dossier / "1-a.wav" / "result.json",
+            dossier / "1-a.wav" / "transcription.txt",
+        )
+        run_avant = self.lire_json(dossier / "run.json")
+        instantanes: dict[str, Any] = {
+            "fichiers": {
+                chemin: (chemin.read_bytes(), chemin.stat().st_mtime_ns)
+                for chemin in finalises
+            },
+            "chargement": run_avant["mesures"][CLE_OBSERVATION_CHARGEMENT],
+        }
+        return dossier, resultat, instantanes
+
+    def attendre_premier_audio_releve(self) -> Path:
+        """Attend le premier `result.json`, écrit avec son observation système."""
+
+        def premier_audio_pret() -> bool:
+            dossiers = self.dossiers_resultat()
+            if not dossiers:
+                return False
+            resultat = lire_json_si_ecrit(dossiers[0] / "1-a.wav" / "result.json")
+            if not isinstance(resultat, dict) or resultat.get("statut") != "ok":
+                return False
+            mesures = resultat.get("mesures")
+            return isinstance(mesures, dict) and isinstance(
+                mesures.get(CLE_OBSERVATION_AUDIO), dict
+            )
+
+        attendre_condition(
+            premier_audio_pret,
+            "résultat du premier audio avec observation jamais écrit",
+        )
+        return self.dossiers_resultat()[0]
+
+    def test_interruption_apres_le_premier_audio_conserve_ses_releves(self) -> None:
+        """Interruption pendant l'audio 2 : audio 1 figé, relevé final absent."""
+        dossier, resultat, instantanes = (
+            self.executer_et_interrompre_apres_le_premier_audio()
+        )
+
+        self.assertEqual(resultat.etat, ETAT_INTERROMPUE)
+        self.assertTrue(resultat.arret_demande)
+        run = self.lire_json(dossier / "run.json")
+        self.assertEqual(run["etat"], "interrupted")
+
+        # L'instantané du chargement est conservé tel quel par la clôture.
+        chargement = run["mesures"][CLE_OBSERVATION_CHARGEMENT]
+        self.assertIsNotNone(chargement)
+        self.assertEqual(chargement, instantanes["chargement"])
+        self.assertEqual(chargement["version"], VERSION_METHODE)
+        self.assertEqual(chargement["methode_cpu"], METHODE_CPU)
+        self.assertEqual(chargement["provenance"], PROVENANCE_SIMULEE)
+        self.assertNotIn("cpu", chargement)
+        self.assertEqual(
+            chargement["memoire_apres"]["totale_octets"],
+            SIMULATION_MEMOIRE_TOTALE_OCTETS,
+        )
+        self.assertEqual(
+            chargement["memoire_apres"]["disponible_octets"],
+            SIMULATION_MEMOIRE_DISPONIBLE_OCTETS,
+        )
+
+        # Les fichiers finalisés du premier audio gardent leurs octets exacts :
+        # ni réécriture, ni marque rétrospective d'incomplétude.
+        for chemin, (contenu, mtime) in instantanes["fichiers"].items():
+            self.assertEqual(chemin.read_bytes(), contenu, chemin.name)
+            self.assertEqual(chemin.stat().st_mtime_ns, mtime, chemin.name)
+        premier = self.lire_json(dossier / "1-a.wav" / "result.json")
+        self.assertEqual(premier["statut"], "ok")
+        self.assertIsNone(premier["erreur"])
+        observation = premier["mesures"][CLE_OBSERVATION_AUDIO]
+        self.assertEqual(
+            observation["cpu"]["pourcentage_moyen"], SIMULATION_CPU_POURCENTAGE
+        )
+        self.assertEqual(
+            observation["cpu"]["intervalle_s"], SIMULATION_INTERVALLE_CPU_S
+        )
+        self.assertEqual(observation["provenance"], PROVENANCE_SIMULEE)
+        self.assertEqual(
+            observation["memoire_apres"]["releve_le"], SIMULATION_RELEVE_LE
+        )
+
+        # Le second audio n'a obtenu aucun résultat : l'absence de relevé final
+        # reste explicite, sans observation reconstruite ni fichier inventé.
+        self.assertFalse((dossier / "2-b.wav").exists())
+        self.assertEqual(
+            [plan["statut"] for plan in run["audios"]], ["ok", "non_traite"]
+        )
+        self.assertEqual(run["progression"], {"audios_traites": 1, "audios_total": 2})
+        self.assertEqual(
+            sorted(chemin.name for chemin in dossier.iterdir()),
+            ["1-a.wav", "run.json", "run.log"],
+        )
+        # Aucune clé d'observation n'est ajoutée aux plans d'audios non traités.
+        for plan in run["audios"]:
+            self.assertNotIn(CLE_OBSERVATION_AUDIO, plan)
+        self.assertCacheNettoye()
+
+    def test_lecture_apres_interruption_ne_substitue_aucune_valeur_locale(
+        self,
+    ) -> None:
+        """La consultation relit les fichiers, sans aucune mesure du poste."""
+        dossier, _, _ = self.executer_et_interrompre_apres_le_premier_audio()
+
+        with mock.patch.object(
+            psutil, "cpu_percent", side_effect=AssertionError("mesure locale")
+        ) as cpu_percent, mock.patch.object(
+            psutil, "virtual_memory", side_effect=AssertionError("mesure locale")
+        ) as memoire:
+            detail = ConsultationResultats(self.dossier_data).detail(dossier.name)
+
+        cpu_percent.assert_not_called()
+        memoire.assert_not_called()
+
+        # Premier audio : relevé simulé du fichier, exposé tel quel.
+        premier = detail.audios[0].observation_systeme
+        self.assertTrue(premier.lisible)
+        self.assertEqual(premier.provenance, PROVENANCE_SIMULEE)
+        self.assertTrue(premier.simulee)
+        assert premier.cpu is not None and premier.memoire_apres is not None
+        self.assertEqual(premier.cpu.pourcentage_moyen, SIMULATION_CPU_POURCENTAGE)
+        self.assertEqual(premier.cpu.intervalle_s, SIMULATION_INTERVALLE_CPU_S)
+        self.assertEqual(
+            premier.memoire_apres.totale_octets, SIMULATION_MEMOIRE_TOTALE_OCTETS
+        )
+        chargement = detail.mesures.observation_chargement
+        self.assertTrue(chargement.lisible)
+        assert chargement.memoire_apres is not None
+        self.assertEqual(
+            chargement.memoire_apres.disponible_octets,
+            SIMULATION_MEMOIRE_DISPONIBLE_OCTETS,
+        )
+
+        # Second audio non terminé : absence explicite, sans valeur inventée ni
+        # valeur empruntée à un autre relevé (clé jamais écrite).
+        second = detail.audios[1].observation_systeme
+        self.assertEqual(second.etat, "absent")
+        self.assertFalse(second.cle_presente)
+        self.assertFalse(second.lisible)
+        self.assertIsNone(second.cpu)
+        self.assertIsNone(second.memoire_apres)
+        self.assertIsNone(second.provenance)
+        self.assertIsNone(second.motif)
+
+    def test_erreur_tardive_apres_un_audio_fini_ne_reecrit_rien(self) -> None:
+        """Un audio déjà fini n'est jamais rétroactivement marqué incomplet."""
+        self.ecrire_audio("a.wav")
+        self.ecrire_audio("b.wav")
+        service = self.creer_service(
+            construire_commande=commande_enveloppee(CODE_AUDIO_ERREUR_TARDIVE)
+        )
+
+        resultat = self.executer(self.demande(("a.wav", "b.wav")), service=service)
+
+        self.assertTerminee(resultat)
+        dossier = self.dossier_resultat(resultat)
+        premier = self.lire_json(dossier / "1-a.wav" / "result.json")
+        self.assertEqual(premier["statut"], "ok")
+        self.assertIsNone(premier["erreur"])
+        self.assertIsNotNone(premier["transcription"]["texte"], "texte conservé")
+        # L'observation valide déjà écrite reste celle du fichier : le relevé
+        # tardif (99 %) n'est ni substitué ni fusionné.
+        observation = premier["mesures"][CLE_OBSERVATION_AUDIO]
+        self.assertEqual(
+            observation["cpu"]["pourcentage_moyen"], SIMULATION_CPU_POURCENTAGE
+        )
+        self.assertEqual(
+            observation["memoire_apres"]["disponible_octets"],
+            SIMULATION_MEMOIRE_DISPONIBLE_OCTETS,
+        )
+        second = self.lire_json(dossier / "2-b.wav" / "result.json")
+        self.assertEqual(second["statut"], "ok")
+        self.assertEqual(
+            second["mesures"][CLE_OBSERVATION_AUDIO]["provenance"],
+            PROVENANCE_SIMULEE,
+        )
+        run = self.lire_json(dossier / "run.json")
+        self.assertEqual(run["etat"], "completed")
+        self.assertEqual([plan["statut"] for plan in run["audios"]], ["ok", "ok"])
+        self.assertEqual(resultat.lignes_parasites, 1)
+        self.assertIn(
+            "événement en double", "\n".join(self.creneau.instantane().journal)
+        )
+
+    def test_audio_en_erreur_du_moteur_sans_observation_fabriquee(self) -> None:
+        """Échec audio : aucun relevé final fabriqué, le lot continue."""
+        for nom in ("a.wav", "b.wav", "c.wav"):
+            self.ecrire_audio(nom)
+        service = self.creer_service(
+            construire_commande=commande_enveloppee(
+                CODE_AUDIO_EN_ERREUR_AVEC_OBSERVATION
+            )
+        )
+
+        resultat = self.executer(
+            self.demande(("a.wav", "b.wav", "c.wav")), service=service
+        )
+
+        self.assertTerminee(resultat)
+        dossier = self.dossier_resultat(resultat)
+        run = self.lire_json(dossier / "run.json")
+        self.assertIsNotNone(run["mesures"][CLE_OBSERVATION_CHARGEMENT])
+        self.assertEqual(
+            [plan["statut"] for plan in run["audios"]], ["ok", "erreur", "ok"]
+        )
+        # Le relevé attaché à l'événement d'erreur n'est jamais persisté : la
+        # clé existe et vaut `null`, aucune mesure finale n'est inventée.
+        casse = self.lire_json(dossier / "2-b.wav" / "result.json")
+        self.assertEqual(casse["statut"], "erreur")
+        self.assertIn("erreur de transcription simulée", casse["erreur"] or "")
+        self.assertIn(CLE_OBSERVATION_AUDIO, casse["mesures"])
+        self.assertIsNone(casse["mesures"][CLE_OBSERVATION_AUDIO])
+        self.assertIsNone(casse["transcription"])
+        self.assertIsNone(casse["mesures"]["rtf"])
+        self.assertFalse((dossier / "2-b.wav" / "transcription.txt").exists())
+        # L'exécution continue : l'audio suivant a son relevé à lui.
+        suivant = self.lire_json(dossier / "3-c.wav" / "result.json")
+        self.assertEqual(suivant["statut"], "ok")
+        self.assertEqual(
+            suivant["mesures"][CLE_OBSERVATION_AUDIO]["cpu"]["pourcentage_moyen"],
+            SIMULATION_CPU_POURCENTAGE,
+        )
         self.assertCacheNettoye()
 
     def test_run_log_complet_non_borne(self) -> None:
