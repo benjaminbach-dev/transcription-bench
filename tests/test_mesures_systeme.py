@@ -24,8 +24,13 @@ from types import SimpleNamespace
 import psutil
 
 from engines.mesures_systeme import (
+    CHAMPS_CPU,
+    CHAMPS_MEMOIRE,
+    ETATS_LECTURE,
     INTERVALLE_MINIMUM_S,
     METHODE_CPU,
+    MOMENT_AUDIO,
+    MOMENT_CHARGEMENT,
     MOTIF_INTERVALLE_TROP_COURT,
     MOTIF_LECTURE_IMPOSSIBLE,
     MOTIF_VALEUR_INCOHERENTE,
@@ -33,6 +38,8 @@ from engines.mesures_systeme import (
     PROVENANCE_SIMULEE,
     VERSION_METHODE,
     ReleveurSysteme,
+    provenance_attendue,
+    valider_observation_systeme,
 )
 
 
@@ -401,6 +408,327 @@ class ObjetsDObservationTest(unittest.TestCase):
 
         with self.assertRaises(ValueError):
             ReleveurSysteme(provenance="estimee")
+
+
+def _memoire(**remplacements: object) -> dict[str, object]:
+    """Sous-objet `memoire_apres` conforme, aux champs remplacés près."""
+    base: dict[str, object] = {
+        "releve_le": "2026-11-07T10:00:00+00:00",
+        "totale_octets": 16 * 1024**3,
+        "disponible_octets": 8 * 1024**3,
+        "motif": None,
+    }
+    base.update(remplacements)
+    return base
+
+
+def _cpu(**remplacements: object) -> dict[str, object]:
+    """Sous-objet `cpu` conforme, aux champs remplacés près."""
+    base: dict[str, object] = {
+        "pourcentage_moyen": 42.0,
+        "intervalle_s": 1.0,
+        "motif": None,
+    }
+    base.update(remplacements)
+    return base
+
+
+def _observation(
+    moment: str = MOMENT_AUDIO,
+    provenance: str = PROVENANCE_REELLE,
+    **remplacements: object,
+) -> dict[str, object]:
+    """Objet d'observation système conforme au contrat D3."""
+    base: dict[str, object] = {
+        "version": VERSION_METHODE,
+        "methode_cpu": METHODE_CPU,
+        "version_psutil": psutil.__version__,
+        "provenance": provenance,
+    }
+    if moment == MOMENT_AUDIO:
+        base["cpu"] = _cpu()
+    base["memoire_apres"] = _memoire()
+    base.update(remplacements)
+    return base
+
+
+class ValidationObservationSystemeTest(unittest.TestCase):
+    """Validation additive des objets D3, sans rejet de l'audio (tâche 2.1)."""
+
+    def test_objets_produits_par_le_releveur_sont_conformes(self) -> None:
+        releveur = _releveur(
+            FauxCpu([99.0, 12.5]), FausseHorloge([0.0, 2.5])
+        )
+        chargement = releveur.observation_chargement()
+        amorcage = releveur.amorcer_cpu()
+        audio = releveur.observation_audio(amorcage)
+
+        objet_chargement, motif = valider_observation_systeme(
+            chargement, moment=MOMENT_CHARGEMENT, mesures_simulees=False
+        )
+        objet_audio, motif_audio = valider_observation_systeme(
+            audio, moment=MOMENT_AUDIO, mesures_simulees=False
+        )
+
+        self.assertIsNone(motif)
+        self.assertIsNone(motif_audio)
+        # Copie normalisée : mêmes champs, dans l'ordre du contrat.
+        self.assertEqual(list(objet_chargement or {}), [
+            "version",
+            "methode_cpu",
+            "version_psutil",
+            "provenance",
+            "memoire_apres",
+        ])
+        self.assertEqual(
+            list(objet_audio or {}), [
+                "version",
+                "methode_cpu",
+                "version_psutil",
+                "provenance",
+                "cpu",
+                "memoire_apres",
+            ]
+        )
+        self.assertEqual(objet_audio["cpu"], audio["cpu"])
+        self.assertNotIn("cpu", objet_chargement or {})
+
+    def test_scenario_simule_conforme_a_sa_provenance(self) -> None:
+        objet, motif = valider_observation_systeme(
+            _observation(provenance=PROVENANCE_SIMULEE),
+            moment=MOMENT_AUDIO,
+            mesures_simulees=True,
+        )
+
+        self.assertIsNone(motif)
+        self.assertEqual(objet["provenance"], PROVENANCE_SIMULEE)
+
+    def test_provenance_contradictoire_ecartee(self) -> None:
+        for objet, simulees in (
+            (_observation(provenance=PROVENANCE_SIMULEE), False),
+            (_observation(provenance=PROVENANCE_REELLE), True),
+        ):
+            with self.subTest(provenance=objet["provenance"], simulees=simulees):
+                normalise, motif = valider_observation_systeme(
+                    objet, moment=MOMENT_AUDIO, mesures_simulees=simulees
+                )
+                self.assertIsNone(normalise)
+                self.assertIn("provenance", motif or "")
+
+    def test_provenance_inconnue_ecartee(self) -> None:
+        normalise, motif = valider_observation_systeme(
+            _observation(provenance="estimee"),
+            moment=MOMENT_AUDIO,
+            mesures_simulees=False,
+        )
+
+        self.assertIsNone(normalise)
+        self.assertIn("provenance", motif or "")
+
+    def test_version_absente_ou_inconnue_ecartee(self) -> None:
+        objet = _observation()
+        del objet["version"]
+        normalise, motif = valider_observation_systeme(
+            objet, moment=MOMENT_AUDIO, mesures_simulees=False
+        )
+        self.assertIsNone(normalise)
+        self.assertTrue(motif)
+
+        for version in (2, 0, "1", 1.0, True):
+            with self.subTest(version=version):
+                normalise, motif = valider_observation_systeme(
+                    _observation(version=version),
+                    moment=MOMENT_AUDIO,
+                    mesures_simulees=False,
+                )
+                self.assertIsNone(normalise)
+                self.assertIn("version", motif or "")
+
+    def test_structure_mal_formee_ecartee(self) -> None:
+        sans_memoire = _observation()
+        del sans_memoire["memoire_apres"]
+        sans_cpu = _observation()
+        del sans_cpu["cpu"]
+        cas = {
+            "absent": None,
+            "liste": [1, 2],
+            "texte": "observation",
+            "enveloppe incomplete": {"version": VERSION_METHODE},
+            "memoire absente": sans_memoire,
+            "cpu absent": sans_cpu,
+            "memoire non conforme": _observation(memoire_apres=[1]),
+            "cpu non conforme": _observation(cpu="42 %"),
+        }
+        for etiquette, objet in cas.items():
+            with self.subTest(cas=etiquette):
+                normalise, motif = valider_observation_systeme(
+                    objet, moment=MOMENT_AUDIO, mesures_simulees=False
+                )
+                self.assertIsNone(normalise)
+                self.assertIsInstance(motif, str)
+                self.assertTrue(motif)
+
+    def test_releve_de_chargement_sans_cpu(self) -> None:
+        normalise, motif = valider_observation_systeme(
+            _observation(moment=MOMENT_CHARGEMENT, cpu=_cpu()),
+            moment=MOMENT_CHARGEMENT,
+            mesures_simulees=False,
+        )
+
+        self.assertIsNone(normalise)
+        self.assertIn("CPU", motif or "")
+
+    def test_pourcentage_cpu_hors_contrat_ecarte(self) -> None:
+        for pourcentage in (101.0, -0.5, "42", True, math.nan, math.inf, None):
+            with self.subTest(pourcentage=pourcentage):
+                normalise, motif = valider_observation_systeme(
+                    _observation(cpu=_cpu(pourcentage_moyen=pourcentage)),
+                    moment=MOMENT_AUDIO,
+                    mesures_simulees=False,
+                )
+                self.assertIsNone(normalise)
+                self.assertIn("CPU", motif or "")
+
+    def test_intervalle_cpu_hors_contrat_ecarte(self) -> None:
+        for intervalle in (-0.1, math.nan, math.inf, "1.0", True, None):
+            with self.subTest(intervalle=intervalle):
+                normalise, motif = valider_observation_systeme(
+                    _observation(cpu=_cpu(intervalle_s=intervalle)),
+                    moment=MOMENT_AUDIO,
+                    mesures_simulees=False,
+                )
+                self.assertIsNone(normalise)
+
+    def test_motif_avec_intervalle_observe_reste_accepte(self) -> None:
+        """Fenêtre réellement observée mais trop courte : CPU absent, durée gardée."""
+        normalise, motif = valider_observation_systeme(
+            _observation(
+                cpu=_cpu(
+                    pourcentage_moyen=None,
+                    intervalle_s=0.05,
+                    motif=MOTIF_INTERVALLE_TROP_COURT,
+                )
+            ),
+            moment=MOMENT_AUDIO,
+            mesures_simulees=False,
+        )
+
+        self.assertIsNone(motif)
+        self.assertIsNone(normalise["cpu"]["pourcentage_moyen"])
+        self.assertEqual(normalise["cpu"]["intervalle_s"], 0.05)
+        self.assertEqual(normalise["cpu"]["motif"], MOTIF_INTERVALLE_TROP_COURT)
+
+    def test_cpu_complet_sans_motif_exige_pourcentage_et_intervalle(self) -> None:
+        for cpu in (
+            _cpu(motif=None, pourcentage_moyen=None),
+            _cpu(motif=None, intervalle_s=None),
+        ):
+            with self.subTest(cpu=cpu):
+                normalise, _motif = valider_observation_systeme(
+                    _observation(cpu=cpu),
+                    moment=MOMENT_AUDIO,
+                    mesures_simulees=False,
+                )
+                self.assertIsNone(normalise)
+
+    def test_memoire_partielle_acceptee_avec_motif(self) -> None:
+        """Total valide conservé, `available` invalide, motif sur l'instantané."""
+        normalise, motif = valider_observation_systeme(
+            _observation(
+                memoire_apres=_memoire(
+                    disponible_octets=None, motif=MOTIF_VALEUR_INCOHERENTE
+                )
+            ),
+            moment=MOMENT_AUDIO,
+            mesures_simulees=False,
+        )
+
+        self.assertIsNone(motif)
+        self.assertEqual(normalise["memoire_apres"]["totale_octets"], 16 * 1024**3)
+        self.assertIsNone(normalise["memoire_apres"]["disponible_octets"])
+        self.assertEqual(
+            normalise["memoire_apres"]["motif"], MOTIF_VALEUR_INCOHERENTE
+        )
+
+    def test_memoire_hors_contrat_ecartee(self) -> None:
+        cas = {
+            "totale nulle": _memoire(totale_octets=0),
+            "totale négative": _memoire(totale_octets=-1),
+            "totale non entière": _memoire(totale_octets=1.5),
+            "disponible négative": _memoire(disponible_octets=-1),
+            "disponible supérieure": _memoire(disponible_octets=17 * 1024**3),
+            "instant non ISO": _memoire(releve_le="OSError: permission refusée"),
+            "motif absent": _memoire(disponible_octets=None),
+            "mesure complète avec motif": _memoire(
+                motif=MOTIF_LECTURE_IMPOSSIBLE
+            ),
+            "champ manquant": {"releve_le": "2026-11-07T10:00:00+00:00"},
+        }
+        for etiquette, memoire in cas.items():
+            with self.subTest(cas=etiquette):
+                normalise, motif = valider_observation_systeme(
+                    _observation(memoire_apres=memoire),
+                    moment=MOMENT_AUDIO,
+                    mesures_simulees=False,
+                )
+                self.assertIsNone(normalise)
+                self.assertIsInstance(motif, str)
+
+    def test_etats_de_lecture_ne_sont_jamais_acceptes_comme_motif(self) -> None:
+        """`absent`, `invalide`, `version_inconnue` sont calculés, jamais écrits."""
+        for etat in ETATS_LECTURE:
+            with self.subTest(etat=etat):
+                normalise, _motif = valider_observation_systeme(
+                    _observation(
+                        cpu=_cpu(pourcentage_moyen=None, motif=etat),
+                        memoire_apres=_memoire(
+                            disponible_octets=None, motif=etat
+                        ),
+                    ),
+                    moment=MOMENT_AUDIO,
+                    mesures_simulees=False,
+                )
+                self.assertIsNone(normalise)
+
+    def test_champs_inconnus_ignores_et_jamais_recopies(self) -> None:
+        objet = _observation(
+            commentaire="mesure approximative",
+            memoire_apres=_memoire(erreur_os="OSError: permission refusée"),
+        )
+        objet["cpu"]["libelle_libre"] = "texte quelconque"
+
+        normalise, motif = valider_observation_systeme(
+            objet, moment=MOMENT_AUDIO, mesures_simulees=False
+        )
+
+        self.assertIsNone(motif)
+        self.assertEqual(
+            set(normalise), {
+                "version",
+                "methode_cpu",
+                "version_psutil",
+                "provenance",
+                "cpu",
+                "memoire_apres",
+            }
+        )
+        self.assertEqual(set(normalise["cpu"]), set(CHAMPS_CPU))
+        self.assertEqual(set(normalise["memoire_apres"]), set(CHAMPS_MEMOIRE))
+        # Aucun message d'OS ne peut entrer dans un objet persistable.
+        self.assertNotIn("OSError", str(normalise))
+
+    def test_moment_inconnu_refuse(self) -> None:
+        for moment in ("fin", "", None):
+            with self.subTest(moment=moment):
+                with self.assertRaises(ValueError):
+                    valider_observation_systeme(
+                        _observation(), moment=moment, mesures_simulees=False
+                    )
+
+    def test_provenance_attendue_suit_mesures_simulees(self) -> None:
+        self.assertEqual(provenance_attendue(True), PROVENANCE_SIMULEE)
+        self.assertEqual(provenance_attendue(False), PROVENANCE_REELLE)
+        self.assertEqual(provenance_attendue(None), PROVENANCE_REELLE)
 
 
 class SondeDeFonctionnementPsutilTest(unittest.TestCase):

@@ -47,7 +47,7 @@ Limites assumées :
 
 Décision de validité (D2) : un compteur inexploitable donne une valeur `None` et
 un motif stable. Codes écrits par ce module, distincts des états calculés à la
-lecture (`absent`, `invalide`, `version_inconnue`) :
+lecture (`absent`, `invalide`, `version_inconnue`, jamais écrits) :
 
 - `lecture_impossible` : exception à l'amorçage, à la lecture ou de l'horloge ;
 - `intervalle_trop_court` : intervalle monotone absent, non fini, négatif ou
@@ -57,6 +57,19 @@ lecture (`absent`, `invalide`, `version_inconnue`) :
 
 Les erreurs brutes d'OS ne sont jamais recopiées dans les objets produits : elles
 ne deviennent que ces codes.
+
+Validation additive (tâche 2.1, design D3) : `valider_observation_systeme`
+contrôle un objet reçu, quel qu'en soit l'émetteur, et renvoie une copie
+normalisée ne portant que les champs du contrat, ou `None` avec un motif court
+à journaliser. Elle est employée par le runner avant émission et par la
+consignation avant écriture ; un objet invalide n'est jamais persisté et ne
+fait jamais échouer l'audio. La provenance attendue est déduite de
+`mesures_simulees` (`simulee` si vrai, `reelle` sinon) : toute contradiction
+invalide l'objet. Un `intervalle_s` non nul à côté d'un motif est accepté, car
+il décrit la fenêtre réellement observée ; la mémoire partielle l'est aussi
+(total valide avec seule `available` invalide, motif portant sur
+l'instantané). Seules les clés connues sont recopiées : un champ inconnu est
+ignoré, jamais persisté.
 
 Les objets produits suivent le contrat D3 (version 1) : `observation_chargement()`
 donne l'instantané mémoire du chargement, `observation_audio()` ajoute le relevé
@@ -71,7 +84,7 @@ from __future__ import annotations
 import itertools
 import math
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from types import SimpleNamespace
@@ -99,6 +112,23 @@ MOTIFS_ECRITS = (
 PROVENANCE_REELLE = "reelle"
 PROVENANCE_SIMULEE = "simulee"
 PROVENANCES = (PROVENANCE_REELLE, PROVENANCE_SIMULEE)
+
+#: Emplacement d'un objet d'observation système : sur l'événement de chargement
+#: ou sur celui d'un audio (design D3).
+MOMENT_CHARGEMENT = "chargement"
+MOMENT_AUDIO = "audio"
+MOMENTS = (MOMENT_CHARGEMENT, MOMENT_AUDIO)
+
+#: États calculés à la lecture (tâche 2.2), jamais écrits dans un résultat :
+#: une observation absente ou écartée reste distinguable de ces états par
+#: l'absence de l'objet, jamais par une valeur enregistrée.
+ETATS_LECTURE = ("absent", "invalide", "version_inconnue")
+
+#: Champs du contrat D3, par emplacement. Le relevé de chargement ne porte pas
+#: de CPU moyen : un `cpu` qui y figure est hors contrat.
+CHAMPS_ENVELOPPE = ("version", "methode_cpu", "version_psutil", "provenance")
+CHAMPS_CPU = ("pourcentage_moyen", "intervalle_s", "motif")
+CHAMPS_MEMOIRE = ("releve_le", "totale_octets", "disponible_octets", "motif")
 
 #: Scénario simulé du moteur factice (design D2) : valeurs arbitraires fixes,
 #: sans aucune valeur de mesure et sans description d'un ordinateur. Elles
@@ -168,6 +198,169 @@ def _resultat_cpu(
         "intervalle_s": intervalle,
         "motif": motif,
     }
+
+
+def provenance_attendue(mesures_simulees: Any) -> str:
+    """Provenance exigée par un événement ou un résultat (design D3).
+
+    `simulee` si `mesures_simulees` vaut explicitement vrai, `reelle` sinon :
+    une valeur d'un autre type est traitée comme non simulée, jamais comme une
+    provenance implicite.
+    """
+    return PROVENANCE_SIMULEE if mesures_simulees is True else PROVENANCE_REELLE
+
+
+def _horodatage_valide(valeur: Any) -> bool:
+    """Texte ISO 8601 interprétable : jamais un message d'erreur d'OS recopié."""
+    if not isinstance(valeur, str) or not valeur.strip():
+        return False
+    try:
+        datetime.fromisoformat(valeur)
+    except ValueError:
+        return False
+    return True
+
+
+def _champs_manquants(objet: Mapping[str, Any], champs: tuple[str, ...]) -> list[str]:
+    """Champs du contrat absents de l'objet reçu."""
+    return [champ for champ in champs if champ not in objet]
+
+
+def _valider_memoire(objet: Any) -> tuple[dict[str, Any] | None, str | None]:
+    """Sous-objet `memoire_apres` conforme (D3), ou `(None, motif)`.
+
+    Une mémoire partielle est acceptée : un champ valide reste conservé même si
+    l'autre manque. En revanche, un motif accompagne toujours une valeur
+    manquante, et une valeur complète n'a jamais de motif.
+    """
+    if not isinstance(objet, Mapping):
+        return None, "mémoire après mesure non conforme"
+    manquants = _champs_manquants(objet, CHAMPS_MEMOIRE)
+    if manquants:
+        return None, "mémoire après mesure incomplète"
+    releve_le = objet["releve_le"]
+    totale = objet["totale_octets"]
+    disponible = objet["disponible_octets"]
+    motif = objet["motif"]
+    if not _horodatage_valide(releve_le):
+        return None, "instant de la mémoire après mesure non conforme"
+    if totale is not None and not _est_entier_positif(totale):
+        return None, "mémoire totale hors contrat"
+    if disponible is not None and not _est_entier_naturel(disponible):
+        return None, "mémoire disponible hors contrat"
+    if totale is not None and disponible is not None and disponible > totale:
+        return None, "mémoire disponible supérieure à la mémoire totale"
+    if motif is not None and motif not in MOTIFS_ECRITS:
+        return None, "motif de mémoire hors contrat"
+    if motif is None and (totale is None or disponible is None):
+        return None, "mémoire après mesure incomplète sans motif"
+    if motif is not None and totale is not None and disponible is not None:
+        return None, "motif de mémoire alors que la mesure est complète"
+    return (
+        {
+            "releve_le": releve_le,
+            "totale_octets": totale,
+            "disponible_octets": disponible,
+            "motif": motif,
+        },
+        None,
+    )
+
+
+def _valider_cpu(objet: Any) -> tuple[dict[str, Any] | None, str | None]:
+    """Sous-objet `cpu` conforme (D3), ou `(None, motif)`.
+
+    `intervalle_s` reste consigné à côté d'un motif lorsqu'il décrit la fenêtre
+    réellement observée (fenêtre trop courte) : c'est le CPU qui est
+    indisponible, pas la durée observée.
+    """
+    if not isinstance(objet, Mapping):
+        return None, "relevé CPU non conforme"
+    manquants = _champs_manquants(objet, CHAMPS_CPU)
+    if manquants:
+        return None, "relevé CPU incomplet"
+    pourcentage = objet["pourcentage_moyen"]
+    intervalle = objet["intervalle_s"]
+    motif = objet["motif"]
+    if pourcentage is not None and not _pourcentage_valide(pourcentage):
+        return None, "pourcentage CPU hors de 0 à 100"
+    if intervalle is not None and not (
+        _est_nombre_fini(intervalle) and intervalle >= 0.0
+    ):
+        return None, "intervalle CPU hors contrat"
+    if motif is not None and motif not in MOTIFS_ECRITS:
+        return None, "motif CPU hors contrat"
+    if motif is None and (pourcentage is None or intervalle is None):
+        return None, "relevé CPU incomplet sans motif"
+    if motif is not None and pourcentage is not None:
+        return None, "motif CPU alors qu'un pourcentage est présent"
+    return (
+        {
+            "pourcentage_moyen": pourcentage,
+            "intervalle_s": intervalle,
+            "motif": motif,
+        },
+        None,
+    )
+
+
+def valider_observation_systeme(
+    objet: Any, *, moment: str, mesures_simulees: Any
+) -> tuple[dict[str, Any] | None, str | None]:
+    """Objet d'observation système conforme (D3), ou `(None, motif)`.
+
+    `moment` vaut `MOMENT_CHARGEMENT` ou `MOMENT_AUDIO` ; la provenance attendue
+    est déduite de `mesures_simulees`. La copie renvoyée ne contient que les
+    champs du contrat, dans leur ordre de définition : un objet valide reçu d'un
+    émetteur tiers ne peut donc pas faire entrer de champ inconnu dans un
+    résultat persisté. Aucun motif renvoyé ne recopie de valeur reçue ni de
+    message d'erreur d'OS : il est destiné au journal, jamais au fichier.
+    """
+    if moment not in MOMENTS:
+        raise ValueError(f"emplacement inconnu : {moment!r}")
+    if not isinstance(objet, Mapping):
+        return None, "relevé système non conforme"
+    manquants = _champs_manquants(objet, CHAMPS_ENVELOPPE)
+    if manquants:
+        return None, "relevé système incomplet"
+    version = objet["version"]
+    if isinstance(version, bool) or not isinstance(version, int):
+        return None, "version de relevé système non entière"
+    if version != VERSION_METHODE:
+        return None, "version de relevé système non prise en charge"
+    methode = objet["methode_cpu"]
+    if not isinstance(methode, str) or not methode.strip():
+        return None, "méthode CPU absente"
+    version_psutil = objet["version_psutil"]
+    if not isinstance(version_psutil, str) or not version_psutil.strip():
+        return None, "version de psutil absente"
+    provenance = objet["provenance"]
+    if provenance not in PROVENANCES:
+        return None, "provenance de relevé système inconnue"
+    if provenance != provenance_attendue(mesures_simulees):
+        return None, "provenance contradictoire avec la simulation"
+    normalise: dict[str, Any] = {
+        "version": VERSION_METHODE,
+        "methode_cpu": methode,
+        "version_psutil": version_psutil,
+        "provenance": provenance,
+    }
+    if moment == MOMENT_AUDIO:
+        if "cpu" not in objet:
+            return None, "relevé CPU absent d'un relevé d'audio"
+        cpu, motif_cpu = _valider_cpu(objet["cpu"])
+        if cpu is None:
+            return None, motif_cpu
+        normalise["cpu"] = cpu
+    elif "cpu" in objet:
+        return None, "relevé CPU présent sur un relevé de chargement"
+    if "memoire_apres" not in objet:
+        return None, "mémoire après mesure absente"
+    memoire, motif_memoire = _valider_memoire(objet["memoire_apres"])
+    if memoire is None:
+        return None, motif_memoire
+    normalise["memoire_apres"] = memoire
+    return normalise, None
 
 
 def _resultat_memoire(

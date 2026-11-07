@@ -72,18 +72,23 @@ sous Linux (Kio vers octets) et `psutil.Process().memory_info().peak_wset` sous
 Windows (octets, psutil 7.2.2). Si ce champ manque, la mesure est absente
 (`None`) : aucun repli inventé.
 
-Relevés système (`engines.mesures_systeme`, design D1/D2 du change
+Relevés système (`engines.mesures_systeme`, design D1/D2/D3 du change
 `mesurer-charge-systeme`) : un instantané de RAM disponible est pris juste après
 le chargement, puis, pour chaque audio, le compteur CPU global du système est
 amorcé juste avant les bornes d'inférence et lu juste après leur arrêt, avant la
 sérialisation de l'événement ; un second instantané de RAM suit. La fenêtre
 système ne couvre donc ni le décodage ni le chargement, et le CPU système reste
 distinct du temps CPU du moteur. Les objets produits sont attachés de façon
-additive au dictionnaire de l'événement sous `observation_systeme` ; leur
-contrat d'événement et leur persistance restent à définir (tâches 2.1 et 2.2).
-Un audio en échec n'obtient aucune observation fabriquée. Le moteur factice
-reçoit un scénario simulé déterministe marqué `simulee` (`creer_releveur_simule`)
-et n'appelle aucune fonction de mesure de psutil.
+additive au dictionnaire de l'événement sous `observation_systeme` : la clé est
+**facultative**, aucun type d'événement n'est ajouté et le contrat des
+adaptateurs ne change pas. Le serveur les persiste sous
+`run.json.mesures.observation_systeme_chargement` et
+`result.json.mesures.observation_systeme`. Un objet non conforme au contrat D3
+(version, provenance, unités, motifs) n'est jamais émis : il est signalé sur la
+sortie d'erreur, que le serveur recopie dans `run.log`, et l'événement reste
+valide sans lui. Un audio en échec n'obtient aucune observation fabriquée. Le
+moteur factice reçoit un scénario simulé déterministe marqué `simulee`
+(`creer_releveur_simule`) et n'appelle aucune fonction de mesure de psutil.
 
 Moteur factice (tâche 4.3) : seule une déclaration portant `factice=True`, fixée
 par le code du dépôt et jamais par le job, est exécutée malgré des familles non
@@ -128,7 +133,13 @@ from engines.declarations import (
     motif_famille_non_executable,
 )
 from engines.hors_ligne import mode_hors_ligne, options_modele
-from engines.mesures_systeme import ReleveurSysteme, creer_releveur_systeme
+from engines.mesures_systeme import (
+    MOMENT_AUDIO,
+    MOMENT_CHARGEMENT,
+    ReleveurSysteme,
+    creer_releveur_systeme,
+    valider_observation_systeme,
+)
 from engines.protocole import (
     TYPE_AUDIO,
     TYPE_AUDIO_ERREUR,
@@ -283,16 +294,21 @@ def _executer_job(job: Job, registre: RegistreMoteurs) -> None:
         duree_chargement = DUREE_CHARGEMENT_SIMULEE_S
         pic_chargement = PIC_MEMOIRE_SIMULE_OCTETS
     # Instantané de RAM après le chargement, sans aucun CPU de chargement (D1).
-    observation_chargement = releveur_systeme.observation_chargement()
-    emettre(
-        {
-            "type": TYPE_CHARGEMENT,
-            "duree_s": duree_chargement,
-            "pic_memoire_octets": pic_chargement,
-            "observation_systeme": observation_chargement,
-            **provenance,
-        }
+    # Un objet hors contrat D3 est écarté et signalé, jamais émis.
+    observation_chargement = _observation_systeme_emise(
+        releveur_systeme.observation_chargement(),
+        moment=MOMENT_CHARGEMENT,
+        mesures_simulees=factice,
     )
+    evenement_chargement: dict[str, Any] = {
+        "type": TYPE_CHARGEMENT,
+        "duree_s": duree_chargement,
+        "pic_memoire_octets": pic_chargement,
+        **provenance,
+    }
+    if observation_chargement is not None:
+        evenement_chargement["observation_systeme"] = observation_chargement
+    emettre(evenement_chargement)
 
     audios_ok = 0
     audios_erreur = 0
@@ -548,9 +564,13 @@ def _traiter_audio(
         # Les bornes du moteur sont arrêtées : le CPU système est lu avant la
         # sérialisation, puis la RAM disponible est relevée (design D1). Le pic
         # mémoire du moteur est une mesure distincte, relevée ensuite.
-        observation_systeme = releveur_systeme.observation_audio(amorcage_systeme)
+        observation_systeme = _observation_systeme_emise(
+            releveur_systeme.observation_audio(amorcage_systeme),
+            moment=MOMENT_AUDIO,
+            mesures_simulees=factice,
+        )
         pic_audio = PIC_MEMOIRE_SIMULE_OCTETS if factice else pic_memoire()
-        return {
+        evenement: dict[str, Any] = {
             "type": TYPE_AUDIO,
             "index": index,
             "nom": audio.nom,
@@ -567,7 +587,6 @@ def _traiter_audio(
             "decoupage": decoupage,
             "nb_fenetres": nb_fenetres,
             "pic_memoire_octets": pic_audio,
-            "observation_systeme": observation_systeme,
             "reglages_effectifs": reglages_effectifs,
             "langue_imposee": langue_imposee,
             "threads_demandes": threads_demandes,
@@ -575,6 +594,9 @@ def _traiter_audio(
             "factice": factice,
             "mesures_simulees": factice,
         }
+        if observation_systeme is not None:
+            evenement["observation_systeme"] = observation_systeme
+        return evenement
     finally:
         # Libère le signal avant l'audio suivant (hygiène mémoire Windows).
         del signal
@@ -599,6 +621,25 @@ def _verifier_metadonnees_identiques(
             "métadonnées d'adaptateur divergentes entre les fenêtres du même "
             "audio : " + ", ".join(divergences)
         )
+
+
+def _observation_systeme_emise(
+    observation: Any, *, moment: str, mesures_simulees: bool
+) -> dict[str, Any] | None:
+    """Objet d'observation système conforme, ou `None` s'il est écarté (D3).
+
+    Un objet non conforme au contrat (version, provenance, unités, motifs) n'est
+    jamais émis : la clé `observation_systeme` de l'événement reste alors
+    absente, ce qui laisse l'événement valide et la transcription intacte. Le
+    motif est signalé sur la sortie d'erreur, recopiée par le serveur dans
+    `run.log` ; il ne recopie ni valeur reçue ni message d'erreur d'OS.
+    """
+    objet, motif = valider_observation_systeme(
+        observation, moment=moment, mesures_simulees=mesures_simulees
+    )
+    if objet is None:
+        print(f"Relevé système ignoré ({moment}) : {motif}", file=sys.stderr)
+    return objet
 
 
 def _valider_resultat(valeur: Any) -> dict[str, Any]:

@@ -19,6 +19,16 @@ from pathlib import Path
 from typing import Any
 from unittest import mock
 
+from engines.mesures_systeme import (
+    ETATS_LECTURE,
+    METHODE_CPU,
+    MOTIF_INTERVALLE_TROP_COURT,
+    MOTIF_LECTURE_IMPOSSIBLE,
+    MOTIFS_ECRITS,
+    PROVENANCE_REELLE,
+    PROVENANCE_SIMULEE,
+    VERSION_METHODE,
+)
 from transcription_bench.execution_moteur import (
     ETAT_ECHOUEE as ETAT_EXECUTION_ECHOUEE,
     ETAT_INTERROMPUE as ETAT_EXECUTION_INTERROMPUE,
@@ -162,6 +172,43 @@ def audio_non_traite(index: int = 1, nom: str = "b.wav") -> ResultatAudio:
         factice=True,
         synthetique=True,
     )
+
+
+def memoire_apres(**remplacements: Any) -> dict[str, Any]:
+    """Sous-objet `memoire_apres` du contrat D3, conforme par défaut."""
+    base: dict[str, Any] = {
+        "releve_le": "2026-11-07T10:00:00+00:00",
+        "totale_octets": 16 * 1024**3,
+        "disponible_octets": 8 * 1024**3,
+        "motif": None,
+    }
+    base.update(remplacements)
+    return base
+
+
+def observation_chargement(**remplacements: Any) -> dict[str, Any]:
+    """Objet d'observation système du chargement, conforme au contrat D3."""
+    base: dict[str, Any] = {
+        "version": VERSION_METHODE,
+        "methode_cpu": METHODE_CPU,
+        "version_psutil": "7.2.2",
+        "provenance": PROVENANCE_SIMULEE,
+        "memoire_apres": memoire_apres(),
+    }
+    base.update(remplacements)
+    return base
+
+
+def observation_audio(**remplacements: Any) -> dict[str, Any]:
+    """Objet d'observation système d'un audio, conforme au contrat D3."""
+    base = observation_chargement()
+    base["cpu"] = {
+        "pourcentage_moyen": 42.0,
+        "intervalle_s": 1.0,
+        "motif": None,
+    }
+    base.update(remplacements)
+    return base
 
 
 def resultat_execution(
@@ -597,6 +644,366 @@ class ConsignateurExecutionTest(unittest.TestCase):
         self.assertIs(run["mesures"]["pic_memoire_partiel"], True)
         self.assertIsNone(run["mesures"]["duree_chargement_s"])
         self.assertEqual(run["progression"], {"audios_traites": 1, "audios_total": 2})
+
+    # -- observations système (tâche 2.1, design D3) -------------------------
+
+    def _lire_audio(self, consignateur: ConsignateurExecution, dossier: str) -> Any:
+        return json.loads(
+            (Path(consignateur.dossier or "") / dossier / "result.json").read_text(
+                encoding="utf-8"
+            )
+        )
+
+    def _consigner_chargement(
+        self, observation: Any, *, mesures_simulees: bool = True
+    ) -> dict[str, Any]:
+        """Consigne un événement de chargement portant une observation système."""
+        consignateur = self.ouvrir()
+        evenement: dict[str, Any] = {
+            "type": "chargement",
+            "duree_s": 1.2,
+            "pic_memoire_octets": 1024,
+            "factice": mesures_simulees,
+            "mesures_simulees": mesures_simulees,
+        }
+        if observation is not None:
+            evenement["observation_systeme"] = observation
+        self.assertTrue(consignateur.enregistrer_mesures(evenement))
+        return self.lire("run.json")
+
+    def _consigner_audio(
+        self, observation: Any, *, mesures_simulees: bool = True
+    ) -> tuple[ConsignateurExecution, Any]:
+        """Consigne l'audio `a.wav` avec, ou sans, observation système."""
+        consignateur = self.ouvrir()
+        audio = audio_transcrit()
+        evenement = dict(audio.evenement or {})
+        evenement["factice"] = mesures_simulees
+        evenement["mesures_simulees"] = mesures_simulees
+        if observation is not None:
+            evenement["observation_systeme"] = observation
+        audio = replace(audio, evenement=evenement, factice=mesures_simulees)
+        self.assertTrue(consignateur.enregistrer_mesures(evenement))
+        self.assertTrue(consignateur.enregistrer_audio(audio))
+        return consignateur, self._lire_audio(consignateur, "1-a.wav")
+
+    def test_observation_systeme_du_chargement_persistee(self) -> None:
+        objet = observation_chargement()
+
+        run = self._consigner_chargement(objet)
+
+        self.assertEqual(run["mesures"]["observation_systeme_chargement"], objet)
+        # Version, méthode, unités et provenance restent explicites.
+        observation = run["mesures"]["observation_systeme_chargement"]
+        self.assertEqual(observation["version"], VERSION_METHODE)
+        self.assertEqual(observation["methode_cpu"], METHODE_CPU)
+        self.assertEqual(observation["provenance"], PROVENANCE_SIMULEE)
+        self.assertEqual(observation["memoire_apres"]["totale_octets"], 16 * 1024**3)
+        self.assertEqual(
+            observation["memoire_apres"]["disponible_octets"], 8 * 1024**3
+        )
+        self.assertNotIn("cpu", observation)
+        # Aucune compatibilité rompue : schéma global et machine inchangés.
+        self.assertEqual(run["schema"], SCHEMA)
+        self.assertEqual(run["machine"], MACHINE)
+        self.assertEqual(
+            set(run["mesures"]),
+            {
+                "duree_operation_s",
+                "duree_processus_s",
+                "duree_chargement_s",
+                "pic_memoire_octets",
+                "pic_memoire_partiel",
+                "observation_systeme_chargement",
+            },
+        )
+        # Le relevé du chargement est persisté dès sa réception, sans résultat
+        # d'audio inventé pour autant.
+        dossier = Path(self.consignateur.dossier or "")
+        self.assertEqual(
+            sorted(chemin.name for chemin in dossier.iterdir()),
+            ["run.json", "run.log"],
+        )
+
+    def test_observation_systeme_d_un_audio_persistee_avec_lui(self) -> None:
+        objet = observation_audio()
+
+        consignateur, resultat = self._consigner_audio(objet)
+
+        self.assertEqual(resultat["mesures"]["observation_systeme"], objet)
+        observation = resultat["mesures"]["observation_systeme"]
+        self.assertEqual(observation["version"], VERSION_METHODE)
+        self.assertEqual(observation["provenance"], PROVENANCE_SIMULEE)
+        self.assertEqual(observation["cpu"]["pourcentage_moyen"], 42.0)
+        self.assertEqual(observation["cpu"]["intervalle_s"], 1.0)
+        self.assertIsNone(observation["cpu"]["motif"])
+        self.assertEqual(
+            observation["memoire_apres"]["disponible_octets"], 8 * 1024**3
+        )
+        # L'addition ne touche ni les anciennes mesures ni le schéma.
+        self.assertEqual(resultat["mesures"]["temps_decodage_s"], 0.25)
+        self.assertAlmostEqual(resultat["mesures"]["rtf"], 0.5)
+        self.assertEqual(resultat["transcription"]["texte"], "texte simulé")
+        self.assertEqual(resultat["statut"], STATUT_OK)
+        self.assertEqual(resultat["schema"], SCHEMA)
+        self.assertEqual(resultat["machine"], MACHINE)
+        run = self.lire("run.json")
+        self.assertEqual(run["schema"], SCHEMA)
+        self.assertEqual(run["machine"], MACHINE)
+        # Le relevé du chargement n'est pas inventé à partir de celui de l'audio.
+        self.assertIsNone(run["mesures"]["observation_systeme_chargement"])
+        self.assertEqual(
+            (consignateur.dossier / "1-a.wav" / "transcription.txt").read_text(
+                encoding="utf-8"
+            ),
+            "texte simulé\n",
+        )
+
+    def test_chargement_simule_sur_un_resultat_reel_ignore(self) -> None:
+        """La provenance doit aussi concorder avec `mesures_simulees` du run."""
+        consignateur = ConsignateurExecution(
+            self.donnees,
+            demande(),
+            metadonnees_moteur("reel", "Moteur réel", factice=False),
+            debut=0.0,
+            machine=MACHINE,
+            programme=PROGRAMME,
+        )
+        self.addCleanup(consignateur.fermer)
+        self.assertTrue(consignateur.ouvrir(), consignateur.erreur)
+
+        self.assertTrue(
+            consignateur.enregistrer_mesures(
+                {
+                    "type": "chargement",
+                    "duree_s": 1.2,
+                    "pic_memoire_octets": 1024,
+                    "factice": True,
+                    "mesures_simulees": True,
+                    "observation_systeme": observation_chargement(),
+                }
+            )
+        )
+
+        dossier = Path(consignateur.dossier or "")
+        run = json.loads((dossier / "run.json").read_text(encoding="utf-8"))
+        self.assertIsNone(run["mesures"]["observation_systeme_chargement"])
+        self.assertFalse(run["mesures_simulees"])
+        # La mesure du chargement, elle, reste consignée.
+        self.assertEqual(run["mesures"]["duree_chargement_s"], 1.2)
+        self.assertIn(
+            "provenance contradictoire",
+            (dossier / "run.log").read_text(encoding="utf-8"),
+        )
+
+    def test_observation_systeme_absente_reste_explicitement_indisponible(
+        self,
+    ) -> None:
+        consignateur = self.ouvrir()
+        self.assertTrue(
+            consignateur.enregistrer_mesures(
+                {
+                    "type": "chargement",
+                    "duree_s": 1.2,
+                    "pic_memoire_octets": 1024,
+                    "factice": True,
+                    "mesures_simulees": True,
+                }
+            )
+        )
+        audio = audio_transcrit()
+        self.assertTrue(consignateur.enregistrer_mesures(audio.evenement))
+        self.assertTrue(consignateur.enregistrer_audio(audio))
+        run = self.lire("run.json")
+        resultat = self._lire_audio(consignateur, "1-a.wav")
+
+        self.assertIsNone(run["mesures"]["observation_systeme_chargement"])
+        self.assertIsNone(resultat["mesures"]["observation_systeme"])
+        self.assertEqual(resultat["statut"], STATUT_OK)
+        self.assertEqual(resultat["transcription"]["texte"], "texte simulé")
+        self.assertEqual(
+            (Path(consignateur.dossier or "") / "run.log").read_text(
+                encoding="utf-8"
+            ),
+            "",
+        )
+
+    def test_observation_invalide_ignoree_sans_persistance_ni_perte(self) -> None:
+        """Seul l'objet système est écarté : transcription et mesures intactes."""
+        cas: dict[str, Any] = {
+            "version inconnue": observation_audio(version=2),
+            "pourcentage hors contrat": observation_audio(
+                cpu={
+                    "pourcentage_moyen": 101.0,
+                    "intervalle_s": 1.0,
+                    "motif": None,
+                }
+            ),
+            "mémoire disponible supérieure": observation_audio(
+                memoire_apres=memoire_apres(disponible_octets=20 * 1024**3)
+            ),
+            "provenance inconnue": observation_audio(provenance="estimee"),
+            "état de lecture comme motif": observation_audio(
+                cpu={
+                    "pourcentage_moyen": None,
+                    "intervalle_s": 0.05,
+                    "motif": "invalide",
+                }
+            ),
+            "structure non conforme": "relevé système",
+        }
+        for etiquette, observation in cas.items():
+            with self.subTest(cas=etiquette):
+                consignateur = self.creer_consignateur()
+                self.addCleanup(consignateur.fermer)
+                self.assertTrue(consignateur.ouvrir(), consignateur.erreur)
+                audio = audio_transcrit()
+                evenement = dict(audio.evenement or {})
+                evenement["observation_systeme"] = observation
+                audio = replace(audio, evenement=evenement)
+                self.assertTrue(consignateur.enregistrer_mesures(evenement))
+                self.assertTrue(consignateur.enregistrer_audio(audio))
+                resultat = self._lire_audio(consignateur, "1-a.wav")
+
+                self.assertIsNone(resultat["mesures"]["observation_systeme"])
+                self.assertEqual(resultat["statut"], STATUT_OK)
+                self.assertEqual(resultat["transcription"]["texte"], "texte simulé")
+                self.assertAlmostEqual(resultat["mesures"]["rtf"], 0.5)
+                self.assertEqual(
+                    (
+                        consignateur.dossier / "1-a.wav" / "transcription.txt"
+                    ).read_text(encoding="utf-8"),
+                    "texte simulé\n",
+                )
+                # Signalé au journal seulement, jamais persisté.
+                journal = (consignateur.dossier / "run.log").read_text(
+                    encoding="utf-8"
+                )
+                self.assertIn("Relevé système ignoré", journal)
+                contenu = (
+                    consignateur.dossier / "1-a.wav" / "result.json"
+                ).read_text(encoding="utf-8")
+                for etat in ETATS_LECTURE:
+                    self.assertNotIn(f'"{etat}"', contenu)
+
+    def test_provenance_contradictoire_ignoree_sans_persistance(self) -> None:
+        # Objet simulé sur un événement réel : contradiction objet/événement.
+        consignateur = self.creer_consignateur()
+        self.addCleanup(consignateur.fermer)
+        self.assertTrue(consignateur.ouvrir(), consignateur.erreur)
+        audio = audio_transcrit()
+        evenement = dict(audio.evenement or {})
+        evenement["factice"] = False
+        evenement["mesures_simulees"] = False
+        evenement["observation_systeme"] = observation_audio(
+            provenance=PROVENANCE_SIMULEE
+        )
+        audio = replace(audio, evenement=evenement, factice=False)
+        self.assertTrue(consignateur.enregistrer_mesures(evenement))
+        self.assertTrue(consignateur.enregistrer_audio(audio))
+
+        resultat = self._lire_audio(consignateur, "1-a.wav")
+        self.assertIsNone(resultat["mesures"]["observation_systeme"])
+        self.assertEqual(resultat["statut"], STATUT_OK)
+        self.assertEqual(resultat["transcription"]["texte"], "texte simulé")
+        self.assertIn(
+            "Relevé système ignoré",
+            (consignateur.dossier / "run.log").read_text(encoding="utf-8"),
+        )
+
+    def test_provenance_contradictoire_avec_le_resultat_ignoree(self) -> None:
+        """Un résultat réel et un événement simulé ne se réconcilient pas."""
+        consignateur = self.ouvrir()
+        audio = audio_transcrit()
+        evenement = dict(audio.evenement or {})
+        evenement["observation_systeme"] = observation_audio()
+        # L'événement reste marqué simulé alors que le résultat est réel.
+        audio = replace(audio, evenement=evenement, factice=False)
+
+        self.assertTrue(consignateur.enregistrer_mesures(evenement))
+        self.assertTrue(consignateur.enregistrer_audio(audio))
+
+        resultat = self._lire_audio(consignateur, "1-a.wav")
+        self.assertIsNone(resultat["mesures"]["observation_systeme"])
+        self.assertFalse(resultat["mesures_simulees"])
+        self.assertEqual(resultat["transcription"]["texte"], "texte simulé")
+        self.assertIn(
+            "provenance contradictoire",
+            (consignateur.dossier / "run.log").read_text(encoding="utf-8"),
+        )
+
+    def test_codes_stockes_distincts_des_etats_de_lecture(self) -> None:
+        objet = observation_audio(
+            cpu={
+                "pourcentage_moyen": None,
+                "intervalle_s": 0.05,
+                "motif": MOTIF_INTERVALLE_TROP_COURT,
+            },
+            memoire_apres=memoire_apres(
+                disponible_octets=None, motif=MOTIF_LECTURE_IMPOSSIBLE
+            ),
+        )
+
+        consignateur, resultat = self._consigner_audio(objet)
+
+        observation = resultat["mesures"]["observation_systeme"]
+        # La fenêtre réellement observée reste consignée à côté du motif.
+        self.assertEqual(observation["cpu"]["motif"], MOTIF_INTERVALLE_TROP_COURT)
+        self.assertEqual(observation["cpu"]["intervalle_s"], 0.05)
+        self.assertIsNone(observation["cpu"]["pourcentage_moyen"])
+        self.assertEqual(
+            observation["memoire_apres"]["motif"], MOTIF_LECTURE_IMPOSSIBLE
+        )
+        for motif in (
+            observation["cpu"]["motif"],
+            observation["memoire_apres"]["motif"],
+        ):
+            self.assertIn(motif, MOTIFS_ECRITS)
+        contenu = (
+            consignateur.dossier / "1-a.wav" / "result.json"
+        ).read_text(encoding="utf-8")
+        for etat in ETATS_LECTURE:
+            self.assertNotIn(f'"{etat}"', contenu)
+
+    def test_abandon_n_ajoute_aucune_observation_aux_anciens_fichiers(self) -> None:
+        """Aucun remplissage rétroactif : un ancien `run.json` reste sans clé."""
+        consignateur = self.ouvrir()
+        contenu = self.lire("run.json")
+        del contenu["mesures"]["observation_systeme_chargement"]
+        run_json = Path(consignateur.dossier or "") / "run.json"
+        run_json.write_text(json.dumps(contenu), encoding="utf-8")
+
+        final = abandonner_execution(consignateur.dossier, contenu)
+
+        self.assertNotIn("observation_systeme_chargement", final["mesures"])
+        self.assertEqual(final["schema"], SCHEMA)
+        self.assertEqual(final["machine"], MACHINE)
+        relu = json.loads(run_json.read_text(encoding="utf-8"))
+        self.assertNotIn("observation_systeme_chargement", relu["mesures"])
+
+    def test_ancien_resultat_d_audio_jamais_reecrit(self) -> None:
+        consignateur = self.ouvrir()
+        ancien = Path(consignateur.dossier or "") / "1-a.wav"
+        ancien.mkdir()
+        resultat_ancien = {
+            "schema": SCHEMA,
+            "statut": STATUT_OK,
+            "mesures": {"rtf": 0.5, "duree_transcription_s": 1.0},
+        }
+        chemin = ancien / "result.json"
+        chemin.write_text(json.dumps(resultat_ancien), encoding="utf-8")
+        avant = chemin.read_bytes()
+
+        audio = audio_transcrit(index=1, nom="b.wav")
+        self.assertTrue(consignateur.enregistrer_audio(audio))
+        self.assertTrue(
+            consignateur.clore(
+                resultat_execution(etat=ETAT_EXECUTION_TERMINEE, audios=(audio,))
+            )
+        )
+
+        self.assertEqual(chemin.read_bytes(), avant)
+        self.assertNotIn("observation_systeme", json.loads(avant)["mesures"])
 
     def test_mesures_non_finies_ou_invalides_jamais_retenues(self) -> None:
         consignateur = self.ouvrir()

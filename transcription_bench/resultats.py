@@ -47,6 +47,20 @@ faite par `abandonner_execution`, appelée par la récupération du démarrage
 (tâche 6.5), qui lui remet le `run.json` déjà lu et validé : le format n'a ainsi
 qu'un seul écrivain. Les pages de résultats relèvent des tâches 7.x.
 
+**Observations système** (design D3 du change `mesurer-charge-systeme`, tâche
+2.1) : deux additions facultatives sous le même schéma, sans migration ni
+réécriture des anciens fichiers. L'objet du chargement va dans
+`run.json.mesures.observation_systeme_chargement`, celui d'un audio terminé dans
+`result.json.mesures.observation_systeme`. Chaque objet est validé à l'écriture
+(`engines.mesures_systeme.valider_observation_systeme`) : un objet invalide,
+d'une version inconnue ou de provenance contradictoire n'est **jamais**
+persisté, il est signalé dans `run.log` et l'audio est écrit sans lui, sa
+transcription intacte. Une valeur `null` signifie « relevé absent ou écarté » et
+l'absence n'est jamais complétée depuis l'ordinateur courant. Les seuls codes
+écrits sont ceux du relevé (`lecture_impossible`, `intervalle_trop_court`,
+`valeur_incoherente`) ; les états `absent`, `invalide` et `version_inconnue`
+sont calculés à la lecture (tâche 2.2) et ne sont jamais enregistrés.
+
 **Secrets** : rien de l'environnement du serveur n'est recopié : ni jeton, ni
 variable d'environnement. Les chemins persistés comme données (identifiant,
 dossier d'audio) sont relatifs au dossier de résultat ; seuls un message
@@ -70,6 +84,11 @@ from typing import IO, TYPE_CHECKING, Any
 
 import psutil
 
+from engines.mesures_systeme import (
+    MOMENT_AUDIO,
+    MOMENT_CHARGEMENT,
+    valider_observation_systeme,
+)
 from engines.protocole import TYPE_CHARGEMENT, TYPE_FIN
 from transcription_bench.operations import horodatage_iso
 from transcription_bench.paths import (
@@ -174,6 +193,9 @@ class MesuresExecution:
     duree_chargement_s: float | None = None
     pic_memoire_octets: int | None = None
     pic_memoire_partiel: bool | None = None
+    #: Observation système du chargement, validée (design D3), `None` si absente
+    #: ou écartée : un objet invalide n'est jamais conservé pour être persisté.
+    observation_systeme_chargement: dict[str, Any] | None = None
 
 
 def etat_resultat(etat_execution: str) -> str:
@@ -516,6 +538,11 @@ class ConsignateurExecution:
         mesures finales à partir de tous les événements. Renvoie `False` si
         l'écriture du chargement échoue : l'erreur est retenue, jamais avalée,
         et l'appelant arrête le moteur et conclut en échec.
+
+        L'observation système du chargement (design D3) est validée ici et
+        retenue pour `run.json.mesures.observation_systeme_chargement` ; un
+        objet invalide est écarté et signalé dans `run.log`, sans faire échouer
+        ni la consignation ni la transcription.
         """
         self._refuser_si_clos()
         type_evenement = evenement.get("type")
@@ -527,6 +554,12 @@ class ConsignateurExecution:
         if isinstance(pic, int) and not isinstance(pic, bool):
             self.mesures.pic_memoire_octets = pic
             self.mesures.pic_memoire_partiel = True
+        if type_evenement == TYPE_CHARGEMENT:
+            self.mesures.observation_systeme_chargement = self._observation_coherente(
+                evenement,
+                moment=MOMENT_CHARGEMENT,
+                mesures_simulees=bool(self._moteur.get("factice")),
+            )
         if type_evenement != TYPE_CHARGEMENT:
             return True
         if self.erreur is not None or self._dossier is None:
@@ -718,6 +751,12 @@ class ConsignateurExecution:
                 "duree_chargement_s": self.mesures.duree_chargement_s,
                 "pic_memoire_octets": self.mesures.pic_memoire_octets,
                 "pic_memoire_partiel": self.mesures.pic_memoire_partiel,
+                # Addition compatible (design D3) : `None` si le relevé est
+                # absent ou a été écarté, jamais une valeur de l'ordinateur
+                # courant ni un objet invalide.
+                "observation_systeme_chargement": (
+                    self.mesures.observation_systeme_chargement
+                ),
             },
             "effectifs": dict(self._effectifs),
             "progression": dict(self._progression),
@@ -828,6 +867,9 @@ class ConsignateurExecution:
                     None if prepare is None else prepare.duree_decodee,
                 ),
                 "pic_memoire_octets": _mesure(evenement, "pic_memoire_octets"),
+                # Addition compatible (design D3) : l'objet validé de cet audio,
+                # persisté avec lui, ou `None` s'il est absent ou écarté.
+                "observation_systeme": self._observation_audio_validee(audio),
             },
             "transcription": (
                 None
@@ -841,6 +883,67 @@ class ConsignateurExecution:
         }
 
     # -- helpers -------------------------------------------------------------
+
+    def _observation_validee(
+        self, evenement: Mapping[str, Any], moment: str
+    ) -> dict[str, Any] | None:
+        """Objet d'observation système conforme à persister, ou `None` (D3).
+
+        La validation est refaite ici, au moment de l'écriture, pour qu'un objet
+        reçu d'un émetteur tiers ne puisse pas entrer dans un résultat. Un objet
+        invalide n'est jamais persisté : il est signalé dans `run.log` et
+        l'événement reste consigné sans lui, sans perte de transcription.
+        """
+        if "observation_systeme" not in evenement:
+            return None
+        objet, motif = valider_observation_systeme(
+            evenement["observation_systeme"],
+            moment=moment,
+            mesures_simulees=evenement.get("mesures_simulees"),
+        )
+        if objet is None:
+            self.ecrire_journal(f"Relevé système ignoré ({moment}) : {motif}")
+        return objet
+
+    def _observation_coherente(
+        self,
+        evenement: Mapping[str, Any],
+        *,
+        moment: str,
+        mesures_simulees: bool,
+    ) -> dict[str, Any] | None:
+        """Observation de l'événement, si sa provenance concorde avec le résultat.
+
+        `mesures_simulees` est celle que le résultat écrit (`run.json` ou
+        `result.json`) : une observation simulée sur un résultat réel, ou
+        l'inverse, est contradictoire et écartée avec un motif au journal.
+        """
+        if "observation_systeme" not in evenement:
+            return None
+        if evenement.get("mesures_simulees") is not mesures_simulees:
+            self.ecrire_journal(
+                f"Relevé système ignoré ({moment}) : provenance contradictoire "
+                "avec le résultat."
+            )
+            return None
+        return self._observation_validee(evenement, moment)
+
+    def _observation_audio_validee(
+        self, audio: ResultatAudio
+    ) -> dict[str, Any] | None:
+        """Observation système d'un audio terminé, ou `None` (D3).
+
+        La provenance doit correspondre à `mesures_simulees` du résultat, qui
+        vaut `audio.factice`. Un audio sans événement (en erreur, non traité,
+        interrompu) n'a aucune observation à persister et aucune valeur de
+        l'ordinateur courant n'est substituée.
+        """
+        evenement = audio.evenement
+        if evenement is None:
+            return None
+        return self._observation_coherente(
+            evenement, moment=MOMENT_AUDIO, mesures_simulees=audio.factice
+        )
 
     def _plan_audio(self, index: int) -> dict[str, Any] | None:
         """Plan de consignation d'un audio, par sa position dans la demande."""

@@ -17,7 +17,7 @@ import sys
 import tempfile
 import time
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -1251,6 +1251,92 @@ class RelevesSystemeTest(unittest.TestCase):
             ],
             4321,
         )
+
+    def test_observation_hors_contrat_ecartee_sans_casser_l_evenement(self) -> None:
+        """Objet système invalide : clé absente, événement et texte intacts (2.1)."""
+        journal: list[str] = []
+        releveur = self._releveur(
+            journal, cpu=[99.0, 12.5], horloge=[0.0, 2.5], disponibles=[1234]
+        )
+        chemin = ecrire_job(
+            self.dossier,
+            [("un.wav", ecrire_signal(self.dossier, "un.f32", 1.0, 1.0))],
+        )
+        erreurs = io.StringIO()
+        with (
+            mock.patch.object(
+                releveur,
+                "observation_chargement",
+                lambda: {"version": 2, "memoire_apres": {}},
+            ),
+            mock.patch.object(
+                releveur,
+                "observation_audio",
+                lambda _amorcage: {
+                    "version": 1,
+                    "methode_cpu": "psutil-cpu-percent-nonbloquant-v1",
+                    "version_psutil": "7.2.2",
+                    # Provenance contradictoire avec `mesures_simulees`.
+                    "provenance": "simulee",
+                    "cpu": {
+                        "pourcentage_moyen": 12.5,
+                        "intervalle_s": 2.5,
+                        "motif": None,
+                    },
+                    "memoire_apres": {
+                        "releve_le": "2026-11-07T10:00:00+00:00",
+                        "totale_octets": 4096,
+                        "disponible_octets": 2048,
+                        "motif": None,
+                    },
+                },
+            ),
+            redirect_stderr(erreurs),
+        ):
+            _, evenements = self._run(chemin, releveur, journal)
+
+        self.assertEqual(
+            [evenement["type"] for evenement in evenements],
+            [TYPE_CHARGEMENT, TYPE_AUDIO, TYPE_FIN],
+        )
+        self.assertNotIn("observation_systeme", evenements[0])
+        self.assertNotIn("observation_systeme", evenements[1])
+        # L'événement et sa transcription restent valides.
+        self.assertEqual(evenements[1]["texte"], "héllo 16000")
+        self.assertIsNotNone(evenements[1]["rtf"])
+        messages = erreurs.getvalue()
+        self.assertIn("Relevé système ignoré (chargement)", messages)
+        self.assertIn("Relevé système ignoré (audio)", messages)
+        self.assertIn("provenance contradictoire", messages)
+
+    def test_observation_conforme_emise_sans_cle_supplementaire(self) -> None:
+        """Un objet conforme est émis tel quel sous la clé facultative."""
+        journal: list[str] = []
+        releveur = self._releveur(
+            journal, cpu=[99.0, 12.5], horloge=[0.0, 2.5], disponibles=[1234, 1200]
+        )
+        chemin = ecrire_job(
+            self.dossier,
+            [("un.wav", ecrire_signal(self.dossier, "un.f32", 1.0, 1.0))],
+        )
+        erreurs = io.StringIO()
+        with redirect_stderr(erreurs):
+            _, evenements = self._run(chemin, releveur, journal)
+
+        self.assertEqual(erreurs.getvalue(), "")
+        for evenement in evenements[:2]:
+            with self.subTest(type_evenement=evenement["type"]):
+                observation = evenement["observation_systeme"]
+                self.assertEqual(observation["provenance"], PROVENANCE_REELLE)
+                self.assertEqual(observation["memoire_apres"]["motif"], None)
+        self.assertEqual(
+            set(evenements[0]["observation_systeme"]),
+            {"version", "methode_cpu", "version_psutil", "provenance", "memoire_apres"},
+        )
+        self.assertIn("cpu", evenements[1]["observation_systeme"])
+        # Aucun champ nouveau n'est exigé : les événements restent analysables.
+        for evenement in evenements:
+            self.assertIn("mesures_simulees", evenement)
 
     def test_audio_en_echec_ne_fabrique_aucune_observation(self) -> None:
         adaptateur.reinitialiser(echec_appel=2)

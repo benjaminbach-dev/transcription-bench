@@ -47,6 +47,12 @@ CHAMPS_PROVENANCE: tuple[str, ...] = ("factice", "mesures_simulees")
 # `s`) et ses étapes. Il est laissé de côté par les moteurs qui n'en transmettent
 # aucun et n'est jamais obligatoire : l'absence signifie « non transmis », jamais
 # zéro. Le runner le recopie sans l'agréger, dans l'ordre des appels.
+# Les événements `chargement` et `audio` peuvent aussi porter le champ facultatif
+# `observation_systeme` (tâche 2.1) : l'objet versionné du design D3, avec sa
+# provenance `reelle` ou `simulee`. Il n'est jamais exigé, n'ajoute aucun type
+# d'événement et ne change pas le contrat des adaptateurs : un ancien émetteur
+# l'omet, un ancien consommateur l'ignore. Le serveur ne persiste un tel objet
+# que s'il est conforme ; sinon il l'écarte et le signale au journal.
 CHAMPS_REQUIS: dict[str, tuple[str, ...]] = {
     TYPE_CHARGEMENT: (
         "duree_s",

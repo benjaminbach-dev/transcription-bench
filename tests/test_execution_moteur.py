@@ -31,6 +31,17 @@ from unittest import mock
 import psutil
 
 from engines.hors_ligne import commande_runner, environnement_moteur
+from engines.mesures_systeme import (
+    ETATS_LECTURE,
+    METHODE_CPU,
+    PROVENANCE_REELLE,
+    PROVENANCE_SIMULEE,
+    SIMULATION_CPU_POURCENTAGE,
+    SIMULATION_INTERVALLE_CPU_S,
+    SIMULATION_MEMOIRE_DISPONIBLE_OCTETS,
+    SIMULATION_RELEVE_LE,
+    VERSION_METHODE,
+)
 from engines.protocole import (
     TYPE_AUDIO,
     TYPE_AUDIO_ERREUR,
@@ -1122,6 +1133,111 @@ class ResultatsExecutionTest(SocleExecutionTest):
         self.assertAlmostEqual(
             audio["mesures"]["rtf"],
             audio["mesures"]["duree_transcription_s"] / audio["audio"]["duree_decodee_s"],
+        )
+
+    def test_observations_systeme_simulees_persistees_aux_deux_emplacements(
+        self,
+    ) -> None:
+        """Chaîne complète du moteur factice : objets D3 cohérents et persistés."""
+        self.ecrire_audio("a.wav")
+
+        resultat = self.executer(self.demande(("a.wav",)))
+
+        self.assertTerminee(resultat)
+        dossier = self.dossier_resultat(resultat)
+        run = self.lire_json(dossier / "run.json")
+        audio = self.lire_json(dossier / "1-a.wav" / "result.json")
+        # Relevé du chargement : RAM seule, aucune mesure CPU de chargement.
+        chargement = run["mesures"]["observation_systeme_chargement"]
+        self.assertEqual(chargement["version"], VERSION_METHODE)
+        self.assertEqual(chargement["methode_cpu"], METHODE_CPU)
+        self.assertEqual(chargement["provenance"], PROVENANCE_SIMULEE)
+        self.assertNotIn("cpu", chargement)
+        self.assertEqual(
+            chargement["memoire_apres"]["disponible_octets"],
+            SIMULATION_MEMOIRE_DISPONIBLE_OCTETS,
+        )
+        self.assertEqual(
+            chargement["memoire_apres"]["releve_le"], SIMULATION_RELEVE_LE
+        )
+        # Relevé de l'audio : CPU moyen, intervalle et RAM, avec sa provenance.
+        observation = audio["mesures"]["observation_systeme"]
+        self.assertEqual(observation["version"], VERSION_METHODE)
+        self.assertEqual(observation["provenance"], PROVENANCE_SIMULEE)
+        self.assertEqual(
+            observation["cpu"]["pourcentage_moyen"], SIMULATION_CPU_POURCENTAGE
+        )
+        self.assertEqual(
+            observation["cpu"]["intervalle_s"], SIMULATION_INTERVALLE_CPU_S
+        )
+        self.assertIsNone(observation["cpu"]["motif"])
+        self.assertIsNone(observation["memoire_apres"]["motif"])
+        # Provenance cohérente avec `mesures_simulees` du run et du résultat.
+        self.assertIs(run["mesures_simulees"], True)
+        self.assertIs(audio["mesures_simulees"], True)
+        self.assertEqual(
+            observation["provenance"],
+            PROVENANCE_SIMULEE if audio["mesures_simulees"] else PROVENANCE_REELLE,
+        )
+        # Compatibilité : schéma global 1, machine et anciennes mesures intactes.
+        self.assertEqual(run["schema"], 1)
+        self.assertEqual(audio["schema"], 1)
+        self.assertIn("ram_totale_octets", run["machine"])
+        self.assertEqual(audio["machine"], run["machine"])
+        self.assertAlmostEqual(
+            audio["mesures"]["rtf"],
+            audio["mesures"]["duree_transcription_s"]
+            / audio["audio"]["duree_decodee_s"],
+        )
+        # Aucun état de lecture n'est jamais écrit dans les fichiers.
+        for chemin in (dossier / "run.json", dossier / "1-a.wav" / "result.json"):
+            contenu = chemin.read_text(encoding="utf-8")
+            for etat in ETATS_LECTURE:
+                self.assertNotIn(f'"{etat}"', contenu)
+
+    def test_audio_en_erreur_n_a_aucune_observation_systeme(self) -> None:
+        """Un audio en échec ne reçoit aucune observation fabriquée."""
+        self.ecrire_audio("a.wav")
+        self.ecrire_fichier_illisible("casse.wav")
+
+        resultat = self.executer(self.demande(("a.wav", "casse.wav")))
+
+        self.assertTerminee(resultat)
+        dossier = self.dossier_resultat(resultat)
+        run = self.lire_json(dossier / "run.json")
+        self.assertIsNotNone(run["mesures"]["observation_systeme_chargement"])
+        self.assertEqual(run["audios"][1]["statut"], "erreur")
+        # Le résultat de l'audio en échec existe, mais sans observation
+        # fabriquée ni transcription inventée.
+        casse = self.lire_json(dossier / "2-casse.wav" / "result.json")
+        self.assertEqual(casse["statut"], "erreur")
+        self.assertIsNone(casse["mesures"]["observation_systeme"])
+        self.assertIsNone(casse["transcription"])
+        self.assertFalse((dossier / "2-casse.wav" / "transcription.txt").exists())
+        self.assertTrue((dossier / "1-a.wav" / "result.json").is_file())
+
+    def test_interruption_avant_lancement_n_invente_aucune_observation(self) -> None:
+        """Aucun relevé de l'ordinateur courant n'est substitué au manquant."""
+        self.ecrire_audio("a.wav")
+
+        def decoder(nom: str, donnees):
+            # Arrêt demandé pendant la préparation : aucun moteur n'est lancé.
+            self.service.arreter_execution()
+            return decoder_audio(nom, donnees)
+
+        service = self.creer_service(decoder=decoder)
+        self.service = service
+        resultat = self.executer(self.demande(("a.wav",)), service=service)
+
+        self.assertEqual(resultat.etat, ETAT_INTERROMPUE)
+        dossier = self.dossier_resultat(resultat)
+        run = self.lire_json(dossier / "run.json")
+        self.assertEqual(run["etat"], "interrupted")
+        self.assertIsNone(run["mesures"]["observation_systeme_chargement"])
+        # Au plus ce qui était déjà écrit : ni résultat d'audio ni relevé final.
+        self.assertEqual(
+            sorted(chemin.name for chemin in dossier.iterdir()),
+            ["run.json", "run.log"],
         )
 
     def test_mesures_absentes_jamais_zero_avant_lancement(self) -> None:
