@@ -10,7 +10,7 @@ L'empreinte du moteur ne dit pas combien l'ordinateur était occupé au total ni
 - Instantané de RAM disponible après le chargement du modèle puis après chaque audio ; ce n'est ni un minimum pendant l'audio, ni une prédiction de fluidité.
 - Mesures facultatives, méthode et périmètre explicites, ajoutées aux événements et JSON existants sans modifier les anciens résultats.
 - Deux relevés aux frontières de l'inférence, sans thread d'observation, collecte périodique ni privilège supplémentaire ; échec de mesure sans échec de transcription.
-- Présentation locale concise du contexte système, en complément des trois indicateurs moteur définis dans `simplifier-lecture-resultats` ; jamais de classement de modèles par charge système.
+- Présentation locale dans un bloc secondaire « Contexte de l'ordinateur » du détail et de la comparaison sélectionnée, compatible avec `refondre-parcours-resultats`, sans colonne système dans les listes ni classement de modèles par charge système. Réconciliation de présentation approuvée le 2026-11-07 ; collecte et stockage inchangés.
 
 ## Capabilities
 

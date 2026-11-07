@@ -63,9 +63,9 @@ Les futurs lecteurs reconnaissent version 1, ignorent l'objet inconnu/invalide a
 
 ### D4. Affichage complémentaire, pas une quatrième compétition
 
-Après les trois indicateurs moteur, une seule ligne de contexte hors accordéon fermé : « Ordinateur : CPU total moyen 90 % pendant la transcription ; RAM disponible après : 5,2 Go sur 16 Go ». Si une valeur manque, « non mesuré ». Le relevé après chargement, méthode/version/intervalle et les valeurs brutes restent dans les détails. Formats SI français identiques au change UI ; aucun ratio inventé entre mémoire disponible et pic RSS. Aide courte : autres programmes inclus, instantané après l'audio, pas une garantie de confort.
+Dans le détail et la comparaison sélectionnée, proposer un bloc secondaire repliable « Contexte de l'ordinateur » : « CPU total moyen : 90 % pendant la transcription ; RAM disponible après : 5,2 Go sur 16 Go ». Si une valeur manque, « non mesuré ». Le relevé après chargement, méthode/version/intervalle et les valeurs brutes restent accessibles dans ce même niveau secondaire. Formats SI français identiques aux formats de premier niveau de `refondre-parcours-resultats` ; aucun ratio inventé entre mémoire disponible et pic RSS. L'aide explique une seule fois les autres programmes inclus, l'instantané après l'audio et l'absence de garantie de confort.
 
-Le change UI peut être implémenté en premier sans ces champs. Ce change complète ses vues sans modifier ses requirements ; si développé en premier, les relevés apparaissent dans le détail existant puis sont repris dans les cartes lors de la refonte. Ne pas modifier menu, Sumi, classes ou CSS.
+Réconciliation approuvée par le propriétaire le 2026-11-07 avec `refondre-parcours-resultats` : aucune colonne système dans les listes, aucune sixième métrique au premier plan et pas de paragraphe répété par résultat. La refonte peut être implémentée et synchronisée sans ces champs ; ce change reste indépendant pour leur collecte et stockage. Lors de sa réalisation, employer les composants et la navigation alors en vigueur, sans réintroduire les anciennes contraintes Sumi sur menu/classes/CSS. Cette révision ne change ni D1–D3, ni les autorisations de validation réelle.
 
 ### D5. Tests et preuves proportionnés
 

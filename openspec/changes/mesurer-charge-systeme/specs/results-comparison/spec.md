@@ -1,15 +1,15 @@
 ## ADDED Requirements
 
 ### Requirement: Contexte système distinct de l'empreinte moteur
-Le détail et la comparaison SHALL montrer, lorsqu'ils sont disponibles, le CPU moyen de l'ordinateur pendant l'audio et la RAM disponible après l'audio, sous des libellés distincts du CPU et du pic mémoire du moteur. Les observations système MUST NOT servir à classer les modèles, ni à promettre une marge CPU réellement disponible ou un ordinateur fluide.
+Le détail et la comparaison SHALL proposer un bloc secondaire repliable « Contexte de l'ordinateur » pour le CPU global moyen pendant l'audio et la RAM disponible après, distinct des indicateurs moteur. Les listes principales n'ajoutent aucune colonne système. Ces observations MUST NOT classer les modèles ni promettre une marge CPU ou un ordinateur fluide.
 
 #### Scenario: Lecture des ressources de l'ordinateur
 - **WHEN** un résultat dispose des observations système et des indicateurs moteur
-- **THEN** les indicateurs moteur restent identifiés comme tels et une ligne de contexte visible indique « Ordinateur : CPU total moyen 90 % pendant la transcription ; RAM disponible après : 5,2 Go sur 16 Go », avec les valeurs propres à cet essai
+- **THEN** les indicateurs moteur restent au premier plan ; l'ouverture du bloc secondaire « Contexte de l'ordinateur » présente par exemple « CPU total moyen : 90 % pendant la transcription ; RAM disponible après : 5,2 Go sur 16 Go », avec les valeurs propres à cet essai, sans ajouter d'information à chaque ligne des listes
 
 #### Scenario: Résultat sans observation système
 - **WHEN** l'utilisateur consulte un ancien résultat sans ces relevés
-- **THEN** les indicateurs moteur restent disponibles selon leurs données et le contexte système indique « non mesuré » sans simuler une observation depuis des ratios moteur
+- **THEN** les indicateurs moteur restent disponibles selon leurs données ; le bloc secondaire indique « non mesuré » sans simuler une observation depuis des ratios moteur ni ajouter une explication répétée aux listes
 
 ### Requirement: Interprétation bornée de la marge mémoire
 La RAM disponible SHALL être présentée avec la capacité totale consignée au même instant et une aide distinguant après chargement et après audio. L'interface MUST NOT présenter cet instantané comme la RAM minimale restée disponible ni calculer la marge réelle par RAM totale moins pic mémoire du moteur.

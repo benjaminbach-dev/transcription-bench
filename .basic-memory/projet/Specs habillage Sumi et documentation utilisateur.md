@@ -47,3 +47,9 @@ tags:
 
 - [validation] Commits poussés sur main : ed07bd4 (habillage Sumi.css + Flexoki) et 1d50ca3 (guide, README court, docs/technique.md) ; CI « Tests Linux et Windows » verte sur 1d50ca3 (run 41732163736), y compris Windows (SHA-256 de `sumi.min.css`, type MIME, nouveaux tests). Le test existant `test_arret_utilisateur_interrompu_conserve_les_resultats` avait échoué une fois sous Windows sur 5c03627 : instable probable, non diagnostiqué.
 - [limit] Restent pour archiver `habiller-interface-sumi` : relecture d'AGENTS.md par le propriétaire puis /reload (1.2), thème sombre réel non observé (6.5), correction du `## Purpose` de `local-web-interface` (7.2). Pour `rediger-documentation-utilisateur` : parcours à froid sur un PC de test déclaré (moteur transcribe.cpp, modèle whisper-large-v3-turbo-gguf Q5_K_M ≈ 620 Mo, audio synthétique), relecture propriétaire, tâches 2.1/2.2/2.5, 4.x, 5.x.
+
+## Actualisation des preuves — 2026-11-06
+
+- [validation] L'utilisateur déclare le thème sombre et les états hover/focus corrects sur son PC local, application confirmée à jour. OS, navigateur et résolutions non consignés ; validation ciblée enregistrée en tâche 6.5, pas recette exhaustive des cartes/grilles 8.10 ni acceptation de l'ergonomie.
+- [validation] Tests sans moteur réel Linux/Windows verts sur le commit 5e0cfc77641e8bd54007a10873f77c5490ec4e61, run GitHub Actions 42126402493, tentative 3 (Windows relancé explicitement le 2026-11-06). Tâche 5.7 actualisée ; aucun job moteur lancé. Les succès ne prouvent pas la correction de l'ancienne course de supervision.
+- [decision] Le retour utilisateur sur l'application à jour juge encore les résultats/comparaisons trop denses et demande une nouvelle organisation : change distinct `refondre-parcours-resultats`, sans archivage de Sumi. La présentation précédente ne constitue pas une preuve de satisfaction du besoin.

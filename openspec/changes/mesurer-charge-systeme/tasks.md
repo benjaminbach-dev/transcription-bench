@@ -13,7 +13,7 @@
 
 ## 3. Lecture du contexte ordinateur
 
-- [ ] 3.1 Ajouter la ligne visible CPU total moyen / RAM disponible après audio, sans classement sur ces valeurs, et le relevé après chargement en détail ; tester libellés/valeurs et absence des faux calculs total-RSS ou CPU système moins moteur.
+- [ ] 3.1 Ajouter le bloc secondaire repliable « Contexte de l'ordinateur » dans le détail et la comparaison sélectionnée : CPU global moyen, RAM disponible après audio et relevé après chargement, sans colonne système dans les listes ni classement sur ces valeurs ; tester libellés/valeurs, absence des faux calculs total-RSS ou CPU système moins moteur et compatibilité avec les composants de la refonte.
 - [ ] 3.2 Aligner l'aide et le guide sur instantanés, autres programmes, ressources visibles et absence de garantie de fluidité ; adapter leurs tests de cohérence et vérifier que les indicateurs moteur du change UI restent distincts du contexte système.
 
 ## 4. Vérification intégrée et preuves
@@ -22,7 +22,7 @@
 - [ ] 4.2 Étendre si nécessaire la liste blanche des rapports JSON CI nettoyés pour les agrégats/méthodes/provenances, et tester qu'aucun audio, transcription, chemin sensible ou nouvel artefact/cache n'est exporté.
 - [ ] 4.3 Sur PC Linux explicitement déclaré, après annonce du lot et dans les environnements/modèles autorisés, vérifier les nouveaux champs du runner réel, leur cohérence de périmètre et l'arrêt ; consigner machine, versions, configuration et limites. Ne pas exécuter ce volet sur serveur de développement.
 - [ ] 4.4 Vérifier le runner réel dans le job Windows moteur prévu uniquement après autorisation de son exécution ; consigner commit/image/versions et champs nettoyés, sans assimiler CI au PC utilisateur ni lancer de modèle supplémentaire.
-- [ ] 4.5 Observer la ligne de contexte avec navigator sur les cartes finales bureau/mobile et clair/sombre ; revérifier les critères de lecture à 1280 × 800 sans alerte avec la nouvelle ligne, puis vérifier visibilité, absence de confusion moteur/système et absence de débordement, puis valider OpenSpec strict et les espaces du diff.
+- [ ] 4.5 Observer le bloc secondaire de contexte ouvert/fermé avec navigator sur bureau/mobile et clair/sombre ; vérifier que les chiffres clés de la refonte restent au premier plan, qu'aucune colonne ou explication répétée n'apparaît dans les listes, et contrôler distinction moteur/système et absence de débordement ; valider OpenSpec strict et les espaces du diff.
 
 ## Workflow follow-up
 
