@@ -93,3 +93,27 @@ Note de reprise avant compactage expressément demandée par le propriétaire. S
 - [next] Publierlot3 puisCI LinuxWindows avantlot4 (4.1nouveauworker préparationunique). ArbreinclutREADME/guide/technique+app/JS/CSS/operations/executionmoteur/templates/tests etnotemémoire ; supprimerseulementcapturesspécifiquescrééeslot3,pas.playwright-mcppréexistant. Serveurtemporairelot3actuelPID3940570 àvérifierpuisarrêter ; signalSIGTERMprévoitarrêtmoteurfactice/créneau. Dernierport47275, navigateurfermé.
 
 - [validation] Dernier contrôle advisor Opus5.5medium CSS/tests/Sumi favorable : spécificité button[aria-disabled] gagne, opacité1 et couleursjetons héritéesjusqu'aubouton, contrastecalculéclair/sombre≥4.5. Autorisationtechniquepushsanscorrectifobligatoire (ne remplacepasconsentementutilisateurdéjàobtenu). NAVfinalconfirmeclair~15:1. Suitecomplètefinale1020OK29,018s. Publicationlot3maintenant.
+
+### Lot 3 publié et CI verte ; lot 4 démarré
+
+- [status] Lot3committé/poussé `149056ab00b8223b4b3823e7ad7e12f3d7726a3b`, puis correctif minime `ad840c36eff0359b405648d33499799a0b6c8914` (UTF-8 explicite sur `subprocess.run` du harnaisNode). Premier run42399310632 échecWindowsàcause décodage locale, pasbugUI ; 15testsciblésverts aprèsfix. **CI42399490597 verte Windows2022/Ubuntu24.04**. NodeJS tests réellementexécutésWindows (échecsinitiauxpuisverts), pasignorés.
+- [status] Todo6complétée, todo7lot4encours ; OpenSpec11/20. Worker **b63b5f0f-3eea-447** nouveau pour4.1 préparationuniqueGETpuisPOST ModèleAudioMoteur, sansJSessentielniCSRFURL, limitesetforgeries ; 4.2JS et4.3lots réservés autresworkers. Arbredepuispublicationseulementmémoire enmodification +.playwright-mcppréexistantnon suivi.
+- [provenance] Serveurtemporairelot3arrêtéaprèscontrôlePID3940570, moteurfacticedisposearrêtgracieux ; cinqcapturescrééeslot3suppriméesnominativement, navigateurfermé. Harnais `/tmp/refonte-resultats-1-5/servir-lot3.py` réutilisablepourlot4 mais nepassupposerPID/étatport.
+- [decision] Utilisateur ademandépointd'étapeetexplicationdurée puisdecontinuer. Principalasignaléduréesworkerdefault3.1≈66min,3.2≈5min,3.3≈49min, versus30secondesdesuitesdetests. Modèledefaultdisponiblemais lent ; nepasremplacersansaccordhorsrepliindisponibilitéHaiku5.5high. Autonomieconfirmée, nerendrelamainquedécisionnécessaire/bilanfinal.
+
+### Lot 4 : préparation HTML unique réalisée (4.1)
+
+- [status] **4.1 cochée,12/20** après workerb63b5f0f-3eea-447 et relectureprincipal. PréparationExecution/preparer() pureGET, panneauunique Modèle/Audio/Moteur puis préparationappliquéenommée+POSThiddenchoixappliqués/CSRF/réglages. GETinvalides400avecmessagefixeetchoixapplicables,pas500 ; POSTmoteurfourni revalidécohérence référence, absentcompatibilitéanciensclientsréférencefaitfoi. Lotpréexistantconservéjusqu'à4.3.
+- [validation] Worker4.1full1046testsOK29,576s ; principal136ciblésOK3,539s (exécutions/opération/habillage/docs), diffcheckvert. Risqueintermédiaireexplicite : sansAppliquer, changementselectGETnechangepasPOSTpinnedàpréparationnommée, guideleprécise. JS4.2doitautomatiserl'application sansPOST ni jetonURL etpréservervaleurscompatibles/réinitialisationannoncée.
+- [status] Worker neuf **ff679888-4e01-4fa** actif4.2 sélectionscompatibles/améliorationvanilla ; instructionspréserverpollingapp.js de3.3, testsJSNode+famillesnomsréglagesidentiques/variante/doublons/forgeries ; pascoché. 4.3réservéeautreworker. Toujoursautonomie etméthodefinlotnavigator→advisor→corrections→pushCI.
+
+### Correction 4.2 validée — 13/20
+
+- [validation] Principal a refusé version4.2réinitialisanttousréglages mêmecompatibles ; même workerrepris et correctionlivrée. ContratGETétendu à source(référenceprécisepréparationappliquée), threads/reglage_nonsensibles : copieshiddenDÉSACTIVÉESpar défaut, JSrecopieuniquementmarqueursrendusparJinja etlesactiveavantGET ; pasCSRF niPOSTauto/fetchpropre/storagepersistant. Serveur(moteur,famille)source/cible+valeursvalidentconservation, pasreportentredeuxfamilleshomonymes ; valeursinvalidesrepliannoncé/inconnuesouorigineinconnue400. SansJScopiesdésactivées=>défautsprécisésparnotice, paspreuveobservéJSoff.
+- [validation] Principalrevuhelper `_retenir_valeurs`, JS `copierReglages`, bornémessageinconnufixe sansréafficher nomforgé+test, corrigédocstringcontrat. **245testsciblésOK5,224s**, diffcheckvert. 4.2cochée,13/20 ; pasencorerecettefinlot.
+- [status] Nouveauworker **a446485d-e076-440** actif4.3 : audioUNitaireselectpar défaut, lotoptionnelordonnéau secondplan, avancésfermés/actionsLancerVérifieruniques, restitutionerreursPOSTavecchoixvalides/doubleconcurrence. Préserverpréparation/pollingetpascontrôlescachésactifs/doublonsaudiounitlot. Finlotnavigator+advisor+corrections/pushCIencoreàfaire.
+
+### Clôture de session après le lot 4 — 2026-11-07
+
+- [status] Lot 4 publié `233d3fe`, CI 42407167782 verte Linux/Windows, 1094 tests locaux. 14/20. Corrections advisor appliquées (M1 moteur seul sans JS, M2 textes libres jamais en GET, annonces threads, réglage inconnu selon l'origine) ; navigator a confirmé clavier jusqu'aux actions. Point d'entrée à jour : [[Reprise refonte parcours résultats — pause après le lot 4, 2026-11-07]].
+- [decision] À la demande du propriétaire : arrêt après publication du lot 4 et de la note fraîche ; lot 5 non commencé. Nouveaux workers en Haiku 5.5 / thinking high. Aucun worker actif, serveurs temporaires arrêtés.
