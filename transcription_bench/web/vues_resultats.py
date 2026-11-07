@@ -308,10 +308,15 @@ def revision_ligne(
 
 
 def etats_ligne(entree: EntreeEmpreinte) -> list[str]:
-    """Libellés courts des états d'un essai, dans un ordre stable."""
+    """Libellés courts des états d'un essai, dans un ordre stable.
+
+    Le statut porte son sujet (« audio : … ») : sans lui, les badges se lisent
+    comme une fausse phrase (« erreur en échec ») quand un état d'exécution
+    suit le statut de l'audio.
+    """
     etats: list[str] = []
     if entree.statut != STATUT_OK:
-        etats.append(entree.libelle_statut)
+        etats.append(f"audio : {entree.libelle_statut}")
     if entree.etat != ETAT_TERMINEE:
         etats.append(entree.libelle_etat)
     etats.extend(entree.marques)
