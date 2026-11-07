@@ -11,6 +11,9 @@
 {% endif %}
 {% if groupes %}
 <div class="small">Trier : {% for valeur, libelle in criteres_tri %}{% if valeur == tri %}<strong>{{ libelle }}</strong>{% else %}<a href="{{ url_for('resultats', tri=valeur) }}">{{ libelle }}</a>{% endif %}{% if not loop.last %} · {% endif %}{% endfor %}</div>
+{% if groupes | selectattr("simulees") | list %}
+<p class="prose small">Les mesures simulées sont classées à part des mesures observées, sans distinction de performance.</p>
+{% endif %}
 {% for groupe in groupes %}
 {{ composants.groupe_resultats(groupe) }}
 {% endfor %}

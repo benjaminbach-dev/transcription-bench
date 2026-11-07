@@ -67,6 +67,8 @@ CLASSES_COMPOSANT_RESULTAT = frozenset(
     {
         "resultat-compact",
         "resultat-titre",
+        "resultat-entete",
+        "resultat-tris",
         "resultat-groupe",
         "resultat-modele",
         "resultat-audio",
@@ -85,6 +87,7 @@ CLASSES_COMPOSANT_RESULTAT = frozenset(
         "resultat-alerte",
         "resultat-mesure-moteur",
         "resultat-mesure-date",
+        "resultat-distinction",
     }
 )
 MOTIF_SELECTEUR_CLASSE = re.compile(r"\.([A-Za-z][\w-]*)")
@@ -261,32 +264,22 @@ class GabaritsTest(unittest.TestCase):
 
         self.assertLessEqual(attendus, set(self.sources))
 
-    def test_classes_litterales_autorisees(self) -> None:
+    def test_classes_litterales_sumi_ou_definies_dans_app_css(self) -> None:
+        # Les composants applicatifs sont partagés entre pages : leur contrat
+        # vient de la feuille locale, pas d'une ancienne liste fermée Sumi.
+        definies = set(MOTIF_SELECTEUR_CLASSE.findall(lire_feuille(NOM_FEUILLE_APP)))
         for nom, source in self.sources.items():
             with self.subTest(gabarit=nom):
-                autorisees = CLASSES_AUTORISEES
-                if nom == GABARIT_COMPOSANT:
-                    autorisees = CLASSES_AUTORISEES | CLASSES_COMPOSANT_RESULTAT
                 self.assertLessEqual(
                     classes_litterales(source),
-                    autorisees,
-                    f"classe hors liste dans {nom}",
+                    CLASSES_AUTORISEES | definies,
+                    f"classe sans définition locale dans {nom}",
                 )
 
-    def test_classes_du_composant_reservees_a_son_gabarit(self) -> None:
-        utilisees = classes_litterales(self.sources[GABARIT_COMPOSANT])
-        self.assertLessEqual(utilisees, CLASSES_AUTORISEES | CLASSES_COMPOSANT_RESULTAT)
+    def test_classes_du_composant_utilisees_dans_les_gabarits(self) -> None:
+        sources = "\n".join(self.sources.values())
         for classe in CLASSES_COMPOSANT_RESULTAT:
-            self.assertIn(classe, self.sources[GABARIT_COMPOSANT])
-        for nom, source in self.sources.items():
-            if nom == GABARIT_COMPOSANT:
-                continue
-            with self.subTest(gabarit=nom):
-                self.assertEqual(
-                    classes_litterales(source) & CLASSES_COMPOSANT_RESULTAT,
-                    set(),
-                    f"classe du composant de résultat employée dans {nom}",
-                )
+            self.assertIn(classe, sources)
 
     def test_classes_du_composant_definies_dans_app_css(self) -> None:
         feuille = regles(lire_feuille(NOM_FEUILLE_APP))

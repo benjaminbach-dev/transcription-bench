@@ -1,67 +1,48 @@
 {% extends "base.html" %}
-{% import "formats.html" as formats %}
-{% macro tableau_resultats(entrees) %}
-<div class="overflow-auto">
-<table>
-<thead>
-<tr><th>Sélection</th><th>Exécution</th><th>Audio</th><th>Statut</th><th>État</th><th>Date de l'essai</th><th>Marques</th><th>Modèle</th><th>Moteur</th><th>Réglages distinctifs</th></tr>
-</thead>
-<tbody>
-{% for entree in entrees %}
-<tr>
-<td><input type="checkbox" name="{{ champ_selection }}" value="{{ entree.execution }}:{{ entree.ordre }}"></td>
-<td><a href="{{ url_for('resultat_detail', identifiant=entree.execution) }}">{{ entree.execution }}</a></td>
-<td>Audio {{ entree.ordre }} — {{ entree.nom }}</td>
-<td>{{ entree.libelle_statut }}</td>
-<td>{{ entree.libelle_etat }}{% if entree.partiel %} (résultats partiels){% endif %}</td>
-<td>{{ formats.afficher(entree.date_essai) }}</td>
-<td>{% if entree.marques %}{{ entree.marques | join(', ') }}{% else %}aucune{% endif %}</td>
-<td>{% if entree.modele %}{{ entree.modele }}{% else %}non consigné{% endif %}</td>
-<td>{% if entree.moteur %}{{ entree.moteur }}{% else %}non consigné{% endif %}</td>
-<td>{% if entree.reglages_distinctifs %}{% for libelle, valeur in entree.reglages_distinctifs %}{{ libelle }} : {{ formats.afficher(valeur) }}{% if not loop.last %}<br>{% endif %}{% endfor %}{% else %}aucun{% endif %}</td>
-</tr>
-{% endfor %}
-</tbody>
-</table>
-</div>
-{% endmacro %}
+{% import "composants.html" as composants %}
 {% block page_courante %}comparaisons{% endblock %}
 {% block titre %}Comparaison par audio — transcription-bench{% endblock %}
 {% block contenu %}
 <h1>Comparaison par audio</h1>
-<p class="prose"><a href="{{ url_for('resultats') }}">Retour à la liste des résultats</a> — <a href="{{ url_for('aide_resultats') }}">Comprendre les indicateurs</a> — <a href="{{ url_for('comparaisons') }}">Actualiser</a></p>
+<div><a href="{{ url_for('resultats') }}">Résultats</a> · <a href="{{ url_for('aide_resultats') }}">Comprendre les indicateurs</a></div>
 {% if erreur_dossier %}
 <p class="callout danger prose" role="status">{{ erreur_dossier }}</p>
 {% endif %}
-<p class="prose">Résultats regroupés par empreinte SHA-256 du fichier audio source ; chaque groupe se classe et se sélectionne séparément.</p>
-<p class="prose small">Changer de classement recharge la page : les cases cochées mais non soumises ne sont pas conservées, la page restant sans JavaScript.</p>
+<p class="prose small">Sélectionnez au moins deux essais du même audio. Le tri conserve les cases cochées.</p>
+{% if groupes | selectattr("simulees") | list %}
+<div class="small">Mesures simulées séparées, sans distinction de performance.</div>
+{% endif %}
 {% if groupes %}
 {% for groupe in groupes %}
-<article id="groupe-{{ groupe.empreinte }}">
-<header>
-<h2>Audio « {{ groupe.noms | join(', ') }} » — {{ groupe.entrees | length }} transcription(s){% if groupe.entrees_simulees %} dont {{ groupe.entrees_simulees | length }} avec mesures simulées{% endif %}</h2>
-</header>
-<p class="prose">Classer les résultats : {% for valeur, libelle in criteres_tri %}{% if valeur == tri %}<strong>{{ libelle }}</strong>{% else %}<a href="{{ url_for('comparaisons', tri=valeur) }}#groupe-{{ groupe.empreinte }}">{{ libelle }}</a>{% endif %}{% if not loop.last %} · {% endif %}{% endfor %}</p>
+<section class="resultat-section" id="groupe-{{ groupe.empreinte }}">
+{{ composants.entete_groupe_audio(groupe.nom, groupe.duree_audio_s, groupe.empreinte_courte, groupe.empreinte, groupe.durees_divergentes) }}
+<form method="get" action="{{ url_for('comparaison', empreinte=groupe.empreinte) }}">
+<input type="hidden" name="{{ champ_empreinte }}" value="{{ groupe.empreinte }}">
+<div class="resultat-tris">
+{% for valeur, libelle in criteres_tri %}
+{% if valeur == tri %}<strong>{{ libelle }}</strong>{% else %}<button type="submit" name="{{ champ_tri }}" value="{{ valeur }}" formaction="{{ url_for('comparaisons') }}#groupe-{{ groupe.empreinte }}">{{ libelle }}</button>{% endif %}
+{% endfor %}
+</div>
+{% if groupe.reelles %}
+{% if groupe.simulees %}<h3>Résultats observés</h3>{% endif %}
+{% for ligne in groupe.reelles %}
+{{ composants.resultat_compact(ligne) }}
+{% endfor %}
+{% endif %}
+{% if groupe.simulees %}
+<h3>Mesures simulées de cet audio</h3>
+{% for ligne in groupe.simulees %}
+{{ composants.resultat_compact(ligne) }}
+{% endfor %}
+{% endif %}
+<p class="prose"><button type="submit">Comparer les transcriptions sélectionnées</button></p>
+</form>
 <details>
 <summary>Empreinte SHA-256 du fichier audio</summary>
-<p class="prose"><strong>{{ groupe.empreinte }}</strong> — nom(s) consigné(s) du fichier audio : {{ groupe.noms | join(', ') }}.</p>
+<p class="prose"><strong>{{ groupe.empreinte }}</strong></p>
+<p class="prose">Nom(s) consigné(s) : {{ groupe.nom }}.</p>
 </details>
-<form method="get" action="{{ url_for('comparaison', empreinte=groupe.empreinte) }}">
-{% if groupe.entrees_reelles %}
-<h3>Résultats observés</h3>
-{{ tableau_resultats(groupe.entrees_reelles) }}
-{% endif %}
-{% if groupe.entrees_simulees %}
-<h3>Mesures simulées de cet audio</h3>
-<p class="prose small">Mesures simulées : consultables et comparables, mais classées à part et sans distinction de performance.</p>
-{{ tableau_resultats(groupe.entrees_simulees) }}
-{% endif %}
-<p class="prose">Cochez au moins deux transcriptions de ce groupe, puis lancez la comparaison.</p>
-<footer>
-<p class="prose"><button type="submit">Comparer les transcriptions sélectionnées</button></p>
-</footer>
-</form>
-</article>
+</section>
 {% endfor %}
 {% elif not erreur_dossier %}
 <p class="callout prose">Aucune transcription comparable pour l'instant : un groupe apparaît dès qu'une exécution a produit un résultat dont le fichier audio source porte une empreinte SHA-256 valide.</p>

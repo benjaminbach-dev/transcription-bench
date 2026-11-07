@@ -257,7 +257,7 @@ class PageResultatsTest(SocleWebTest):
 
         self.assertLess(corps.index("recent.wav"), corps.index("ancien.wav"))
         self.assertIn('href="/resultats?tri=ram"', corps)
-        self.assertIn("<strong>Essais récents</strong>", corps)
+        self.assertIn("<strong>Plus récents</strong>", corps)
 
     def test_tri_explicite_ordonne_dans_chaque_groupe_et_refus_invalide(self) -> None:
         ecrire_essai(self.dossier_data, ID_ANCIEN, cree_le="2024-01-01T01:01:01+00:00", temps=9.0)
@@ -265,7 +265,7 @@ class PageResultatsTest(SocleWebTest):
 
         corps = self.page("/resultats?tri=temps")
         self.assertLess(corps.index(ID_RECENT), corps.index(ID_ANCIEN))
-        self.assertIn("<strong>Temps de transcription</strong>", corps)
+        self.assertIn("<strong>Plus rapides</strong>", corps)
 
         for chemin in ("/resultats?tri=inconnu", "/resultats?tri=temps&tri=ram"):
             with self.subTest(chemin=chemin):
@@ -410,7 +410,7 @@ class PageResultatsTest(SocleWebTest):
         corps = self.page()
 
         self.assertIn("organisation/modele-supprime", corps)
-        self.assertIn(f'href="/resultats/{ID_ANCIEN}"', corps)
+        self.assertIn(f'href="/resultats/{ID_ANCIEN}#audio-1"', corps)
         historique = corps[corps.index("Historique complet des exécutions") :]
         self.assertIn(ID_AUTRE, historique)
         self.assertIn("non interprétable", historique)

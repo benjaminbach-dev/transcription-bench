@@ -150,6 +150,12 @@ MOTIF_EMPREINTE = re.compile(r"[0-9a-f]{64}", re.ASCII)
 SEPARATEUR_SELECTION = ":"
 _MOTIF_ORDRE = re.compile(r"[0-9]{1,6}", re.ASCII)
 
+#: Nombre maximal de sélections `transcription` d'une même requête, pour la
+#: comparaison comme pour la liste qui conserve les cases. Convention partagée :
+#: appliquée avant analyse des valeurs de la liste et avant lecture des résultats
+#: de la comparaison ; les doublons restent dédoublonnés sous cette borne.
+SELECTIONS_MAX_COMPARAISON = 64
+
 #: Critères de classement bornés des listes de résultats, avec leur libellé.
 TRI_TEMPS = "temps"
 TRI_RAM = "ram"
@@ -158,10 +164,10 @@ TRI_RECENT = "recent"
 #: Tri par défaut : temps de transcription croissant.
 TRI_DEFAUT = TRI_TEMPS
 LIBELLES_TRI: dict[str, str] = {
-    TRI_TEMPS: "Temps de transcription",
+    TRI_TEMPS: "Plus rapides",
     TRI_RAM: "Moins de RAM",
     TRI_CPU: "CPU le moins occupé",
-    TRI_RECENT: "Essais récents",
+    TRI_RECENT: "Plus récents",
 }
 
 #: Natures de cellule, qui décident du formatage dans le template.
@@ -990,7 +996,9 @@ class ConsultationResultats:
 
         `selections` est une suite de couples `(identifiant d'exécution, ordre
         d'audio)`, tels que décodés par `analyser_selection` ; un doublon est
-        retiré. Lève `ValeurRefusee` si l'empreinte demandée n'est pas un
+        retiré. Au-delà de `SELECTIONS_MAX_COMPARAISON` valeurs reçues, la
+        comparaison est refusée avant toute lecture. Lève `ValeurRefusee` si
+        l'empreinte demandée n'est pas un
         SHA-256 valide, si moins de deux transcriptions distinctes sont
         sélectionnées, si une transcription sélectionnée n'a pas d'empreinte
         valide ou si son empreinte diffère de celle demandée : aucun mélange de
@@ -1002,6 +1010,11 @@ class ConsultationResultats:
         empreinte_valide = _empreinte(empreinte)
         if empreinte_valide is None:
             raise ValeurRefusee("empreinte SHA-256 invalide : comparaison refusée")
+        if len(selections) > SELECTIONS_MAX_COMPARAISON:
+            raise ValeurRefusee(
+                f"sélections refusées : {SELECTIONS_MAX_COMPARAISON} au maximum par "
+                "comparaison"
+            )
         choix: list[tuple[str, int]] = []
         for selection in selections:
             if selection not in choix:
@@ -1883,26 +1896,22 @@ def _alerte_materiel(
 def _mention_materiel(
     differents: Sequence[str], inconnus: Sequence[str]
 ) -> str | None:
-    """Formulation courte de la mention de matériel, ou `None` sans écart."""
+    """Formulation courte de la mention de matériel, ou `None` sans écart.
+
+    La mention reste locale : elle nomme les seuls champs en écart, sans
+    explication générale répétée sur chaque ligne. Les règles communes (quatre
+    champs requis, absence de preuve d'identité des machines) figurent une seule
+    fois dans l'aide locale et dans la note de la comparaison.
+    """
     if not differents and not inconnus:
         return None
     morceaux: list[str] = []
     if differents:
         morceaux.append(f"Matériel différent sur {_liste_francaise(differents)}")
     if inconnus:
-        morceaux.append(
-            "matériel non vérifié pour "
-            f"{_liste_francaise(inconnus)} (valeur absente chez cet essai ou "
-            "chez un autre essai de cet audio)"
-        )
+        morceaux.append(f"matériel non vérifié pour {_liste_francaise(inconnus)}")
     mention = " ; ".join(morceaux) + "."
-    mention = mention[0].upper() + mention[1:]
-    if differents:
-        mention += (
-            " Les valeurs consignées restent affichées, sans preuve d'identité "
-            "des machines."
-        )
-    return mention
+    return mention[0].upper() + mention[1:]
 
 
 def _liste_francaise(elements: Sequence[str]) -> str:
@@ -1912,49 +1921,77 @@ def _liste_francaise(elements: Sequence[str]) -> str:
     return f"{', '.join(elements[:-1])} et {elements[-1]}"
 
 
-def _synthese_comparaison(
+def distinctions_comparaison(
     cartes: Sequence[CarteComparaison],
-) -> SyntheseComparaison:
-    """Synthèse des temps et des pics mémoire observés, sans score global.
+) -> tuple[frozenset[int], frozenset[int]]:
+    """Indices des cartes de tête en temps et en pic mémoire, sans score global.
 
     Seules les mesures réelles de résultats complets concourent : une mesure
-    simulée (`FACTICE`, `MESURES SIMULÉES`) ou un résultat partiel est exclu de
-    toute distinction et nommé comme tel, sans déduire aucune performance de sa
-    valeur. Une mesure absente n'est jamais remplacée par zéro et moins de deux
-    valeurs comparables n'attribuent aucune tête. Le CPU ne désigne aucun
-    vainqueur : moins l'occuper n'est pas aller plus vite.
+    simulée (`FACTICE`, `MESURES SIMULÉES`) ou un résultat partiel ne reçoit
+    aucune distinction de performance réelle, quelle que soit sa valeur. Une
+    mesure absente ou incohérente (négative, non finie, non numérique) ne
+    concourt pas et moins de deux valeurs comparables n'attribuent aucune tête.
+    Les égalités sont conservées ; le CPU n'a jamais de tête, car moins
+    l'occuper n'est pas aller plus vite.
+
+    Ce calcul unique sert la synthèse descriptive et les libellés courts
+    affichés près des valeurs : une même règle produit les deux lectures.
     """
-    temps: list[tuple[str, float]] = []
-    ram: list[tuple[str, float]] = []
-    exclues: list[str] = []
-    for carte in cartes:
+    temps: list[tuple[int, float]] = []
+    ram: list[tuple[int, float]] = []
+    for index, carte in enumerate(cartes):
         entree = carte.entree
         if entree.simule or entree.partiel:
-            exclues.append(carte.libelle)
             continue
         valeur_temps = valeur_distinction(entree, TRI_TEMPS)
         valeur_ram = valeur_distinction(entree, TRI_RAM)
         if valeur_temps is not None:
-            temps.append((carte.libelle, valeur_temps))
+            temps.append((index, valeur_temps))
         if valeur_ram is not None:
-            ram.append((carte.libelle, valeur_ram))
-    return SyntheseComparaison(
-        plus_rapides=_tetes_de_mesure(temps),
-        moins_de_ram=_tetes_de_mesure(ram),
-        exclues=tuple(exclues),
-    )
+            ram.append((index, valeur_ram))
+    return (_indices_minimaux(temps), _indices_minimaux(ram))
 
 
-def _tetes_de_mesure(mesures: Sequence[tuple[str, float]]) -> tuple[str, ...]:
-    """Libellés des valeurs minimales, égalités comprises.
+def _indices_minimaux(mesures: Sequence[tuple[int, float]]) -> frozenset[int]:
+    """Indices des valeurs minimales, égalités comprises.
 
     Moins de deux mesures comparables n'attribuent aucune tête : une valeur
     unique n'est pas une comparaison, et une mesure absente ne concourt pas.
     """
     if len(mesures) < 2:
-        return ()
-    minimum = min(valeur for _libelle, valeur in mesures)
-    return tuple(libelle for libelle, valeur in mesures if valeur == minimum)
+        return frozenset()
+    minimum = min(valeur for _index, valeur in mesures)
+    return frozenset(index for index, valeur in mesures if valeur == minimum)
+
+
+def _synthese_comparaison(
+    cartes: Sequence[CarteComparaison],
+) -> SyntheseComparaison:
+    """Synthèse des temps et des pics mémoire observés, sans score global.
+
+    Les têtes et les exclusions viennent de `distinctions_comparaison`, donc des
+    mêmes règles que les libellés courts : une mesure simulée ou partielle est
+    nommée comme exclue, une mesure absente n'est jamais remplacée par zéro et
+    les égalités restent comprises.
+    """
+    meilleurs_temps, meilleures_ram = distinctions_comparaison(cartes)
+    return SyntheseComparaison(
+        plus_rapides=tuple(
+            carte.libelle
+            for index, carte in enumerate(cartes)
+            if index in meilleurs_temps
+        ),
+        moins_de_ram=tuple(
+            carte.libelle
+            for index, carte in enumerate(cartes)
+            if index in meilleures_ram
+        ),
+        exclues=tuple(
+            carte.libelle
+            for carte in cartes
+            if carte.entree.simule or carte.entree.partiel
+        ),
+    )
 
 
 def _ligne(

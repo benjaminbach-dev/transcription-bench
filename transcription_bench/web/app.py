@@ -38,28 +38,33 @@ La page Résultats (tâche 1.4) regroupe les essais par empreinte audio, tri com
 appliqué dans chaque groupe ; son historique complet des exécutions (tâche 7.1)
 reste dans un détail secondaire. Le détail d'une transcription : texte,
 segments, métadonnées, mesures et marques, en lecture seule. Le détail
-individuel (tâche 3.2) suit la même tête de lecture qu'une carte de comparaison
-— trois indicateurs puis texte complet — avec l'annotation du pic mémoire
+individuel (tâches 3.2 et 2.2) suit la même tête de lecture qu'une carte de comparaison
+— le composant compact de valeurs puis le texte complet — avec l'annotation du pic mémoire
 cumulatif, une mention de matériel différent ou non vérifié et les états
-partiels visibles hors de tout accordéon fermé. La page de
+partiels visibles hors de tout accordéon fermé, chaque audio portant son ancre. La page de
 comparaison (tâche 7.2) regroupe les transcriptions par empreinte SHA-256 du
 fichier audio source et affiche côte à côte celles d'un même fichier, avec les
 réglages effectifs qui diffèrent, les états, les marques et les mesures
 principales. La liste des groupes se classe par temps, mémoire, CPU ou date
-(tâche 2.1) selon un critère borné, refusé (400) s'il est inconnu ou répété ; la
-comparaison sélectionnée garde l'ordre reçu. Une comparaison (tâche 3.1)
-affiche une carte par transcription, avec trois indicateurs de premier niveau
-(durée, mémoire max rapportée à la RAM consignée, occupation CPU moyenne), une
-synthèse descriptive temps/RAM, puis le texte complet ; « Ce qui diffère » et
-« Toutes les mesures et informations » restent accessibles par détails. Lecture
-seule également : aucune route de résultats ne lance d'inférence ni ne modifie
-un fichier.
+(tâche 2.1) selon un critère borné, refusé (400) s'il est inconnu ou répété ;
+ses boutons de tri sont des boutons GET du formulaire de sélection, qui
+transmettent aussi les cases cochées et l'empreinte de leur groupe. La route de
+liste revalide ces sélections comme la comparaison (valeur, identité, groupe,
+borne du nombre de paramètres) et refuse en 400 une empreinte forgée, une
+sélection disparue ou venue d'un autre groupe ; la comparaison sélectionnée
+garde l'ordre reçu. Une comparaison (tâches 3.1 et 2.2)
+affiche une carte compacte par transcription — modèle, durée audio commune ou
+propre à l'essai, temps, RAM, CPU, moteur, date et états — avec les meilleures
+mesures de temps et de RAM signalées près des valeurs, puis le texte complet ;
+« Ce qui diffère » et « Toutes les mesures et informations » restent accessibles
+par détails. Lecture seule également : aucune route de résultats ne lance
+d'inférence ni ne modifie un fichier.
 """
 
 from __future__ import annotations
 
 import secrets
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from hmac import compare_digest
 from pathlib import Path
@@ -72,8 +77,11 @@ from transcription_bench.audios import FORMATS_AUDIO, AudioListe, lister_audios
 from transcription_bench.consultation_resultats import (
     LIBELLES_TRI,
     REPERE_RTF,
+    SELECTIONS_MAX_COMPARAISON,
+    SEPARATEUR_SELECTION,
     TRI_RECENT,
     ConsultationResultats,
+    GroupeEmpreinte,
     LectureResultatsImpossible,
     ResultatIntrouvable,
     ResultatNonInterpretable,
@@ -127,7 +135,11 @@ from transcription_bench.paths import (
     ValeurRefusee,
     preparer_dossiers_data,
 )
-from transcription_bench.web.vues_resultats import vues_groupes
+from transcription_bench.web.vues_resultats import (
+    vue_comparaison,
+    vues_audios_detail,
+    vues_groupes,
+)
 
 LIMITE_CORPS_APPLICATION = 64 * 1024
 NOM_CHAMP_JETON = "jeton_csrf"
@@ -148,6 +160,9 @@ POLITIQUE_CONTENU = (
 )
 CHAMP_SELECTION_COMPARAISON = "transcription"
 CHAMP_TRI_CLASSEMENT = "tri"
+# Groupe dont une liste conserve les cases cochées : une seule empreinte bornée,
+# jamais un paramètre de redirection libre.
+CHAMP_EMPREINTE_GROUPE = "empreinte"
 TYPE_FORMULAIRE = "application/x-www-form-urlencoded"
 HOTES_AUTORISES = ("127.0.0.1", "localhost")
 
@@ -441,6 +456,70 @@ def _page_erreur(code: int, message: str) -> tuple[str, int]:
 def _lien_resultat(identifiant: str) -> str:
     """Adresse locale du détail d'une exécution, construite par la route fixe."""
     return url_for("resultat_detail", identifiant=identifiant)
+
+
+def _identites_groupes(
+    groupes: Sequence[GroupeEmpreinte],
+) -> dict[str, frozenset[str]]:
+    """Identités `exécution:ordre` des transcriptions réellement listées, par groupe."""
+    return {
+        groupe.empreinte: frozenset(
+            f"{entree.execution}{SEPARATEUR_SELECTION}{entree.ordre}"
+            for entree in groupe.entrees
+        )
+        for groupe in groupes
+    }
+
+
+def selections_liste(
+    empreintes: Sequence[str],
+    valeurs: Sequence[str],
+    identites_par_groupe: Mapping[str, frozenset[str]],
+) -> frozenset[str]:
+    """Sélections cochées d'une liste, revalidées comme pour la comparaison.
+
+    Une liste peut n'avoir aucune case cochée : `valeurs` vide avec l'empreinte
+    du groupe donne un ensemble vide. Une empreinte fournie doit être unique et
+    désigner un groupe réellement listé, même sans case cochée : un nom de
+    groupe forgé est refusé (400 côté route). Dès qu'une sélection est présente,
+    chaque valeur est décodée par `analyser_selection` puis doit désigner une
+    transcription de ce groupe : une valeur invalide, une identité disparue ou
+    une sélection d'un autre groupe est refusée par `ValeurRefusee`.
+
+    La borne `SELECTIONS_MAX_COMPARAISON` s'applique au nombre de valeurs reçues,
+    avant toute analyse, comme pour la comparaison ; une sélection répétée à
+    l'identique reste dédoublonnée en deçà de cette borne, comme le fait déjà
+    `ConsultationResultats.comparer`. Aucune valeur n'est devinée ni fusionnée
+    avec un autre groupe.
+    """
+    if len(valeurs) > SELECTIONS_MAX_COMPARAISON:
+        raise ValeurRefusee(
+            f"sélections refusées : {SELECTIONS_MAX_COMPARAISON} au maximum par requête"
+        )
+    if len(empreintes) > 1:
+        raise ValeurRefusee("une seule empreinte de groupe de sélection attendue")
+    if not empreintes:
+        if valeurs:
+            raise ValeurRefusee(
+                "sélection refusée : groupe de la sélection non identifié"
+            )
+        return frozenset()
+    attendues = identites_par_groupe.get(empreintes[0])
+    if attendues is None:
+        raise ValeurRefusee(
+            "sélection refusée : groupe inconnu, disparu ou hors des résultats listés"
+        )
+    cochees: set[str] = set()
+    for valeur in valeurs:
+        identifiant, ordre = analyser_selection(valeur)
+        selection = f"{identifiant}{SEPARATEUR_SELECTION}{ordre}"
+        if selection not in attendues:
+            raise ValeurRefusee(
+                "sélection refusée : transcription invalide, disparue ou hors du "
+                "groupe demandé"
+            )
+        cochees.add(selection)
+    return frozenset(cochees)
 
 
 def _message_moteurs(moteurs: tuple[EtatMoteur, ...]) -> str:
@@ -759,7 +838,10 @@ def _enregistrer_routes(
         except ResultatNonInterpretable:
             return _page_erreur(422, MESSAGE_RESULTAT_NON_INTERPRETABLE)
         return render_template(
-            "resultat.html", detail=detail, repere_rtf=REPERE_RTF
+            "resultat.html",
+            detail=detail,
+            vues_audios=vues_audios_detail(detail),
+            repere_rtf=REPERE_RTF,
         )
 
     @application.get("/resultats/aide")
@@ -773,7 +855,15 @@ def _enregistrer_routes(
 
     @application.get("/resultats/comparaison")
     def comparaisons() -> str:
-        """Groupes de transcriptions par empreinte, listes classées par `tri`."""
+        """Groupes de transcriptions par empreinte, listes classées par `tri`.
+
+        Les cases de sélection sont dans le formulaire du groupe ; les boutons de
+        tri sont des boutons GET de ce formulaire (`name=tri` du `formaction` de
+        liste) qui transmettent aussi les cases cochées et l'empreinte du groupe.
+        La route revalide `tri` et ces sélections comme la comparaison : un
+        critère inconnu ou répété, une empreinte absente ou non listée et une
+        sélection invalide, disparue ou d'un autre groupe valent 400.
+        """
         try:
             tri = analyser_tri(request.args.getlist(CHAMP_TRI_CLASSEMENT))
         except ValeurRefusee:
@@ -785,11 +875,27 @@ def _enregistrer_routes(
             erreur_dossier = MESSAGE_RESULTATS_INACCESSIBLES
         else:
             erreur_dossier = None
+        cochees = frozenset()
+        if erreur_dossier is None:
+            try:
+                cochees = selections_liste(
+                    request.args.getlist(CHAMP_EMPREINTE_GROUPE),
+                    request.args.getlist(CHAMP_SELECTION_COMPARAISON),
+                    _identites_groupes(groupes),
+                )
+            except ValeurRefusee:
+                return _page_erreur(400, MESSAGE_COMPARAISON_REFUSEE)
         return render_template(
             "comparaisons.html",
-            groupes=groupes,
+            groupes=vues_groupes(
+                groupes,
+                _lien_resultat,
+                champ_selection=CHAMP_SELECTION_COMPARAISON,
+                cochees=cochees,
+            ),
             erreur_dossier=erreur_dossier,
-            champ_selection=CHAMP_SELECTION_COMPARAISON,
+            champ_tri=CHAMP_TRI_CLASSEMENT,
+            champ_empreinte=CHAMP_EMPREINTE_GROUPE,
             tri=tri,
             criteres_tri=tuple(LIBELLES_TRI.items()),
         )
@@ -810,7 +916,10 @@ def _enregistrer_routes(
         except ResultatNonInterpretable:
             return _page_erreur(422, MESSAGE_RESULTAT_NON_INTERPRETABLE)
         return render_template(
-            "comparaison.html", comparaison=vue, repere_rtf=REPERE_RTF
+            "comparaison.html",
+            comparaison=vue,
+            entete_audio=vue_comparaison(vue, _lien_resultat),
+            repere_rtf=REPERE_RTF,
         )
 
     @application.get("/operation")

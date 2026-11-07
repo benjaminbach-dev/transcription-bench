@@ -1,26 +1,131 @@
-"""Tests de l'aide locale et du regroupement des explications (tâches 1.2 et 3.3).
+"""Tests de l'aide locale et du regroupement des explications (tâches 1.2, 2.3 et 3.3).
 
 L'aide est servie par la route GET fixe `/resultats/aide` et liée depuis les
 écrans de résultats. Les tests rendent aussi le gabarit directement dans le
 contexte de l'application, vérifient les conventions et l'échappement de « < »,
 sans requête réseau ni écriture dans les résultats.
+
+La tâche 2.3 vérifie sur les pages réellement rendues qu'aucune phrase
+explicative de huit mots ou plus n'est répétée d'une carte ou d'un audio à
+l'autre, et que les états, marques et informations factices ou partielles
+restent visibles localement. Le découpage en blocs et en phrases s'appuie sur
+`html.parser` : le texte transcrit et le code sont des données, jamais de la
+prose, et sont donc exclus.
 """
 
 from __future__ import annotations
 
 import html
 import os
+import re
 import unittest
+from collections import Counter
+from html.parser import HTMLParser
 from unittest.mock import patch
 
 from flask import render_template
 
+from tests.test_comparaison_resultats import EMPREINTE_A, resultat_empreinte
 from tests.test_consultation_resultats import (
     IDENTIFIANT,
     IDENTIFIANT_ANCIEN,
+    ecrire_execution,
     execution_complete,
+    run_json,
 )
 from tests.test_web import SocleWebTest
+from transcription_bench.consultation_resultats import LIBELLES_TRI
+from transcription_bench.resultats import (
+    ETAT_INTERROMPUE,
+    STATUT_NON_TRAITE,
+    STATUT_OK,
+)
+
+#: Éléments qui bornent un bloc de texte : une phrase ne traverse jamais une
+#: cellule, un paragraphe ou un titre, comme à l'écran.
+BLOCS_TEXTE = frozenset(
+    {
+        "article",
+        "body",
+        "br",
+        "dd",
+        "details",
+        "div",
+        "dl",
+        "dt",
+        "footer",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "header",
+        "li",
+        "p",
+        "section",
+        "summary",
+        "table",
+        "td",
+        "th",
+        "tr",
+        "ul",
+    }
+)
+#: Données techniques et textes transcrits : jamais comptés comme prose.
+ELEMENTS_DONNEES = frozenset({"pre", "code", "script", "style"})
+#: Nombre minimal de mots d'une phrase explicative suivie par ce contrôle.
+MOTS_MINIMUM = 8
+LONGUEUR_EMPREINTE = "d" * 64
+IDENTIFIANT_LOT = "20240104-050607-8899aabb"
+
+
+class _TexteDesBlocs(HTMLParser):
+    """Texte visible d'une page, borné par les blocs et sans données brutes."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.morceaux: list[str] = []
+        self.donnees = 0
+
+    def handle_starttag(self, tag: str, attrs: list) -> None:
+        if tag in ELEMENTS_DONNEES:
+            self.donnees += 1
+        elif tag in BLOCS_TEXTE:
+            self.morceaux.append("\n")
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in ELEMENTS_DONNEES:
+            self.donnees -= 1
+        elif tag in BLOCS_TEXTE:
+            self.morceaux.append("\n")
+
+    def handle_data(self, data: str) -> None:
+        if not self.donnees:
+            self.morceaux.append(data)
+
+
+def texte_visible(corps: str) -> str:
+    """Texte des blocs d'une page, sans balisage ni données techniques."""
+    analyseur = _TexteDesBlocs()
+    analyseur.feed(corps)
+    return "".join(analyseur.morceaux)
+
+
+def phrases_longues(corps: str) -> list[str]:
+    """Phrases explicatives de huit mots ou plus, dans l'ordre du document."""
+    phrases: list[str] = []
+    texte = re.sub(r"[ \t\r\f\v]+", " ", texte_visible(corps))
+    for ligne in texte.split("\n"):
+        for morceau in re.split(r"(?<=[.!?])\s+", ligne):
+            phrase = " ".join(morceau.split())
+            if len(phrase.split()) >= MOTS_MINIMUM:
+                phrases.append(phrase)
+    return phrases
+
+
+def repetitions(corps: str) -> dict[str, int]:
+    """Phrases longues rendues plus d'une fois sur une même page."""
+    comptes = Counter(phrases_longues(corps))
+    return {phrase: nombre for phrase, nombre in comptes.items() if nombre > 1}
 
 
 class AideResultatsWebTest(SocleWebTest):
@@ -166,9 +271,143 @@ class AideResultatsWebTest(SocleWebTest):
             "score global",
             "Le nom du processeur est informatif",
             "Aucune de ces absences n'est remplacée par zéro",
+            "meilleur temps",
+            "64 sélections",
+            "conserve les cases cochées",
         ):
             self.assertIn(phrase, aide_html)
 
+    def ecrire_deux_cartes_et_un_lot(self) -> None:
+        """Deux essais du même audio (deux cartes) puis un lot de deux audios."""
+        machine = run_json()["machine"]
+        for identifiant, temps, pic, ram in (
+            (IDENTIFIANT, 1.0, 2048, machine["ram_totale_octets"]),
+            (IDENTIFIANT_ANCIEN, 2.0, 4096, 32_000_000_000),
+        ):
+            # Essais observés (marque SYNTHÉTIQUE seule) : les distinctions de
+            # temps et de RAM s'appliquent, contrairement aux mesures simulées.
+            # La RAM totale diffère : une mention locale reste visible par carte.
+            marques = {"factice": False, "synthetique": True, "mesures_simulees": False}
+            run = run_json(
+                identifiant,
+                machine={**machine, "ram_totale_octets": ram},
+                **marques,
+            )
+            ecrire_execution(
+                self.dossier_data,
+                run,
+                (
+                    resultat_empreinte(
+                        run,
+                        run["audios"][0],
+                        EMPREINTE_A,
+                        duree_transcription=temps,
+                        mesures_extra={"pic_memoire_octets": pic},
+                        **marques,
+                    ),
+                ),
+            )
+        lot = run_json(
+            IDENTIFIANT_LOT,
+            audios=(("a.wav", STATUT_OK), ("b.wav", STATUT_OK)),
+        )
+        ecrire_execution(
+            self.dossier_data,
+            lot,
+            (
+                resultat_empreinte(lot, lot["audios"][0], LONGUEUR_EMPREINTE),
+                resultat_empreinte(lot, lot["audios"][1], LONGUEUR_EMPREINTE),
+            ),
+        )
+
+    def pages_du_cas_courant(self) -> dict[str, str]:
+        """Pages rendues du cas courant : listes, comparaison et détail de lot."""
+        self.ecrire_deux_cartes_et_un_lot()
+        chemins = {
+            "/resultats": {},
+            "/resultats/comparaison": {},
+            "/resultats/aide": {},
+            f"/resultats/{IDENTIFIANT_LOT}": {},
+            f"/resultats/comparaison/{EMPREINTE_A}": {
+                "query_string": [
+                    ("transcription", f"{IDENTIFIANT}:1"),
+                    ("transcription", f"{IDENTIFIANT_ANCIEN}:1"),
+                ]
+            },
+        }
+        pages: dict[str, str] = {}
+        for chemin, options in chemins.items():
+            options.setdefault("base_url", self.base_url())
+            reponse = self.client.get(chemin, **options)
+            self.assertEqual(reponse.status_code, 200, chemin)
+            pages[chemin] = html.unescape(reponse.get_data(as_text=True))
+        return pages
+
+    def test_aucune_phrase_longue_repete_d_une_carte_a_l_autre(self) -> None:
+        # Jeu du cas courant : deux cartes de comparaison, un détail de lot de
+        # deux audios et les listes correspondantes.
+        for chemin, corps in self.pages_du_cas_courant().items():
+            with self.subTest(chemin=chemin):
+                self.assertEqual(repetitions(corps), {}, chemin)
+
+    def test_distinctions_proches_des_valeurs_sans_synthese_de_vainqueur(self) -> None:
+        pages = self.pages_du_cas_courant()
+        comparaison = pages[f"/resultats/comparaison/{EMPREINTE_A}"]
+
+        # Libellés courts près des valeurs, égalités comprises, sans phrase de
+        # synthèse désignant un modèle ni distinction de CPU.
+        self.assertEqual(comparaison.count("meilleur temps"), 1)
+        self.assertEqual(comparaison.count("meilleure RAM"), 1)
+        self.assertNotIn("Plus rapide :", comparaison)
+        self.assertNotIn("Moins de RAM :", comparaison)
+        self.assertNotIn("meilleur CPU", comparaison)
+
+    def test_marques_et_infos_factices_ou_partielles_restent_locales(self) -> None:
+        pages = self.pages_du_cas_courant()
+        detail = pages[f"/resultats/{IDENTIFIANT_LOT}"]
+
+        # Une marque visible par audio, sans explication générale répétée.
+        self.assertEqual(detail.count("Marques de cette transcription"), 2)
+        self.assertEqual(detail.count("Texte et mesures simulés"), 2)
+        self.assertNotIn("sans modèle ni inférence réelle", detail)
+        # Les mesures simulées restent signalées une seule fois par page.
+        for chemin in ("/resultats", "/resultats/comparaison"):
+            self.assertEqual(pages[chemin].count("sans distinction de performance"), 1)
+        # Une mention de matériel reste locale à chaque carte, son explication
+        # générale n'apparaît qu'une fois sur la page.
+        comparaison = pages[f"/resultats/comparaison/{EMPREINTE_A}"]
+        self.assertEqual(comparaison.count("Matériel différent sur RAM totale"), 2)
+        self.assertEqual(comparaison.count("sans preuve d'identité des machines"), 1)
+
+        # Un lot interrompu reste partiel et ses états restent visibles.
+        run = run_json(
+            "20240105-060708-99aabbcc",
+            etat=ETAT_INTERROMPUE,
+            audios=(("a.wav", STATUT_OK), ("b.wav", STATUT_NON_TRAITE)),
+        )
+        ecrire_execution(
+            self.dossier_data, run, (resultat_empreinte(run, run["audios"][0]),)
+        )
+        reponse = self.client.get(
+            "/resultats/20240105-060708-99aabbcc", base_url=self.base_url()
+        )
+        partiel = html.unescape(reponse.get_data(as_text=True))
+        self.assertIn("résultats partiels", partiel)
+        self.assertIn("résultat partiel", partiel)
+        self.assertIn("Audio non traité", partiel)
+
+    def test_libelles_de_tri_partages_et_aide_liee_une_seule_fois(self) -> None:
+        pages = self.pages_du_cas_courant()
+        # L'aide ne se lie pas elle-même ; chaque écran de résultats la lie une fois.
+        self.assertEqual(pages["/resultats/aide"].count('href="/resultats/aide"'), 0)
+        for chemin, corps in pages.items():
+            if chemin == "/resultats/aide":
+                continue
+            with self.subTest(chemin=chemin):
+                self.assertEqual(corps.count('href="/resultats/aide"'), 1)
+        for chemin in ("/resultats", "/resultats/comparaison"):
+            for libelle in LIBELLES_TRI.values():
+                self.assertIn(libelle, pages[chemin])
 
 
 if __name__ == "__main__":

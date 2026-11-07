@@ -330,6 +330,71 @@ class ComposantResultatTest(unittest.TestCase):
         self.assertEqual(textes(corps, "resultat-audio"), ["entretien.wav"])
         self.assertIn("Audio : 3 min", textes(corps, "resultat-secondaire"))
 
+    def test_case_de_selection_facultative_dans_la_cellule_modele(self) -> None:
+        case = {
+            "nom": "transcription",
+            "valeur": "20240102-030405-0a0b0c0d:1",
+            "libelle": "Sélectionner whisper-large-v3-turbo, audio 1",
+            "coche": True,
+        }
+
+        corps = self.rendre(self.resultat(case=case))
+
+        self.assertIn(
+            '<input type="checkbox" name="transcription" '
+            'value="20240102-030405-0a0b0c0d:1" '
+            'aria-label="Sélectionner whisper-large-v3-turbo, audio 1" checked>',
+            corps,
+        )
+        # La case précède le modèle dans la même ligne, sans colonne technique.
+        self.assertLess(
+            corps.index('<div class="resultat-entete">'),
+            corps.index('<input type="checkbox"'),
+        )
+        self.assertLess(
+            corps.index('<input type="checkbox"'),
+            corps.index('<span class="resultat-modele">'),
+        )
+        self.assertNotIn("<table", corps)
+
+        decochee = self.rendre(self.resultat(case={**case, "coche": False}))
+        self.assertNotIn(" checked>", decochee)
+
+    def test_sans_case_aucune_case_rendue(self) -> None:
+        corps = self.rendre(self.resultat())
+
+        self.assertNotIn("checkbox", corps)
+
+    def test_distinctions_courtes_pres_des_valeurs(self) -> None:
+        corps = self.rendre(
+            self.resultat(
+                distinction_temps="meilleur temps",
+                distinction_ram="meilleure RAM (égalité)",
+            )
+        )
+
+        self.assertEqual(
+            textes(corps, "resultat-distinction"),
+            ["meilleur temps", "meilleure RAM (égalité)"],
+        )
+        # Chaque libellé reste dans le bloc de sa mesure ; le CPU n'en reçoit pas.
+        self.assertIn("meilleur temps", bloc_mesure(corps, "temps"))
+        self.assertIn("meilleure RAM (égalité)", bloc_mesure(corps, "ram"))
+        self.assertNotIn("distinction", bloc_mesure(corps, "cpu"))
+
+    def test_sans_distinction_aucun_libelle(self) -> None:
+        corps = self.rendre(self.resultat())
+
+        self.assertNotIn("resultat-distinction", corps)
+
+    def test_distinction_echappee_sans_balise_active(self) -> None:
+        corps = self.rendre(
+            self.resultat(distinction_temps="<script>alert(1)</script>")
+        )
+
+        self.assertNotIn("<script>alert", corps)
+        self.assertIn("&lt;script&gt;alert(1)&lt;/script&gt;", corps)
+
 
 if __name__ == "__main__":
     unittest.main()

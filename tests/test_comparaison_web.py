@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import html
 import re
+from unittest.mock import patch
 
 from tests.test_comparaison_resultats import (
     EMPREINTE_A,
@@ -25,7 +26,12 @@ from tests.test_consultation_resultats import (
     run_json,
 )
 from tests.test_web import SocleWebTest
-from transcription_bench.consultation_resultats import LIBELLES_TRI, TRI_CPU
+from transcription_bench.consultation_resultats import (
+    LIBELLES_TRI,
+    LectureResultatsImpossible,
+    SELECTIONS_MAX_COMPARAISON,
+    TRI_CPU,
+)
 from transcription_bench.resultats import (
     ETAT_INTERROMPUE,
     ETAT_TERMINEE,
@@ -33,8 +39,10 @@ from transcription_bench.resultats import (
     STATUT_OK,
 )
 from transcription_bench.web.app import (
+    CHAMP_EMPREINTE_GROUPE,
     CHAMP_SELECTION_COMPARAISON,
     CHAMP_TRI_CLASSEMENT,
+    MESSAGE_RESULTATS_INACCESSIBLES,
 )
 
 
@@ -43,6 +51,10 @@ IDENTIFIANT_QUATRIEME = "20240104-050607-8899aabb"
 DATE_ANCIENNE = "2024-01-01T00:00:00+00:00"
 DATE_RECENTE = "2024-01-02T00:00:00+00:00"
 MOTIF_SELECTION = re.compile(r'name="transcription" value="([^"]+)"')
+#: Cases effectivement cochées par le serveur, dans l'ordre du document.
+MOTIF_CASE_COCHEE = re.compile(
+    r'<input type="checkbox" name="transcription" value="([^"]+)"[^>]* checked>'
+)
 
 
 class ComparaisonWebTest(SocleWebTest):
@@ -192,10 +204,38 @@ class ComparaisonWebTest(SocleWebTest):
         self.assertIn("FACTICE", corps)
         self.assertIn("État de l'exécution", corps)
         self.assertIn("terminée", corps)
-        self.assertIn(f'href="/resultats/{IDENTIFIANT}"', corps)
-        self.assertIn(f'href="/resultats/{IDENTIFIANT_ANCIEN}"', corps)
+        self.assertIn(f'href="/resultats/{IDENTIFIANT}#audio-1"', corps)
+        self.assertIn(f'href="/resultats/{IDENTIFIANT_ANCIEN}#audio-1"', corps)
         # Aucun diff de texte ni score de qualité.
         self.assertIn("sans diff textuel", corps)
+
+    def test_durees_audio_divergentes_sans_duree_commune(self) -> None:
+        premier = run_json(IDENTIFIANT)
+        second = run_json(IDENTIFIANT_ANCIEN)
+        ecrire_execution(
+            self.dossier_data,
+            premier,
+            (resultat_empreinte(premier, premier["audios"][0], duree_decodee=2.0),),
+        )
+        ecrire_execution(
+            self.dossier_data,
+            second,
+            (resultat_empreinte(second, second["audios"][0], duree_decodee=3.5),),
+        )
+
+        corps = self.page(
+            f"/resultats/comparaison/{EMPREINTE_A}",
+            query_string=[
+                ("transcription", f"{IDENTIFIANT}:1"),
+                ("transcription", f"{IDENTIFIANT_ANCIEN}:1"),
+            ],
+        )
+
+        # Aucune durée commune inventée : chaque carte affiche la sienne.
+        self.assertIn("Durée non commune aux essais", corps)
+        self.assertIn(">Audio : 2 s</span>", corps)
+        self.assertIn(">Audio : 3 s</span>", corps)
+        self.assertNotIn("Audio : 2 s · Empreinte", corps)
 
     def test_comparaison_affiche_les_deux_textes_cote_a_cote(self) -> None:
         self.ecrire_comparables(
@@ -595,6 +635,24 @@ class CartesComparaisonWebTest(SocleWebTest):
             },
         )
 
+    def test_dates_et_modeles_identiques_sans_identifiant_au_premier_plan(self) -> None:
+        self.ecrire_essai(IDENTIFIANT, modele="organisation/modele")
+        self.ecrire_essai(IDENTIFIANT_ANCIEN, modele="organisation/modele")
+        corps = self.page([f"{IDENTIFIANT}:1", f"{IDENTIFIANT_ANCIEN}:1"])
+        avant_details = corps.split("<details>", 1)[0]
+        # Les URL vers le détail gardent l'identité ; le texte du résumé ne la
+        # promeut pas en titre quand les deux essais ont la même date courte.
+        texte = re.sub(r"<[^>]+>", " ", avant_details)
+        self.assertNotIn(IDENTIFIANT, texte)
+        self.assertNotIn(IDENTIFIANT_ANCIEN, texte)
+        self.assertIn("modele", texte)
+        self.assertEqual(avant_details.count("Texte transcrit"), 2)
+        self.assertIn(
+            'tabindex="0" role="region" '
+            'aria-label="Toutes les mesures et informations comparées"',
+            corps,
+        )
+
     def test_erreur_comparee_visible_hors_details_et_echappee(self) -> None:
         self.ecrire_essai(IDENTIFIANT, modele="Modèle A")
         run = run_json(IDENTIFIANT_ANCIEN, audios=(("erreur.wav", STATUT_ERREUR),))
@@ -641,30 +699,38 @@ class CartesComparaisonWebTest(SocleWebTest):
             self.assertNotIn(libelle, differences)
         self.assertNotIn("Matériel différent", corps[:corps.index("<details")])
 
-    def test_cartes_trois_indicateurs_avant_le_texte(self) -> None:
+    def test_cartes_compactes_trois_indicateurs_avant_le_texte(self) -> None:
         self.ecrire_deux_modeles()
 
         corps = self.page([f"{IDENTIFIANT}:1", f"{IDENTIFIANT_ANCIEN}:1"])
 
         self.assertIn('class="grid cols-2"', corps)
         self.assertEqual(corps.count("<article>"), 2)
-        self.assertIn("Modèle A · Moteur factice", corps)
-        self.assertIn("Modèle B · Moteur factice", corps)
-        # Trois indicateurs de premier niveau, formatés en unités lisibles.
+        # Le composant compact des listes remplace l'ancien en-tête technique et
+        # les trois formats `formats.indicateurs`.
+        self.assertEqual(corps.count('<div class="resultat-compact">'), 2)
+        self.assertNotIn("Mémoire max", corps)
+        self.assertNotIn("CPU du moteur", corps)
+        self.assertIn(">Modèle A</a>", corps)
+        self.assertIn(">Modèle B</a>", corps)
+        self.assertIn("Moteur factice", corps)
+        # Trois valeurs de premier niveau, formatées en unités lisibles.
         self.assertIn("1 min 37 s", corps)
-        self.assertIn("2,4 Go sur 16 Go — 15 %", corps)
-        self.assertIn("< 1 % en moyenne", corps)
+        self.assertIn("2,4 Go", corps)
+        self.assertIn("< 1 %", corps)
         self.assertIn("42 s", corps)
-        self.assertIn("3,2 Go sur 16 Go — 20 %", corps)
-        self.assertIn("3 % en moyenne", corps)
-        # Ordre de lecture : titre, trois indicateurs, puis texte complet.
+        self.assertIn("3,2 Go", corps)
+        self.assertIn("3 %", corps)
+        # Ordre de lecture : titre, trois mesures, moteur, puis texte complet.
         premiere = corps[corps.index("<article>") : corps.index("</article>")]
         positions = [
             premiere.index(libelle)
             for libelle in (
+                "resultat-modele",
                 "Transcription",
-                "Mémoire max",
-                "CPU du moteur",
+                "RAM moteur",
+                "CPU moteur",
+                "Moteur</span>",
                 "Texte transcrit",
                 "<pre>",
             )
@@ -674,28 +740,50 @@ class CartesComparaisonWebTest(SocleWebTest):
         self.assertNotIn("octets", premiere)
         self.assertIn("transcription simulée de test", premiere)
 
-    def test_synthese_descriptive_temps_et_ram(self) -> None:
+    def test_distinctions_temps_et_ram_pres_des_valeurs(self) -> None:
         self.ecrire_deux_modeles()
 
         corps = self.page([f"{IDENTIFIANT}:1", f"{IDENTIFIANT_ANCIEN}:1"])
 
-        self.assertIn(
-            "Mesures observées · Plus rapide : Modèle B · Moins de RAM : Modèle A",
-            corps,
-        )
-        self.assertNotIn("Sans distinction", corps)
-        # Le CPU est affiché mais ne désigne aucun vainqueur.
-        self.assertNotIn("CPU le moins", corps)
+        premiere = corps[corps.index("<article>") : corps.index("</article>")]
+        seconde = corps[
+            corps.index("<article>", corps.index("</article>")) :
+            corps.index("</article>", corps.index("</article>") + 1)
+        ]
+        # La RAM la plus faible reste près de sa valeur, avec un libellé court.
+        self.assertIn('class="resultat-distinction">meilleure RAM</span>', premiere)
+        self.assertIn("2,4 Go", premiere)
+        self.assertNotIn("meilleure RAM", seconde)
+        # Le temps le plus court reste près de sa valeur, dans l'autre carte.
+        self.assertIn('class="resultat-distinction">meilleur temps</span>', seconde)
+        self.assertIn("42 s", seconde)
+        self.assertNotIn("meilleur temps", premiere)
+        # Aucune synthèse en prose ne répète les modèles ni le résultat.
+        self.assertNotIn("Plus rapide :", corps)
+        self.assertNotIn("Moins de RAM :", corps)
+        # Le CPU reste affiché sans distinction ni efficacité suggérée.
+        self.assertNotIn("meilleur CPU", corps)
+        self.assertNotIn("efficac", corps.lower())
 
-    def test_synthese_egalite_et_exclusion_des_mesures_simulees(self) -> None:
+    def test_egalites_et_exclusion_sans_distinction_des_simulees(self) -> None:
         mesures = {"duree_transcription_s": 2.0, "pic_memoire_octets": 900}
         self.ecrire_essai(IDENTIFIANT, modele="Modèle A", mesures=mesures)
         self.ecrire_essai(IDENTIFIANT_ANCIEN, modele="Modèle B", mesures=mesures)
 
         egalite = self.page([f"{IDENTIFIANT}:1", f"{IDENTIFIANT_ANCIEN}:1"])
 
-        self.assertIn("Plus rapide : Modèle A et Modèle B (égalité)", egalite)
-        self.assertIn("Moins de RAM : Modèle A et Modèle B (égalité)", egalite)
+        self.assertEqual(
+            egalite.count(
+                'class="resultat-distinction">meilleur temps (égalité)</span>'
+            ),
+            2,
+        )
+        self.assertEqual(
+            egalite.count(
+                'class="resultat-distinction">meilleure RAM (égalité)</span>'
+            ),
+            2,
+        )
 
         self.ecrire_essai(IDENTIFIANT_TIERS, modele="Modèle C", simule=True)
         exclues = self.page(
@@ -706,12 +794,51 @@ class CartesComparaisonWebTest(SocleWebTest):
             ]
         )
 
-        # Une mesure simulée ne reçoit aucune distinction de performance réelle.
-        self.assertIn(
-            "Sans distinction : Modèle C (mesures simulées ou résultat partiel)",
-            exclues,
+        # Une mesure simulée ne reçoit aucune distinction de performance réelle,
+        # mais son état reste visible.
+        carte_c = exclues[exclues.index(">Modèle C</a>") :]
+        carte_c = carte_c[: carte_c.index("</article>")]
+        self.assertNotIn("resultat-distinction", carte_c)
+        self.assertIn("FACTICE", carte_c)
+        self.assertNotIn("Sans distinction", exclues)
+
+    def test_resultat_partiel_sans_distinction_de_performance(self) -> None:
+        self.ecrire_essai(
+            IDENTIFIANT, modele="Modèle A", mesures={"duree_transcription_s": 9.0}
         )
-        self.assertNotIn("Plus rapide : Modèle C", exclues)
+        self.ecrire_essai(
+            IDENTIFIANT_ANCIEN,
+            modele="Modèle B",
+            mesures={"duree_transcription_s": 1.0},
+            etat=ETAT_INTERROMPUE,
+        )
+
+        corps = self.page([f"{IDENTIFIANT}:1", f"{IDENTIFIANT_ANCIEN}:1"])
+
+        # Un résultat partiel ne reçoit aucune distinction, même plus rapide ; il
+        # reste visible comme partiel et aucune tête unique n'est attribuée.
+        self.assertIn("Résultats partiels", corps)
+        self.assertIn("interrompue", corps)
+        self.assertNotIn("resultat-distinction", corps)
+
+    def test_valeurs_incoherentes_sans_distinction(self) -> None:
+        self.ecrire_essai(
+            IDENTIFIANT,
+            modele="Modèle A",
+            mesures={"duree_transcription_s": -5.0, "pic_memoire_octets": "n/a"},
+        )
+        self.ecrire_essai(
+            IDENTIFIANT_ANCIEN,
+            modele="Modèle B",
+            mesures={"duree_transcription_s": 3.0, "pic_memoire_octets": 2048},
+        )
+
+        corps = self.page([f"{IDENTIFIANT}:1", f"{IDENTIFIANT_ANCIEN}:1"])
+
+        # Une valeur incohérente ne concourt pas ; la seule mesure exploitable
+        # ne crée pas de tête (il en faut au moins deux).
+        self.assertNotIn("resultat-distinction", corps)
+        self.assertIn("indisponible", corps)
 
     def test_details_progressifs_differences_puis_toutes_les_mesures(self) -> None:
         self.ecrire_essai(
@@ -765,7 +892,7 @@ class CartesComparaisonWebTest(SocleWebTest):
         self.assertEqual(corps.count("<article>"), 3)
         grille = corps.index('class="grid cols-2"')
         positions = [
-            corps.index(f"<h2>Modèle {lettre} · ", grille) for lettre in ("B", "C", "A")
+            corps.index(f">Modèle {lettre}</a>", grille) for lettre in ("B", "C", "A")
         ]
         self.assertEqual(positions, sorted(positions))
 
@@ -825,8 +952,9 @@ class CartesComparaisonWebTest(SocleWebTest):
 
         corps = self.page([f"{IDENTIFIANT}:2", f"{IDENTIFIANT_ANCIEN}:1"])
 
-        self.assertEqual(corps.count("Pic mémoire cumulatif du lot"), 1)
-        self.assertIn("il peut provenir d'un audio précédent", corps)
+        # Mention courte près de la RAM, explication complète dans l'aide locale.
+        self.assertEqual(corps.count(">pic cumulatif</span>"), 1)
+        self.assertNotIn("il peut provenir d'un audio précédent", corps)
 
 
 class ClassementGroupesWebTest(SocleWebTest):
@@ -889,6 +1017,13 @@ class ClassementGroupesWebTest(SocleWebTest):
         fin = corps.find('id="groupe-', debut + 1)
         section = corps[debut:] if fin == -1 else corps[debut:fin]
         return self.selections(section)
+
+    def cases_cochees_du_groupe(self, corps: str, empreinte: str) -> list[str]:
+        """Sélections cochées d'un groupe, de son ancre à l'ancre suivante."""
+        debut = corps.index(f'id="groupe-{empreinte}"')
+        fin = corps.find('id="groupe-', debut + 1)
+        section = corps[debut:] if fin == -1 else corps[debut:fin]
+        return MOTIF_CASE_COCHEE.findall(section)
 
     def test_tri_par_defaut_temps_croissant_avant_arrondi(self) -> None:
         # 1,03 s et 1,04 s s'affichent toutes deux « 1 s » : l'ordre prouve que
@@ -1082,37 +1217,210 @@ class ClassementGroupesWebTest(SocleWebTest):
         self.assertIsNone(instantane.type_operation)
         self.assertEqual(instantane.journal, ())
 
-    def test_liens_de_tri_avec_ancre_de_retour_et_limite_des_cases(self) -> None:
+    def test_boutons_de_tri_get_dans_le_formulaire_du_groupe(self) -> None:
         self.ecrire_essai(IDENTIFIANT, mesures={"duree_transcription_s": 2.0})
         self.ecrire_essai(IDENTIFIANT_ANCIEN, mesures={"duree_transcription_s": 1.0})
 
         corps = self.page()
 
-        # Chaque groupe est une cible d'ancre ; le critère courant n'est pas un lien.
+        # Le groupe est une cible d'ancre et son formulaire de sélection porte
+        # l'empreinte bornée du groupe ; aucun paramètre de redirection libre.
         self.assertIn(f'id="groupe-{EMPREINTE_A}"', corps)
+        self.assertIn(
+            f'<form method="get" action="/resultats/comparaison/{EMPREINTE_A}">',
+            corps,
+        )
+        self.assertIn(
+            f'<input type="hidden" name="{CHAMP_EMPREINTE_GROUPE}" '
+            f'value="{EMPREINTE_A}">',
+            corps,
+        )
+        # Sans JavaScript, les boutons de tri sont des boutons GET du même
+        # formulaire : ils transmettent les cases cochées vers la liste.
         for critere in ("ram", "cpu", "recent"):
             self.assertIn(
-                f'href="/resultats/comparaison?{CHAMP_TRI_CLASSEMENT}={critere}'
-                f'#groupe-{EMPREINTE_A}"',
+                f'<button type="submit" name="{CHAMP_TRI_CLASSEMENT}" '
+                f'value="{critere}" '
+                f'formaction="/resultats/comparaison#groupe-{EMPREINTE_A}">',
                 corps,
             )
-        self.assertIn("<strong>Temps de transcription</strong>", corps)
-        self.assertNotIn(
-            f'href="/resultats/comparaison?{CHAMP_TRI_CLASSEMENT}=temps#groupe-', corps
+        self.assertIn("<strong>Plus rapides</strong>", corps)
+        self.assertNotIn(f'name="{CHAMP_TRI_CLASSEMENT}" value="temps"', corps)
+        self.assertNotIn('/resultats/comparaison?tri=', corps)
+        # Le formulaire explique la conservation des cases cochées.
+        self.assertIn("conserve les cases cochées", corps)
+
+    def test_dossier_illisible_ne_devient_pas_une_selection_refusee(self) -> None:
+        with patch(
+            "transcription_bench.web.app.ConsultationResultats.groupes_par_empreinte",
+            side_effect=LectureResultatsImpossible("lecture impossible"),
+        ):
+            reponse = self.client.get(
+                "/resultats/comparaison",
+                query_string=[
+                    ("empreinte", EMPREINTE_A),
+                    ("transcription", f"{IDENTIFIANT}:1"),
+                    ("tri", "ram"),
+                ],
+                base_url=self.base_url(),
+            )
+        self.assertEqual(reponse.status_code, 200)
+        self.assertIn(
+            MESSAGE_RESULTATS_INACCESSIBLES,
+            html.unescape(reponse.get_data(as_text=True)),
         )
 
-        # Le critère demandé devient le critère courant, et le temps redevient
-        # un lien : la page ne propose jamais de recharger le critère affiché.
-        ram = self.page(query_string=[(CHAMP_TRI_CLASSEMENT, "ram")])
-        self.assertIn("<strong>Moins de RAM</strong>", ram)
-        self.assertIn(
-            f'href="/resultats/comparaison?{CHAMP_TRI_CLASSEMENT}=temps'
-            f'#groupe-{EMPREINTE_A}"',
-            ram,
+    def test_tri_get_conserve_les_cases_du_groupe(self) -> None:
+        self.ecrire_essai(IDENTIFIANT, mesures={"pic_memoire_octets": 900})
+        self.ecrire_essai(IDENTIFIANT_ANCIEN, mesures={"pic_memoire_octets": 100})
+        self.ecrire_essai(
+            IDENTIFIANT_TIERS,
+            mesures={"pic_memoire_octets": 500},
+            empreinte=EMPREINTE_B,
         )
-        # Limite explicite du HTML sans JavaScript : les cases non soumises
-        # ne sont pas conservées lors d'un changement de tri.
-        self.assertIn("cases cochées mais non soumises ne sont pas conservées", corps)
+
+        corps = self.page(
+            query_string=[
+                (CHAMP_EMPREINTE_GROUPE, EMPREINTE_A),
+                (CHAMP_SELECTION_COMPARAISON, f"{IDENTIFIANT}:1"),
+                (CHAMP_TRI_CLASSEMENT, "ram"),
+            ]
+        )
+
+        # Le tri reste commun et s'applique au groupe : la case cochée garde sa
+        # place dans l'ordre classé, les autres cases restent vides.
+        self.assertEqual(
+            self.selections_du_groupe(corps, EMPREINTE_A),
+            [f"{IDENTIFIANT_ANCIEN}:1", f"{IDENTIFIANT}:1"],
+        )
+        self.assertEqual(
+            self.cases_cochees_du_groupe(corps, EMPREINTE_A),
+            [f"{IDENTIFIANT}:1"],
+        )
+        # Aucune sélection d'un autre groupe n'est fusionnée dans la page.
+        self.assertEqual(self.cases_cochees_du_groupe(corps, EMPREINTE_B), [])
+
+    def test_tri_get_sans_case_accepte_l_empreinte_du_groupe(self) -> None:
+        self.ecrire_essai(IDENTIFIANT)
+
+        corps = self.page(query_string=[(CHAMP_EMPREINTE_GROUPE, EMPREINTE_A)])
+
+        self.assertEqual(
+            self.selections_du_groupe(corps, EMPREINTE_A), [f"{IDENTIFIANT}:1"]
+        )
+        self.assertEqual(self.cases_cochees_du_groupe(corps, EMPREINTE_A), [])
+
+    def test_tri_get_refuse_empreinte_ou_selection_invalide(self) -> None:
+        self.ecrire_essai(IDENTIFIANT)
+        self.ecrire_essai(IDENTIFIANT_TIERS, empreinte=EMPREINTE_B)
+
+        for parametres in (
+            # empreinte forgée, même sans case cochée
+            [(CHAMP_EMPREINTE_GROUPE, "f" * 64)],
+            # empreinte répétée
+            [
+                (CHAMP_EMPREINTE_GROUPE, EMPREINTE_A),
+                (CHAMP_EMPREINTE_GROUPE, EMPREINTE_A),
+            ],
+            # sélection sans groupe identifié
+            [(CHAMP_SELECTION_COMPARAISON, f"{IDENTIFIANT}:1")],
+            # valeur hostile
+            [
+                (CHAMP_EMPREINTE_GROUPE, EMPREINTE_A),
+                (CHAMP_SELECTION_COMPARAISON, "../../etc/passwd:1"),
+            ],
+            # identité disparue
+            [
+                (CHAMP_EMPREINTE_GROUPE, EMPREINTE_A),
+                (CHAMP_SELECTION_COMPARAISON, f"{IDENTIFIANT_QUATRIEME}:1"),
+            ],
+            # sélection d'un autre groupe, dans les deux sens
+            [
+                (CHAMP_EMPREINTE_GROUPE, EMPREINTE_A),
+                (CHAMP_SELECTION_COMPARAISON, f"{IDENTIFIANT_TIERS}:1"),
+            ],
+            [
+                (CHAMP_EMPREINTE_GROUPE, EMPREINTE_B),
+                (CHAMP_SELECTION_COMPARAISON, f"{IDENTIFIANT}:1"),
+            ],
+        ):
+            with self.subTest(parametres=parametres):
+                reponse = self.client.get(
+                    "/resultats/comparaison",
+                    query_string=parametres,
+                    base_url=self.base_url(),
+                )
+                self.verifier_page_erreur(reponse, 400)
+
+    def test_tri_get_borne_le_nombre_de_selections(self) -> None:
+        self.ecrire_essai(IDENTIFIANT)
+        self.ecrire_essai(IDENTIFIANT_ANCIEN)
+        valeur = f"{IDENTIFIANT}:1"
+
+        # La borne est appliquée avant analyse : un excès de paramètres est
+        # refusé même si les valeurs sont des doublons dédoublonnables.
+        reponse = self.client.get(
+            "/resultats/comparaison",
+            query_string=[
+                (CHAMP_EMPREINTE_GROUPE, EMPREINTE_A),
+                *[(CHAMP_SELECTION_COMPARAISON, valeur)]
+                * (SELECTIONS_MAX_COMPARAISON + 1),
+            ],
+            base_url=self.base_url(),
+        )
+        self.verifier_page_erreur(reponse, 400)
+
+        accepte = self.page(
+            query_string=[
+                (CHAMP_EMPREINTE_GROUPE, EMPREINTE_A),
+                *[(CHAMP_SELECTION_COMPARAISON, valeur)] * SELECTIONS_MAX_COMPARAISON,
+            ]
+        )
+        self.assertEqual(
+            self.cases_cochees_du_groupe(accepte, EMPREINTE_A), [valeur]
+        )
+
+    def test_comparaison_borne_le_nombre_de_selections(self) -> None:
+        self.ecrire_essai(IDENTIFIANT)
+        self.ecrire_essai(IDENTIFIANT_ANCIEN)
+
+        reponse = self.client.get(
+            f"/resultats/comparaison/{EMPREINTE_A}",
+            query_string=[
+                (CHAMP_SELECTION_COMPARAISON, f"{IDENTIFIANT}:1")
+            ]
+            * (SELECTIONS_MAX_COMPARAISON + 1),
+            base_url=self.base_url(),
+        )
+
+        self.verifier_page_erreur(reponse, 400)
+
+    def test_composant_compact_avec_case_dans_la_cellule_modele(self) -> None:
+        self.ecrire_essai(IDENTIFIANT)
+
+        corps = self.page()
+
+        # Le composant compact du lot 1 remplace les dix colonnes techniques.
+        self.assertIn('<div class="resultat-compact">', corps)
+        self.assertNotIn("<table", corps)
+        for colonne in ("Sélection</th>", "Exécution</th>", "Réglages distinctifs"):
+            self.assertNotIn(colonne, corps)
+        # La case est dans la cellule du modèle, avant le lien du détail.
+        entete = corps.index('<div class="resultat-entete">')
+        case = corps.index('<input type="checkbox"')
+        modele = corps.index('<a class="resultat-modele"')
+        self.assertLess(entete, case)
+        self.assertLess(case, modele)
+        # Libellé accessible propre à la ligne et cinq valeurs lisibles.
+        self.assertIn('aria-label="Sélectionner ', corps)
+        for libelle in (
+            "Transcription</span>",
+            "RAM moteur",
+            "CPU moteur",
+            "Moteur",
+            "Date",
+        ):
+            self.assertIn(libelle, corps)
 
     def test_comparaison_selectionnee_garde_l_ordre_recu(self) -> None:
         self.ecrire_essai(IDENTIFIANT, mesures={"duree_transcription_s": 2.0})
@@ -1134,7 +1442,9 @@ class ClassementGroupesWebTest(SocleWebTest):
                     ],
                 )
                 positions = [
-                    corps.index(f'href="/resultats/{selection.split(":")[0]}"')
+                    corps.index(
+                        f'href="/resultats/{selection.split(":")[0]}#audio-1"'
+                    )
                     for selection in ordre
                 ]
                 self.assertEqual(positions, sorted(positions))
@@ -1194,7 +1504,9 @@ class ListeParResultatWebTest(SocleWebTest):
             ),
         )
 
-    def test_lignes_avec_etat_marques_date_et_reglages_distinctifs(self) -> None:
+    def test_lignes_avec_etat_marques_et_date_sans_reglages_au_premier_niveau(
+        self,
+    ) -> None:
         self.ecrire_essai(
             IDENTIFIANT,
             cree_le=DATE_RECENTE,
@@ -1213,21 +1525,23 @@ class ListeParResultatWebTest(SocleWebTest):
             corps.index("Mesures simulées de cet audio"),
         )
         self.assertLess(
-            corps.index(f'href="/resultats/{IDENTIFIANT}"'),
+            corps.index(f'href="/resultats/{IDENTIFIANT}#audio-1"'),
             corps.index("Mesures simulées de cet audio"),
         )
         self.assertLess(
             corps.index("Mesures simulées de cet audio"),
-            corps.index(f'href="/resultats/{IDENTIFIANT_ANCIEN}"'),
+            corps.index(f'href="/resultats/{IDENTIFIANT_ANCIEN}#audio-1"'),
         )
-        # État, date et réglages distinctifs restent visibles pour chaque ligne.
-        self.assertIn("terminée", corps)
-        self.assertIn(DATE_RECENTE, corps)
-        self.assertIn(DATE_ANCIENNE, corps)
-        self.assertIn("Threads demandés : 4", corps)
-        self.assertIn("Marques", corps)
+        # État et date restent visibles pour chaque ligne compacte ; les
+        # réglages complets relèvent du détail, pas du premier niveau.
+        self.assertIn("02/01/2024 00:00", corps)
+        self.assertIn("01/01/2024 00:00", corps)
         self.assertIn("FACTICE", corps)
-        self.assertIn("classées à part", corps)
+        self.assertIn("sans distinction de performance", corps)
+        # Les réglages distinctifs restent hors du premier niveau compact.
+        self.assertNotIn("Threads demandés", corps)
+        for libelle in ("Transcription</span>", "RAM moteur", "CPU moteur"):
+            self.assertIn(libelle, corps)
 
     def test_aucun_dedoublonnage_dans_la_liste(self) -> None:
         # Deux essais identiques du même audio restent deux lignes.
@@ -1239,11 +1553,11 @@ class ListeParResultatWebTest(SocleWebTest):
         self.assertEqual(len(MOTIF_SELECTION.findall(corps)), 2)
         self.assertEqual(corps.count(f'value="{IDENTIFIANT}:1"'), 1)
         self.assertEqual(corps.count(f'value="{IDENTIFIANT_ANCIEN}:1"'), 1)
-        self.assertEqual(corps.count(f'href="/resultats/{IDENTIFIANT}"'), 1)
+        self.assertEqual(corps.count(f'href="/resultats/{IDENTIFIANT}#audio-1"'), 1)
         self.assertEqual(
-            corps.count(f'href="/resultats/{IDENTIFIANT_ANCIEN}"'), 1
+            corps.count(f'href="/resultats/{IDENTIFIANT_ANCIEN}#audio-1"'), 1
         )
-        self.assertEqual(corps.count("Résultats observés"), 1)
+        self.assertEqual(corps.count('<div class="resultat-compact">'), 2)
 
     def test_classement_cpu_non_qualifie_d_efficacite(self) -> None:
         self.ecrire_essai(IDENTIFIANT)
@@ -1251,7 +1565,9 @@ class ListeParResultatWebTest(SocleWebTest):
         corps = self.page()
 
         self.assertIn(
-            f'href="/resultats/comparaison?tri=cpu#groupe-{EMPREINTE_A}"', corps
+            f'name="{CHAMP_TRI_CLASSEMENT}" value="cpu" '
+            f'formaction="/resultats/comparaison#groupe-{EMPREINTE_A}"',
+            corps,
         )
         for libelle in LIBELLES_TRI.values():
             self.assertIn(libelle, corps)
@@ -1276,7 +1592,7 @@ class ListeParResultatWebTest(SocleWebTest):
 
         # Sans empreinte valide, aucune transcription comparable : le résultat
         # n'apparaît dans aucun groupe et n'est jamais regroupé de force.
-        self.assertIn(f'href="/resultats/{IDENTIFIANT}"', comparaisons)
+        self.assertIn(f'href="/resultats/{IDENTIFIANT}#audio-1"', comparaisons)
         self.assertNotIn(IDENTIFIANT_TIERS, comparaisons)
         self.assertNotIn(IDENTIFIANT_QUATRIEME, comparaisons)
 

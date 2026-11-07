@@ -1,9 +1,10 @@
 {% extends "base.html" %}
 {% import "formats.html" as formats %}
+{% import "composants.html" as composants %}
 {% block page_courante %}parent:resultats{% endblock %}
-{% block titre %}Résultat {{ detail.execution.identifiant }} — transcription-bench{% endblock %}
+{% block titre %}{{ detail.libelle_modele }} — transcription-bench{% endblock %}
 {% block contenu %}
-<h1>Résultat {{ detail.execution.identifiant }}</h1>
+<h1>{{ detail.libelle_modele }}{% if detail.execution.moteur %} · {{ detail.execution.moteur }}{% endif %}</h1>
 <p class="prose"><a href="{{ url_for('resultats') }}">Retour à la liste des résultats</a> — <a href="{{ url_for('aide_resultats') }}">Comprendre les indicateurs</a> — <a href="{{ url_for('resultat_detail', identifiant=detail.execution.identifiant) }}">Actualiser</a></p>
 
 {% if detail.erreur %}
@@ -15,8 +16,20 @@
 {% if detail.partiel %}
 <p class="callout warning prose" role="status"><strong>Exécution non terminée ({{ detail.execution.libelle_etat }}) : résultats partiels.</strong> Les transcriptions déjà enregistrées restent consultables, mais elles ne forment pas un lot complet : les audios sans résultat sont signalés comme non traités et aucune mesure manquante n'est remplacée par zéro.</p>
 {% endif %}
+{% set notes_rtf = namespace(depasse=false, absent=false) %}
+{% for vue in vues_audios %}
+{% if vue.audio.transcription %}
+{% set rtf = vue.audio.transcription.mesures.rtf %}
+{% if rtf is none %}{% set notes_rtf.absent = true %}{% elif rtf > repere_rtf %}{% set notes_rtf.depasse = true %}{% endif %}
+{% endif %}
+{% endfor %}
+{% if notes_rtf.depasse %}
+<p class="prose small">La transcription reste enregistrée normalement au-dessus du repère d'objectif {{ repere_rtf }} : elle n'est ni exclue ni marquée en échec.</p>
+{% endif %}
+{% if notes_rtf.absent %}
+<p class="prose small">Sans durée décodée mesurée, aucun RTF n'est calculé, et jamais sur une durée nulle.</p>
+{% endif %}
 
-<h2>{{ detail.libelle_modele }}{% if detail.execution.moteur %} · {{ detail.execution.moteur }}{% endif %}</h2>
 <p class="prose small">Créée le {{ formats.date_courte(detail.execution.cree_le) }}{% if detail.partiel %} · {{ detail.execution.libelle_etat }}{% endif %} · audios traités : {{ detail.execution.audios_traites }} sur {{ detail.execution.audios_total }}</p>
 {% if detail.mesures.pic_memoire_partiel %}
 <p class="prose small"><strong>Mesure partielle :</strong> le pic mémoire de l'opération est le dernier relevé transmis, pas le pic final d'une exécution terminée.</p>
@@ -25,10 +38,11 @@
 {% if not detail.audios %}
 <p class="prose">Aucun audio consigné dans cette exécution.</p>
 {% endif %}
-{% for audio in detail.audios %}
+{% for vue in vues_audios %}
+{% set audio = vue.audio %}
 <article>
 <header>
-<h3>Audio {{ audio.ordre }} — {{ audio.nom }} : {{ audio.libelle_statut }}{% if audio.partiel %} ; résultat partiel{% endif %}</h3>
+<h2 id="audio-{{ audio.ordre }}">Audio {{ audio.ordre }} — {{ audio.nom }} : {{ audio.libelle_statut }}{% if audio.partiel %} ; résultat partiel{% endif %}</h2>
 </header>
 {% if audio.erreur %}
 <p class="callout danger prose">Erreur consignée pour cet audio : {{ audio.erreur }}</p>
@@ -39,16 +53,10 @@
 {% if audio.transcription %}
 {% set transcription = audio.transcription %}
 {% if transcription.marques %}
-<p class="prose"><strong>Marques de cette transcription : {{ transcription.marques | join(', ') }}.</strong> {% if transcription.simule_mesures %}Texte et mesures simulés, sans modèle ni inférence réelle.{% else %}Marque de test : elle ne dit rien du moteur ni des mesures, qui restent celles de l'essai.{% endif %}</p>
+<p class="prose"><strong>Marques de cette transcription.</strong> {{ transcription.marques | join(', ') }}.{% if transcription.simule_mesures %} Texte et mesures simulés.{% endif %}</p>
 {% endif %}
-{{ formats.indicateurs(audio.indicateurs) }}
-{% if audio.annotation_ram %}
-<p class="prose small">{{ audio.annotation_ram }}</p>
-{% endif %}
-{% if audio.materiel_alerte %}
-<p class="prose small">{{ audio.materiel_alerte }}</p>
-{% endif %}
-<h4>Texte transcrit</h4>
+{{ composants.resultat_compact(vue.resume) }}
+<h3>Texte transcrit</h3>
 {% if transcription.texte is not none %}
 <pre>{{ transcription.texte }}</pre>
 {% else %}
@@ -57,7 +65,7 @@
 <details>
 <summary>Segments horodatés</summary>
 {% if transcription.segments %}
-<div class="overflow-auto">
+<div class="overflow-auto" tabindex="0" role="region" aria-label="Segments horodatés de l'audio {{ audio.ordre }}">
 <table>
 <thead>
 <tr><th>Début (s)</th><th>Fin (s)</th><th>Texte</th></tr>
@@ -83,9 +91,9 @@
 <dt>Temps CPU consommé</dt>
 <dd>{{ formats.duree(transcription.mesures.temps_cpu_s) }}</dd>
 <dt>RTF (durée de transcription / durée décodée)</dt>
-<dd>{% if transcription.mesures.rtf is none %}indisponible : aucun RTF n'est calculé sans durée décodée mesurée, et jamais sur une durée nulle{% else %}{{ "%.3f"|format(transcription.mesures.rtf) }}, repère d'objectif {{ repere_rtf }} (non bloquant){% if transcription.mesures.rtf > repere_rtf %} : au-dessus du repère, la transcription est enregistrée normalement et n'est ni exclue ni marquée en échec{% endif %}{% endif %}</dd>
+<dd>{% if transcription.mesures.rtf is none %}indisponible : aucune durée décodée mesurée{% else %}{{ "%.3f"|format(transcription.mesures.rtf) }}, repère d'objectif {{ repere_rtf }} (non bloquant){% endif %}</dd>
 <dt>Pic de mémoire du moteur</dt>
-<dd>{{ formats.octets(transcription.mesures.pic_memoire_octets) }}{% if audio.annotation_ram %} <small>(pic cumulatif du processus du moteur : chargement du modèle compris, et non isolé sur cet audio)</small>{% endif %}</dd>
+<dd>{{ formats.octets(transcription.mesures.pic_memoire_octets) }}</dd>
 </dl>
 </details>
 <details>
@@ -105,7 +113,7 @@
 <summary>Paramètres utilisés</summary>
 <dl class="prose">
 <dt>Langue imposée</dt>
-<dd>{% if transcription.langue_imposee %}{{ transcription.langue_imposee }}{% else %}non consignée : aucune langue imposée n'a été relue du moteur (famille sans choix de langue, ou information absente){% endif %}</dd>
+<dd>{% if transcription.langue_imposee %}{{ transcription.langue_imposee }}{% else %}non consignée{% endif %}</dd>
 {% for libelle, valeur in transcription.threads %}
 <dt>{{ libelle }}</dt>
 <dd>{{ formats.afficher(valeur) }}</dd>
@@ -123,14 +131,13 @@
 {% endfor %}
 </ul>
 {% else %}
-<p class="prose">Aucun réglage effectif n'a été relu du moteur pour cet audio.</p>
+<p class="prose">Aucun réglage effectif relu pour cet audio.</p>
 {% endif %}
 </details>
 <details>
 <summary>Timings natifs transmis par le moteur</summary>
 {% if transcription.timings_natifs %}
-<p class="prose">Un relevé par appel, sans agrégation ni conversion (unité telle que rapportée) :</p>
-<div class="overflow-auto">
+<div class="overflow-auto" tabindex="0" role="region" aria-label="Timings natifs de l'audio {{ audio.ordre }}">
 <table>
 <thead>
 <tr><th>Appel</th><th>Unité</th><th>Chargement</th><th>Mel</th><th>Encodage</th><th>Décodage</th></tr>
@@ -143,7 +150,7 @@
 </table>
 </div>
 {% else %}
-<p class="prose">Aucun timing natif n'a été transmis pour cet audio : information facultative, absente d'un moteur qui ne la rapporte pas et des résultats antérieurs à ce champ.</p>
+<p class="prose">Aucun timing natif n'a été transmis.</p>
 {% endif %}
 </details>
 {% endif %}
@@ -179,7 +186,7 @@
 <dt>Durée de chargement du modèle</dt>
 <dd>{{ formats.duree(detail.mesures.duree_chargement_s) }}</dd>
 <dt>Pic de mémoire du moteur</dt>
-<dd>{{ formats.octets(detail.mesures.pic_memoire_octets) }} <small>(cumulatif depuis le démarrage du processus, chargement compris)</small>{% if detail.mesures.pic_memoire_partiel %} — <strong>partiel</strong> : dernier relevé transmis, qui n'est pas le pic final d'une exécution terminée{% endif %}</dd>
+<dd>{{ formats.octets(detail.mesures.pic_memoire_octets) }} <small>(cumulatif depuis le démarrage du processus, chargement du modèle compris)</small>{% if detail.mesures.pic_memoire_partiel %} — <strong>partiel</strong>{% endif %}</dd>
 </dl>
 </details>
 
@@ -259,6 +266,4 @@
 </dl>
 </details>
 
-<p class="prose"><a href="{{ url_for('resultats') }}">Retour à la liste des résultats</a></p>
-<p class="prose"><a href="{{ url_for('accueil') }}">Retour à l'accueil</a></p>
 {% endblock %}

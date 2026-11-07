@@ -47,3 +47,20 @@ Note de reprise avant compactage expressément demandée par le propriétaire. S
 - relates_to [[Lecture grand public et occupation des ressources — cadrage 2026-11-04]]
 - relates_to [[Specs habillage Sumi et documentation utilisateur]]
 - relates_to [[Décisions du prototype de benchmark]]
+
+## Reprise autonome et publication effective — 2026-11-07
+
+- [decision] Le propriétaire confirme de poursuivre en autonomie, sans rendre la main pour une simple attente de CI ou entre les tâches. Maintenir les décisions et garde-fous ; remonter uniquement une décision nécessaire.
+- [status] Lot 1 publié sur `main` : `16fcf520be3b7b86c6f03759f98e4e9b8fb827b7`, puis correctif de test `b99593e3598eef95183c84031a5c49b4ccb3d66a`. La mention « pas encore committé/poussé » ci-dessus est désormais historique.
+- [validation] Première CI42379351543 en échec sur test_script_et_csp de script non fermé ; correction worker distinct et relecture principal : le rejet doit dépendre du compteur de script non fermé, non du contenu tamponné par HTMLParser variable selon les versions. Aucun changement de comportement du vérificateur, rejet inline/doublons/nonfermé conservé ; 61 tests ciblés locaux OK.
+- [validation] CI corrective [42381533738](https://github.com/benjaminbach-dev/transcription-bench/actions/runs/42381533738) **réussie sous Ubuntu24.04 et Windows2022** sur b99593e, sans moteurs réels ni réseau externe pendant les tests. Le lot 1 est terminé, todo4 complétée.
+- [status] Lot 2 en cours, worker neuf `df1badda-f876-4d1` pour 2.1 (comparaison compacte, conservation/validation des sélections et tris GET). Tâches2.1–2.3 pas encore cochées à cet instant. Worker par défaut DeepSeek disponible sur la correctionCI et cet appel ; repli Haiku5.5high seulement si indisponible.
+
+## Lot 2 implémenté, relu et observé — 2026-11-07
+
+- [status] Tâches 2.1–2.3 cochées, **8/20** : worker distinct par tâche (`df1badda-f876-4d1`, `4dc3a48a-ee9f-483`, `cf5d021a-bf42-4df`), principal relecture/corrections. GET de tri conserve cases du groupe revalidées, lignes compactes partout, badges temps/RAM locaux sans CPU ni distinction factice/partielle, aide/prose unique et guide aligné.
+- [decision] Borne technique partagée désormais 64 valeurs de sélection reçues, doublons compris avant déduplication. Aucun plafond de nombre explicite n'existait avant (hypothèse D2 inexacte), maintenant appliqué à la liste et la comparaison et documenté ; pas d'inter-empreinte ni nouvel ordre arbitraire.
+- [validation] Première observation navigator Sonnet 5.5 / medium a révélé densité de sélection insuffisante ; rapport transmis à advisor Opus 5.5 / medium, corrections du principal et recontrôle : 4 lignes complètes bureau 1280×800 (dernière date y≈752), première ligne mobile360×800 avec modèle/mesures/date avant y≈744, sans débordement. Deux cartes/textes courts visibles bureau avant800 ; mesures première carte mobile visibles. Factices/partiels comparés sans badge. Focus Tab Comparer visible. Données intégralement fabriquées.
+- [validation] Réseau constaté pour chargement de liste : document et3ressources GET200 loopback uniquement ; console0erreur au recontrôle. Pas preuve de toutesnavigations. Sombre et mode sansJS nonobservés, pas de changement d'outillage. GET/HTML sansJS couverts par tests uniquement.
+- [validation] Advisor final (`50292718-915d-47f`) valide corrections de densité et code sans bloquant/majeur ; guide corrigé ensuite sur3phrases précises. Principal a aussi rendu tableauxsecondaires focusables/nommés et couvert comparaison ; ne pas supprimer `.playwright-mcp/` malgré suggestion générique de revue, car préexistant protégé.
+- [validation] Suite complète principal **970 tests OK en28,355s**, OpenSpec strict et diffcheck verts. Nouveau test dates/modèlesidentiques évite retour IDexécution en titre cartes, correctiondossierillisible garde erreur réelledossier au lieu400cases. Publication lot2 prochaine, puis CI et lot3 (3.1nouveauworker).

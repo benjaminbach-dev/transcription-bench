@@ -16,16 +16,28 @@
    Disposition : une ligne par essai. Sur bureau, le modèle occupe la colonne de
    gauche et les cinq valeurs (temps, RAM, CPU, moteur, date) se suivent à
    droite ; en petit écran, tout se replie en blocs étiquetés, sans défilement
-   horizontal. Le pic mémoire est un pic cumulatif du moteur quand
+   horizontal. La case de sélection éventuelle précède le modèle dans la même
+   ligne. Le pic mémoire est un pic cumulatif du moteur quand
    `annotation_ram` est renseignée : seule la mention courte « pic cumulatif »
-   s'affiche, l'explication complète reste dans le détail.
+   s'affiche, l'explication complète restant dans l'aide locale et le détail.
+
+   `distinction_temps` et `distinction_ram` (facultatives) portent le libellé
+   court d'une meilleure mesure observée (« meilleur temps », « meilleure RAM »,
+   égalité comprise). Le libellé reste près de la valeur, prend sa couleur
+   d'accent et ne remplace jamais la mesure ; le CPU n'en reçoit aucune.
 
    `entete_groupe_audio` donne le titre d'un groupe par empreinte : nom du
    fichier, durée décodée commune ou mention de durées divergentes, et empreinte
    courte pour distinguer deux fichiers de même nom. L'empreinte complète reste
-   dans un détail. Jamais la durée d'un lot. #}
+   dans un détail. Jamais la durée d'un lot.
+
+   Une ligne reçoit en plus une case de sélection quand le mapping porte `case`
+   (page Comparaisons) : nom du champ, valeur `exécution:ordre`, libellé
+   accessible et état coché. La case reste dans la cellule du modèle, sans
+   colonne technique ni second formulaire. #}
 
 {% macro resultat_compact(resultat) -%}
+{%- set case = resultat.case | default(none) -%}
 {%- set indicateurs = resultat.indicateurs | default({}, true) -%}
 {%- set duree = indicateurs.duree_transcription_s | default(none) -%}
 {%- set pic = indicateurs.pic_memoire_octets | default(none) -%}
@@ -40,14 +52,21 @@
 {%- endif -%}
 {%- set temps_affiche = formater_duree_premier_niveau(duree) -%}
 {%- set ram_affichee = formater_memoire_premier_niveau(pic) -%}
+{%- set distinction_temps = resultat.distinction_temps | default(none) -%}
+{%- set distinction_ram = resultat.distinction_ram | default(none) -%}
 {%- set absences = ("non mesuré", "non interprétable", "indisponible") -%}
 <div class="resultat-compact">
 <div class="resultat-titre">
+<div class="resultat-entete">
+{%- if case %}
+<input type="checkbox" name="{{ case.nom }}" value="{{ case.valeur }}" aria-label="{{ case.libelle }}"{% if case.coche %} checked{% endif %}>
+{%- endif %}
 {%- if resultat.lien %}
 <a class="resultat-modele" href="{{ resultat.lien }}">{{ resultat.modele or "modèle non consigné" }}</a>
 {%- else %}
 <span class="resultat-modele">{{ resultat.modele or "modèle non consigné" }}</span>
 {%- endif %}
+</div>
 {%- if resultat.variante %}
 <span class="resultat-secondaire">Variante : {{ resultat.variante }}</span>
 {%- endif %}
@@ -62,10 +81,12 @@
 <div class="resultat-mesure resultat-mesure-temps">
 <span class="resultat-libelle">Transcription</span>
 <span class="resultat-valeur{% if temps_affiche in absences %} resultat-valeur-absente{% endif %}">{{ temps_affiche }}</span>
+{% if distinction_temps %}<span class="resultat-distinction">{{ distinction_temps }}</span>{% endif %}
 </div>
 <div class="resultat-mesure resultat-mesure-ram">
 <span class="resultat-libelle">RAM moteur</span>
 <span class="resultat-valeur{% if ram_affichee in absences %} resultat-valeur-absente{% endif %}">{{ ram_affichee }}</span>
+{% if distinction_ram %}<span class="resultat-distinction">{{ distinction_ram }}</span>{% endif %}
 {% if resultat.annotation_ram and pic is not none %}<span class="resultat-secondaire">pic cumulatif</span>{% endif %}
 </div>
 <div class="resultat-mesure resultat-mesure-cpu">
@@ -94,7 +115,7 @@
 <div class="resultat-groupe">
 <h2 class="resultat-audio">{{ nom or "fichier non consigné" }}</h2>
 {% if durees_divergentes %}
-<span class="resultat-secondaire">Durée non commune aux essais : chaque ligne indique la sienne.</span>
+<span class="resultat-secondaire">Durée non commune aux essais. Chaque ligne indique la sienne.</span>
 {% else %}
 <span class="resultat-secondaire">Audio : {{ formater_duree_premier_niveau(duree_audio_s) }}{% if empreinte_courte %} · Empreinte {{ empreinte_courte }}{% endif %}</span>
 {% endif %}
@@ -110,7 +131,6 @@
 {% endfor %}
 {% if groupe.simulees %}
 <h3>Mesures simulées de cet audio</h3>
-<div class="resultat-secondaire">Classées à part des mesures observées, sans distinction de performance.</div>
 {% for ligne in groupe.simulees %}
 {{ resultat_compact(ligne) }}
 {% endfor %}

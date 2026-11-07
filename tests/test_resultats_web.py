@@ -131,9 +131,15 @@ class DetailProgressifWebTest(SocleWebTest):
         corps = self.page()
 
         self.assertIn("modele-a · Moteur factice", corps)
+        # Le composant compact partagé remplace l'ancien bloc `formats.indicateurs`.
+        self.assertEqual(corps.count('<div class="resultat-compact">'), 1)
+        self.assertNotIn("Mémoire max", corps)
+        self.assertNotIn("CPU du moteur", corps)
         self.assertIn("1 min 37 s", corps)
-        self.assertIn("2,4 Go sur 16 Go — 15 %", corps)
-        self.assertIn("< 1 % en moyenne", corps)
+        self.assertIn("2,4 Go", corps)
+        self.assertIn("< 1 %", corps)
+        # La durée propre à l'audio précède le texte, jamais celle du lot.
+        self.assertIn("Audio : 2 s", corps)
         # La date courte précède les textes, l'horodatage complet reste en détail.
         self.assertIn("02/01/2024 03:04", corps)
         self.assertLess(corps.index("02/01/2024 03:04"), corps.index("<pre>"))
@@ -142,8 +148,8 @@ class DetailProgressifWebTest(SocleWebTest):
             corps.index(libelle)
             for libelle in (
                 "Transcription",
-                "Mémoire max",
-                "CPU du moteur",
+                "RAM moteur",
+                "CPU moteur",
                 "Texte transcrit",
                 "<pre>",
             )
@@ -151,6 +157,26 @@ class DetailProgressifWebTest(SocleWebTest):
         self.assertEqual(positions, sorted(positions))
         # Texte et indicateurs précèdent le premier accordéon.
         self.assertLess(corps.index("<pre>"), corps.index("<details"))
+
+    def test_identifiant_pas_titre_et_ancre_par_audio(self) -> None:
+        self.ecrire_essai(audios=2)
+
+        corps = self.page()
+
+        # Le modèle est le titre : l'identifiant technique ne repousse pas les
+        # mesures et reste dans le résumé de l'exécution.
+        self.assertIn("<h1>", corps)
+        titre = corps[corps.index("<h1>") : corps.index("</h1>")]
+        self.assertNotIn(IDENTIFIANT, titre)
+        # Chaque audio porte une ancre stable, cible des liens de liste.
+        self.assertIn(f'id="audio-1"', corps)
+        self.assertIn(f'id="audio-2"', corps)
+        self.assertEqual(
+            corps.count('<div class="resultat-compact">'),
+            2,
+        )
+        self.assertIn("Audio 1 — prise1.wav", corps)
+        self.assertIn("Audio 2 — prise2.wav", corps)
 
     def test_duree_du_lot_jamais_presentee_comme_duree_de_l_audio(self) -> None:
         self.ecrire_essai(
@@ -169,7 +195,8 @@ class DetailProgressifWebTest(SocleWebTest):
         carte = corps[corps.index("<article>") : corps.index("<details")]
 
         # La carte ne porte que la durée de l'audio ; le lot reste en détail.
-        self.assertIn("<strong>Transcription</strong> : 1 s<br>", carte)
+        self.assertIn('<span class="resultat-libelle">Transcription</span>', carte)
+        self.assertIn('<span class="resultat-valeur">1 s</span>', carte)
         self.assertNotIn("12.500", carte)
         self.assertIn("Durée totale de l'opération", corps)
         self.assertIn("12.500 s", corps)
@@ -188,11 +215,12 @@ class DetailProgressifWebTest(SocleWebTest):
         corps = self.page()
         premiere, deuxieme = self.cartes_principales(corps)
 
-        # Annotation cumulative du seul deuxième audio, visible d'emblée.
-        self.assertNotIn("Pic mémoire cumulatif", premiere)
-        self.assertIn("Pic mémoire cumulatif du lot", deuxieme)
-        self.assertIn("il peut provenir d'un audio précédent", deuxieme)
-        self.assertEqual(corps.count("Pic mémoire cumulatif du lot"), 1)
+        # Annotation cumulative du seul deuxième audio, visible d'emblée en
+        # mention courte et expliquée dans les mesures détaillées.
+        self.assertNotIn("pic cumulatif", premiere)
+        self.assertIn(">pic cumulatif</span>", deuxieme)
+        self.assertEqual(corps.count(">pic cumulatif</span>"), 1)
+        self.assertIn("chargement du modèle compris", corps)
         # Matériel différent signalé pour chacun des deux audios du même fichier.
         self.assertIn("Matériel différent", premiere)
         self.assertIn("Matériel différent", deuxieme)

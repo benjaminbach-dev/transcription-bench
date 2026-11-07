@@ -212,14 +212,45 @@ button.danger {
   }
 }
 
+/* Dans une carte de comparaison (une demi-page sur bureau), le titre du modèle
+ * reste au-dessus des valeurs : les cinq mesures tiennent alors sur une ligne
+ * dans la carte, et le texte suit immédiatement. */
+
+.grid > article .resultat-compact {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .resultat-titre,
 .resultat-groupe {
   display: grid;
   gap: 0.25rem;
 }
 
+/* Ligne du modèle : la case de sélection éventuelle précède le nom sans
+ * créer de colonne technique supplémentaire. */
+.resultat-entete {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
 .resultat-section {
   margin-bottom: 1.5rem;
+}
+
+/* Tris natifs GET : compacts aussi à 360 px, sans masquer de contrôle. */
+.resultat-tris {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem;
+  margin: 0.5rem 0;
+}
+
+.resultat-tris button {
+  padding: 0.25rem 0.5rem;
+  margin: 0;
+  font-size: var(--s-resultat-taille-secondaire);
 }
 
 .resultat-modele {
@@ -281,6 +312,23 @@ button.danger {
   font-weight: 400;
   color: var(--s-resultat-secondaire);
   overflow-wrap: normal;
+}
+
+/* Libellé court d'une meilleure mesure observée (temps ou RAM), juste après la
+ * valeur : il reprend la couleur d'accent de sa mesure, jamais une teinte de
+ * victoire verte ou rouge, et reste lisible au même seuil de contraste. */
+
+.resultat-distinction {
+  font-size: var(--s-resultat-taille-texte);
+  font-weight: 700;
+}
+
+.resultat-mesure-temps .resultat-distinction {
+  color: var(--s-resultat-temps);
+}
+
+.resultat-mesure-ram .resultat-distinction {
+  color: var(--s-resultat-ram);
 }
 
 .resultat-etats,

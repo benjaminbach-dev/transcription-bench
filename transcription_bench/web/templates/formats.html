@@ -41,15 +41,3 @@
 {% macro memoire_premier_niveau(valeur) -%}{{ formater_memoire_premier_niveau(valeur) }}{%- endmacro %}
 {% macro pourcentage_premier_niveau(valeur) -%}{{ formater_pourcentage_premier_niveau(valeur) }}{%- endmacro %}
 {% macro date_courte(valeur) -%}{{ formater_date_courte(valeur) }}{%- endmacro %}
-
-{#- Trois indicateurs de premier niveau d'un audio, partagés par la comparaison
-    et le détail individuel (tâches 3.1 à 3.3). Les valeurs restent courtes : le
-    sens des ratios, du pic cumulatif et du matériel consigné est expliqué dans
-    l'aide locale, pas répété dans chaque carte. Une mesure absente reste
-    « non mesuré » ; un ratio non interprétable est nommé sans écraser la mesure
-    brute. La durée est celle de l'audio, jamais celle du lot. -#}
-{% macro indicateurs(indicateurs) -%}
-<p class="prose"><strong>Transcription</strong> : {{ duree_premier_niveau(indicateurs.duree_transcription_s) }}<br>
-<strong>Mémoire max</strong> : {{ memoire_premier_niveau(indicateurs.pic_memoire_octets) }}{% if indicateurs.pic_memoire_octets is not none and indicateurs.ram_totale_octets is not none %}{% if indicateurs.part_ram is not none %} sur {{ memoire_premier_niveau(indicateurs.ram_totale_octets) }} — {{ pourcentage_premier_niveau(indicateurs.part_ram) }}{% else %} sur {{ memoire_premier_niveau(indicateurs.ram_totale_octets) }} — part non interprétable{% endif %}{% elif indicateurs.pic_memoire_octets is not none %} — RAM totale non consignée{% endif %}<br>
-<strong>CPU du moteur</strong> : {% if indicateurs.occupation_cpu is not none %}{{ pourcentage_premier_niveau(indicateurs.occupation_cpu) }} en moyenne{% elif indicateurs.temps_cpu_s is not none %}non interprétable{% else %}non mesuré{% endif %}</p>
-{%- endmacro %}

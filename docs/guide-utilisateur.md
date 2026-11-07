@@ -224,7 +224,7 @@ Vérification : non éprouvé à froid.
 
 ## 10. Lire un résultat
 
-*Faites ceci.* Ouvrez la page **Résultats**. Les essais sont regroupés par audio : le nom du fichier et sa durée figurent en titre de chaque groupe. Le tri par défaut présente les essais les plus récents en premier dans chaque groupe ; les liens Temps de transcription, Moins de RAM et CPU le moins occupé changent l'ordre des essais de chaque groupe, jamais l'ordre des audios. Cliquez sur le nom d'un modèle pour ouvrir le texte et le détail de cet essai. Pour comprendre les repères, ouvrez **Comprendre les indicateurs** depuis la page.
+*Faites ceci.* Ouvrez la page **Résultats**. Les essais sont regroupés par audio : le nom du fichier et sa durée figurent en titre de chaque groupe. Le tri par défaut présente les essais les plus récents en premier dans chaque groupe ; les liens Plus rapides, Moins de RAM et CPU le moins occupé changent l'ordre des essais de chaque groupe, jamais l'ordre des audios. Cliquez sur le nom d'un modèle pour ouvrir le texte et le détail de cet essai : dans un lot, le lien ouvre directement l'audio concerné. Pour comprendre les repères, ouvrez **Comprendre les indicateurs** depuis la page.
 
 *Vous devez voir.* Une ligne par essai : le modèle (et sa variante GGUF si elle est consignée), puis **Transcription**, **RAM moteur** et **CPU moteur**, le moteur et la date courte. Si les durées décodées d'un audio divergent, le groupe le signale et chaque ligne donne la durée de son propre essai ; deux fichiers de même nom se distinguent par leur empreinte courte. Les états restent visibles sur la ligne : résultat en erreur, exécution interrompue, marques. Les mesures simulées sont classées à part, sous leur propre titre. Les mesures dépendent de votre ordinateur : elles ne disent rien de la qualité du texte ni des performances d'un autre poste.
 
@@ -243,10 +243,10 @@ On compare deux transcriptions d'un même audio, obtenues avec deux modèles (ou
 *Faites ceci.*
 
 1. Lancez une seconde exécution (étape 9) sur le même audio, avec un autre modèle ou le même.
-2. Ouvrez la page **Comparaisons** (ou, dans **Résultats**, le lien **Comparer des transcriptions d'un même audio**).
-3. Dans le groupe de votre audio, cochez les deux transcriptions dans **Sélection**, puis cliquez sur **Comparer les transcriptions sélectionnées**.
+2. Ouvrez la page **Comparaisons** (ou, dans **Résultats**, le lien **Comparer**).
+3. Dans le groupe de votre audio, cochez les cases à côté des noms des modèles, puis cliquez sur **Comparer les transcriptions sélectionnées**. Changer le classement conserve les cases cochées, même sans JavaScript ; une comparaison accepte jusqu'à 64 sélections d'un même audio.
 
-*Vous devez voir.* Une carte par transcription, avec le modèle et le moteur en titre, les trois mesures puis le texte entier ; une ligne de synthèse indique les mesures observées, le résultat le plus rapide et celui qui consomme le moins de mémoire, avec les égalités et les mesures simulées ou partielles écartées. Les blocs **Ce qui diffère** puis **Toutes les mesures et informations** donnent les valeurs distinctes, puis l'ensemble des mesures et métadonnées, y compris le rapport de vitesse et son repère. Le lien **Comprendre les indicateurs** explique les calculs et les limites.
+*Vous devez voir.* La durée audio commune dans l'en-tête, puis une carte par transcription : modèle, temps de transcription, RAM, CPU, moteur et date, suivis du texte entier. Si les durées consignées divergent, chaque carte indique la sienne. La meilleure valeur observée de temps et de mémoire est signalée près de sa mesure par un libellé court (« meilleur temps », « meilleure RAM »), égalités comprises, sans phrase de synthèse désignant un vainqueur ; le CPU ne reçoit aucune distinction, et les mesures simulées ou partielles non plus. Les blocs **Ce qui diffère** puis **Toutes les mesures et informations** donnent les valeurs distinctes, puis l'ensemble des mesures et métadonnées, y compris le rapport de vitesse et son repère. Le lien **Comprendre les indicateurs** explique les calculs et les limites.
 
 *Ce que cela ne dit pas.* Le texte le plus fluide n'est pas forcément le plus exact, et l'outil ne désigne aucun « meilleur » modèle. La comparaison sert à repérer des différences ; c'est à vous de juger, en réécoutant l'audio.
 
