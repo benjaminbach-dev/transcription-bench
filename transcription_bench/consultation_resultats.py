@@ -36,6 +36,24 @@ absente et s'affiche « indisponible ». Le RTF est recalculé sur la durée
 absente, et le repère d'objectif (`REPERE_RTF`) n'exclut ni ne bloque jamais une
 transcription plus lente.
 
+**Contexte système (2.2, contrat additif)** : l'observation du chargement
+(`run.json.mesures.observation_systeme_chargement`) et celle de chaque audio
+(`result.json.mesures.observation_systeme`) sont relues en version 1 seulement,
+sans migration ni réécriture, et exposées par `ObservationSystemeVue`. Trois
+chemins d'indisponibilité sont distingués par un état **calculé à la lecture**,
+jamais écrit : `absent` pour une clé absente (fichier antérieur aux
+observations) comme pour une clé présente et nulle (objet écarté à l'écriture,
+`cle_presente` le dit), `invalide` pour un objet présent mais hors contrat
+(motif conservé) et `version_inconnue` pour une version autre que 1, jamais
+interprétée partiellement. Ces états ne sont jamais enregistrés dans un
+résultat, et un lecteur ancien ignore ces additions. Une observation illisible
+n'empêche jamais la lecture de la transcription, des marques et des anciennes
+mesures ; aucune valeur de l'ordinateur courant n'est substituée, aucune part
+« autres applications » n'est déduite du CPU du moteur, aucune marge mémoire
+n'est calculée par différence avec le pic, et la `provenance` (`reelle` ou
+`simulee`) est exposée telle quelle : la date d'une observation simulée est une
+constante de scénario, jamais une date de relevé.
+
 **Marques** : les marques `factice`, `synthetique` et `mesures_simulees` sont
 reprises telles quelles de `run.json` et de chaque `result.json`, et affichées
 dans toutes les vues ; aucune n'est déduite.
@@ -116,6 +134,16 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from engines.mesures_systeme import (
+    ETAT_ABSENT,
+    ETAT_INVALIDE,
+    ETAT_VERSION_INCONNUE,
+    MOMENT_AUDIO,
+    MOMENT_CHARGEMENT,
+    PROVENANCE_SIMULEE,
+    VERSION_METHODE,
+    valider_observation_systeme,
+)
 from transcription_bench.indicateurs_resultats import formater_date_courte, ratio_cpu, ratio_ram
 from transcription_bench.paths import (
     NOM_DOSSIER_RESULTATS,
@@ -224,6 +252,18 @@ MOTIF_FICHIER_REFUSE = (
     "fichier n'est lu"
 )
 
+#: Clés des observations système, aux emplacements du design D3 : celle du
+#: chargement sous `run.json.mesures`, celle de chaque audio sous
+#: `result.json.mesures`.
+CLE_OBSERVATION_CHARGEMENT = "observation_systeme_chargement"
+CLE_OBSERVATION_AUDIO = "observation_systeme"
+
+#: Motif de lecture d'un objet d'observation d'une version non prise en charge :
+#: un lecteur ne connaît que la version 1 et n'en interprète aucune autre.
+MOTIF_VERSION_OBSERVATION_INCONNUE = (
+    "Version de relevé système non prise en charge : observation non interprétée"
+)
+
 #: Champs affichés, avec leur libellé et la conversion appliquée à la lecture.
 #: Une valeur `None` s'affiche « indisponible » ; aucune n'est remplacée par 0.
 CHAMPS_MODELE: tuple[tuple[str, str], ...] = (
@@ -321,15 +361,29 @@ class ExecutionListee:
     motif: str | None
 
 
+def _observation_absente() -> ObservationSystemeVue:
+    """Observation dont la clé est absente : fichier antérieur, rien de mesuré."""
+    return ObservationSystemeVue(etat=ETAT_ABSENT)
+
+
 @dataclass(frozen=True)
 class MesuresVue:
-    """Mesures globales d'une exécution ; `None` = mesure indisponible."""
+    """Mesures globales d'une exécution ; `None` = mesure indisponible.
+
+    `observation_chargement` est l'instantané système relevé après le
+    chargement du modèle (`run.json.mesures.observation_systeme_chargement`),
+    relu avec son état calculé : `None` n'est jamais remplacé par une valeur de
+    l'ordinateur courant.
+    """
 
     duree_operation_s: float | None
     duree_processus_s: float | None
     duree_chargement_s: float | None
     pic_memoire_octets: int | None
     pic_memoire_partiel: bool | None
+    observation_chargement: ObservationSystemeVue = field(
+        default_factory=_observation_absente
+    )
 
 
 @dataclass(frozen=True)
@@ -341,6 +395,85 @@ class MesuresAudioVue:
     temps_cpu_s: float | None
     rtf: float | None
     pic_memoire_octets: int | None
+
+
+@dataclass(frozen=True)
+class CpuSystemeVue:
+    """Occupation CPU globale de l'ordinateur pendant un audio (contexte système).
+
+    C'est une valeur distincte de l'occupation CPU du moteur : elle inclut les
+    autres programmes et n'est jamais attribuée au modèle. `None` = valeur
+    indisponible ; `motif` reprend le code écrit par le runner
+    (`lecture_impossible`, `intervalle_trop_court`, `valeur_incoherente`).
+    Aucune part « autres applications » n'est déduite par soustraction avec le
+    CPU du moteur, et aucun ratio n'est calculé avec la mémoire disponible.
+    """
+
+    pourcentage_moyen: float | None
+    intervalle_s: float | None
+    motif: str | None
+
+
+@dataclass(frozen=True)
+class MemoireSystemeVue:
+    """Instantané de RAM disponible, avec la capacité totale au même instant.
+
+    `releve_le` est la date ISO UTC consignée, telle quelle : pour une
+    observation simulée, c'est une constante de scénario et jamais une vraie
+    date de relevé. `motif` reprend le code écrit ; aucune marge n'est calculée
+    par différence avec le pic mémoire du moteur, et l'instantané n'est ni un
+    minimum pendant l'audio ni une consommation attribuable à la transcription.
+    """
+
+    releve_le: str | None
+    totale_octets: int | None
+    disponible_octets: int | None
+    motif: str | None
+
+
+@dataclass(frozen=True)
+class ObservationSystemeVue:
+    """Observation système relue, avec son état calculé à la lecture (D3).
+
+    `etat` vaut `None` quand l'objet version 1 est lisible ; sinon il vaut
+    `absent`, `invalide` ou `version_inconnue` (`ETATS_LECTURE`, calculés à la
+    lecture et jamais écrits dans un résultat). `cle_presente` distingue un
+    fichier antérieur aux observations (clé absente) d'une observation écartée
+    avant écriture (clé présente, valeur `null`) : deux chemins
+    d'indisponibilité différents, de même lecture « non mesuré ».
+
+    Un objet de version inconnue n'est jamais interprété partiellement :
+    `cpu` et `memoire_apres` restent `None`. `provenance` (`reelle` ou
+    `simulee`) est exposée telle quelle, pour qu'une observation simulée ne
+    soit jamais présentée comme un relevé réel : sa date est une constante de
+    scénario. `cpu` reste `None` pour un relevé de chargement, qui n'a pas de
+    CPU moyen.
+    """
+
+    etat: str | None
+    cle_presente: bool = False
+    motif: str | None = None
+    provenance: str | None = None
+    version: int | None = None
+    methode_cpu: str | None = None
+    version_psutil: str | None = None
+    cpu: CpuSystemeVue | None = None
+    memoire_apres: MemoireSystemeVue | None = None
+
+    @property
+    def lisible(self) -> bool:
+        """Vrai si un objet version 1 a été interprété (état calculé nul)."""
+        return self.etat is None
+
+    @property
+    def ecarte_a_l_ecriture(self) -> bool:
+        """Vrai pour une clé présente mais nulle : objet écarté à l'écriture."""
+        return self.etat == ETAT_ABSENT and self.cle_presente
+
+    @property
+    def simulee(self) -> bool:
+        """Vrai pour une observation de provenance simulée, jamais réelle."""
+        return self.provenance == PROVENANCE_SIMULEE
 
 
 @dataclass(frozen=True)
@@ -454,6 +587,10 @@ class TranscriptionVue:
     `timings_natifs` conserve les timings transmis par le moteur, un par appel
     natif et dans l'ordre des appels : ils varient par appel et ne sont jamais
     agrégés. Une transcription antérieure au champ n'en a aucun.
+
+    `observation_systeme` est l'observation relue sous
+    `mesures.observation_systeme` avec son état calculé : absente d'un résultat
+    antérieur ou écartée à l'écriture, elle reste explicitement non mesurée.
     """
 
     statut: str
@@ -478,6 +615,9 @@ class TranscriptionVue:
     moteur: tuple[Paire, ...]
     famille: str | None
     erreur: str | None
+    observation_systeme: ObservationSystemeVue = field(
+        default_factory=_observation_absente
+    )
 
     @property
     def simule_mesures(self) -> bool:
@@ -500,6 +640,10 @@ class AudioVue:
     différent » ou « matériel non vérifié » calculée sur les quatre champs requis
     du matériel consigné ; `None` quand rien n'est à signaler et que le nom du
     processeur manque seul.
+
+    `observation_systeme` est le contexte de l'ordinateur relu pour cet audio ;
+    il reste distinct des indicateurs du moteur et vaut « absent » quand aucun
+    résultat n'est enregistré.
     """
 
     ordre: int
@@ -514,6 +658,9 @@ class AudioVue:
     indicateurs: IndicateursAudio = IndicateursAudio()
     annotation_ram: str | None = None
     materiel_alerte: str | None = None
+    observation_systeme: ObservationSystemeVue = field(
+        default_factory=_observation_absente
+    )
 
 
 @dataclass(frozen=True)
@@ -579,6 +726,11 @@ class EntreeEmpreinte:
 
     `simule` est vrai dès qu'une marque de mesures simulées est consignée :
     aucune déduction n'est faite depuis la famille, le moteur ou le modèle.
+
+    `observation_systeme` est le contexte de l'ordinateur relu pour cet audio
+    (`result.json`) et `observation_chargement` l'instantané du chargement relu
+    dans `run.json` : deux observations distinctes des indicateurs du moteur,
+    exposées avec leur état calculé et jamais complétées par le poste courant.
     """
 
     execution: str
@@ -607,6 +759,14 @@ class EntreeEmpreinte:
     duree_decodee_s: float | int | None = None
     # Mention de matériel comparée aux autres essais du même audio.
     materiel_alerte: str | None = None
+    # Contexte de l'ordinateur de cet audio, distinct des indicateurs moteur.
+    observation_systeme: ObservationSystemeVue = field(
+        default_factory=_observation_absente
+    )
+    # Instantané système du chargement du modèle, propre à l'essai.
+    observation_chargement: ObservationSystemeVue = field(
+        default_factory=_observation_absente
+    )
 
     @property
     def indicateurs(self) -> IndicateursAudio:
@@ -876,7 +1036,6 @@ class ConsultationResultats:
         demande = _mapping(contenu.get("demande"))
         modele = _mapping(demande.get("modele"))
         moteur = _mapping(contenu.get("moteur"))
-        mesure = _mapping(contenu.get("mesures"))
         effectifs = _mapping(contenu.get("effectifs"))
         partiel = contenu["etat"] != ETAT_TERMINEE
         materiel = _materiel(contenu)
@@ -899,7 +1058,7 @@ class ConsultationResultats:
             processus=_paires(
                 _mapping(contenu.get("processus_moteur")), CHAMPS_PROCESSUS
             ),
-            mesures=_mesures_execution(mesure),
+            mesures=_mesures_execution(contenu),
             audios=tuple(
                 _audio(dossier, plan, partiel=partiel, materiel=materiel, autres=autres)
                 for plan in contenu["audios"]
@@ -975,7 +1134,14 @@ class ConsultationResultats:
                 if empreinte is None:
                     continue
                 groupes.setdefault(empreinte, []).append(
-                    _entree(execution, plan, transcription, empreinte, materiel)
+                    _entree(
+                        execution,
+                        plan,
+                        transcription,
+                        empreinte,
+                        materiel,
+                        _observation_chargement(contenu),
+                    )
                 )
         groupes_recents = sorted(
             groupes.items(), key=lambda paire: _cle_recence(paire[1]), reverse=True
@@ -1086,10 +1252,15 @@ class ConsultationResultats:
             )
         return _Colonne(
             entree=_entree(
-                _resume(contenu), plan, transcription, empreinte, _materiel(contenu)
+                _resume(contenu),
+                plan,
+                transcription,
+                empreinte,
+                _materiel(contenu),
+                _observation_chargement(contenu),
             ),
             transcription=transcription,
-            mesures=_mesures_execution(_mapping(contenu.get("mesures"))),
+            mesures=_mesures_execution(contenu),
             contexte=contenu,
         )
 
@@ -1316,13 +1487,16 @@ def _entree(
     transcription: TranscriptionVue,
     empreinte: str,
     materiel: MaterielVue | None = None,
+    observation_chargement: ObservationSystemeVue | None = None,
 ) -> EntreeEmpreinte:
     """Entrée de comparaison d'une transcription déjà relue.
 
     Les mesures sont celles de cet audio et le matériel celui de l'essai :
     rien n'est déduit du poste courant ni d'un autre audio de l'exécution. Les
     réglages consignés de ce résultat sont repris pour l'affichage et pour le
-    calcul ultérieur des réglages distinctifs de sa sous-liste.
+    calcul ultérieur des réglages distinctifs de sa sous-liste. Le contexte
+    système relu (audio et chargement) accompagne l'entrée sans être mélangé aux
+    indicateurs du moteur.
     """
     reglages, reglages_bruts = _reglages_entree(transcription)
     return EntreeEmpreinte(
@@ -1347,6 +1521,12 @@ def _entree(
         variante=_champ(transcription.modele, "Variante GGUF"),
         revision=_texte(_champ(transcription.modele, "Révision figée")),
         duree_decodee_s=transcription.duree_decodee_s,
+        observation_systeme=transcription.observation_systeme,
+        observation_chargement=(
+            observation_chargement
+            if observation_chargement is not None
+            else _observation_absente()
+        ),
     )
 
 
@@ -2119,14 +2299,98 @@ def _execution_non_interpretable(identifiant: str, motif: str) -> ExecutionListe
     )
 
 
-def _mesures_execution(mesure: Mapping[str, Any]) -> MesuresVue:
-    """Mesures globales d'une exécution ; une mesure absente reste `None`."""
+def _mesures_execution(contenu: Mapping[str, Any]) -> MesuresVue:
+    """Mesures globales d'une exécution ; une mesure absente reste `None`.
+
+    `contenu` est le `run.json` entier : l'observation système du chargement est
+    relue sous `mesures` avec la provenance attendue de l'essai.
+    """
+    mesure = _mapping(contenu.get("mesures"))
     return MesuresVue(
         duree_operation_s=_nombre(mesure.get("duree_operation_s")),
         duree_processus_s=_nombre(mesure.get("duree_processus_s")),
         duree_chargement_s=_nombre(mesure.get("duree_chargement_s")),
         pic_memoire_octets=_entier(mesure.get("pic_memoire_octets")),
         pic_memoire_partiel=_booleen(mesure.get("pic_memoire_partiel")),
+        observation_chargement=_observation_chargement(contenu),
+    )
+
+
+def _observation_chargement(contenu: Mapping[str, Any]) -> ObservationSystemeVue:
+    """Observation système du chargement, relue dans `run.json.mesures`."""
+    return _observation_systeme(
+        _mapping(contenu.get("mesures")),
+        cle=CLE_OBSERVATION_CHARGEMENT,
+        moment=MOMENT_CHARGEMENT,
+        mesures_simulees=contenu.get("mesures_simulees"),
+    )
+
+
+def _observation_systeme(
+    conteneur: Mapping[str, Any],
+    *,
+    cle: str,
+    moment: str,
+    mesures_simulees: Any,
+) -> ObservationSystemeVue:
+    """Observation système d'un fichier, avec son état calculé à la lecture.
+
+    Quatre chemins, sans jamais réécrire ni compléter le fichier :
+
+    - clé absente : fichier antérieur aux observations, état `absent` ;
+    - clé présente et nulle : objet écarté avant écriture, état `absent` avec
+      `cle_presente` vrai (deux indisponibilités distinctes, même lecture) ;
+    - version entière différente de 1 : état `version_inconnue`, objet non
+      interprété, sans lecture partielle d'un contrat inconnu ;
+    - objet présent : validé par la règle commune du runner et de la
+      consignation (version 1, provenance cohérente avec l'essai), ou écarté
+      avec son motif en état `invalide`.
+
+    Aucune valeur de l'ordinateur courant n'est lue ni substituée, et une
+    observation illisible n'empêche jamais la lecture de la transcription.
+    """
+    if cle not in conteneur:
+        return _observation_absente()
+    valeur = conteneur[cle]
+    if valeur is None:
+        return ObservationSystemeVue(etat=ETAT_ABSENT, cle_presente=True)
+    version = _entier(_mapping(valeur).get("version"))
+    if version is not None and version != VERSION_METHODE:
+        return ObservationSystemeVue(
+            etat=ETAT_VERSION_INCONNUE,
+            cle_presente=True,
+            motif=MOTIF_VERSION_OBSERVATION_INCONNUE,
+            version=version,
+        )
+    objet, motif = valider_observation_systeme(
+        valeur, moment=moment, mesures_simulees=mesures_simulees
+    )
+    if objet is None:
+        return ObservationSystemeVue(
+            etat=ETAT_INVALIDE, cle_presente=True, motif=motif
+        )
+    return ObservationSystemeVue(
+        etat=None,
+        cle_presente=True,
+        provenance=objet["provenance"],
+        version=objet["version"],
+        methode_cpu=objet["methode_cpu"],
+        version_psutil=objet["version_psutil"],
+        cpu=(
+            None
+            if "cpu" not in objet
+            else CpuSystemeVue(
+                pourcentage_moyen=objet["cpu"]["pourcentage_moyen"],
+                intervalle_s=objet["cpu"]["intervalle_s"],
+                motif=objet["cpu"]["motif"],
+            )
+        ),
+        memoire_apres=MemoireSystemeVue(
+            releve_le=objet["memoire_apres"]["releve_le"],
+            totale_octets=objet["memoire_apres"]["totale_octets"],
+            disponible_octets=objet["memoire_apres"]["disponible_octets"],
+            motif=objet["memoire_apres"]["motif"],
+        ),
     )
 
 
@@ -2225,6 +2489,11 @@ def _audio(
         indicateurs=indicateurs,
         annotation_ram=annotation_ram,
         materiel_alerte=materiel_alerte,
+        observation_systeme=(
+            _observation_absente()
+            if transcription is None
+            else transcription.observation_systeme
+        ),
     )
 
 
@@ -2327,6 +2596,12 @@ def _vue_transcription(
         moteur=_paires(_mapping(contenu.get("moteur")), CHAMPS_MOTEUR),
         famille=_texte(modele.get("famille")),
         erreur=_texte(contenu.get("erreur")),
+        observation_systeme=_observation_systeme(
+            mesures,
+            cle=CLE_OBSERVATION_AUDIO,
+            moment=MOMENT_AUDIO,
+            mesures_simulees=contenu.get("mesures_simulees"),
+        ),
     )
 
 

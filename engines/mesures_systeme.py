@@ -125,8 +125,13 @@ MOMENTS = (MOMENT_CHARGEMENT, MOMENT_AUDIO)
 
 #: États calculés à la lecture (tâche 2.2), jamais écrits dans un résultat :
 #: une observation absente ou écartée reste distinguable de ces états par
-#: l'absence de l'objet, jamais par une valeur enregistrée.
-ETATS_LECTURE = ("absent", "invalide", "version_inconnue")
+#: l'absence de l'objet, jamais par une valeur enregistrée. `absent` couvre
+#: aussi bien une clé absente d'un fichier antérieur qu'une valeur `null`
+#: laissée par un objet écarté à l'écriture.
+ETAT_ABSENT = "absent"
+ETAT_INVALIDE = "invalide"
+ETAT_VERSION_INCONNUE = "version_inconnue"
+ETATS_LECTURE = (ETAT_ABSENT, ETAT_INVALIDE, ETAT_VERSION_INCONNUE)
 
 #: Champs du contrat D3, par emplacement. Le relevé de chargement ne porte pas
 #: de CPU moyen : un `cpu` qui y figure est hors contrat.
