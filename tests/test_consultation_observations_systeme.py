@@ -246,6 +246,25 @@ class EtatsDeLectureTest(SocleConsultationTest):
         self.assertEqual(transcription.texte, "transcription simulée de test")
         self.assertEqual(transcription.mesures.duree_transcription_s, 1.0)
 
+    def test_observations_non_objet_ne_levent_jamais(self) -> None:
+        # Chaîne, liste, nombre ou booléen à la place d'un objet : la lecture
+        # expose l'état `invalide` sans exception et ne substitue rien.
+        for valeur in ("Traceback: OSError recopié", [1, 2], 42, True):
+            with self.subTest(valeur=type(valeur).__name__):
+                ecrire_essai(
+                    self.donnees,
+                    IDENTIFIANT,
+                    observation_chargement=valeur,
+                    observation_audio=valeur,
+                )
+
+                vue = self.service.detail(IDENTIFIANT)
+
+                self.assertEqual(vue.mesures.observation_chargement.etat, "invalide")
+                self.assertEqual(vue.audios[0].observation_systeme.etat, "invalide")
+                self.assertIsNone(vue.mesures.observation_chargement.cpu)
+                self.assertIsNone(vue.audios[0].observation_systeme.memoire_apres)
+
     def test_version_inconnue_n_est_jamais_interpretee(self) -> None:
         ecrire_essai(
             self.donnees,

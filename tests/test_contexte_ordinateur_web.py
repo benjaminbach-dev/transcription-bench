@@ -391,3 +391,99 @@ class ContexteOrdinateurTest(SocleWebTest):
         # Contenu de texte courant : prose sur les paragraphes et la liste.
         self.assertIn('<p class="prose small">', bloc)
         self.assertIn('<dl class="prose">', bloc)
+
+    def test_motif_cpu_au_second_niveau_premier_non_mesure(self) -> None:
+        # CPU indisponible (fenêtre trop courte) : « non mesuré » au premier
+        # niveau, le motif écrit et la fenêtre observée restent au second.
+        self.ecrire_essai(
+            audio=observation(
+                provenance=PROVENANCE_REELLE,
+                cpu=cpu_systeme(
+                    pourcentage=None,
+                    intervalle=0.05,
+                    motif="intervalle_trop_court",
+                ),
+                memoire=memoire_systeme(
+                    releve_le=RELEVE_AUDIO,
+                    totale=TOTAL_OCTETS,
+                    disponible=DISPONIBLE_AUDIO,
+                ),
+            ),
+        )
+
+        corps = self.page_detail()
+        premier = self.valeurs_premier_niveau(corps)
+        bloc = self.bloc(corps)
+
+        self.assertIn(VALEUR_ABSENTE, premier)
+        self.assertIn("intervalle de mesure trop court", bloc)
+        self.assertIn("0.050 s", bloc)
+
+    def test_memoire_partielle_affiche_non_mesure_et_motif(self) -> None:
+        # Seul le total est valide : jamais « X sur indisponible » ni une
+        # valeur partielle ; le motif reste au second niveau.
+        self.ecrire_essai(
+            audio=observation_reelle_audio(),
+            chargement=observation(
+                provenance=PROVENANCE_REELLE,
+                memoire=memoire_systeme(
+                    releve_le=RELEVE_CHARGEMENT,
+                    totale=TOTAL_OCTETS,
+                    disponible=None,
+                    motif="valeur_incoherente",
+                ),
+            ),
+        )
+
+        corps = self.page_detail()
+        bloc = self.bloc(corps)
+        section = bloc[bloc.index("Après chargement du modèle") :]
+
+        self.assertIn(VALEUR_ABSENTE, section)
+        # Jamais « X sur Y » quand une des deux valeurs manque.
+        self.assertNotIn(" sur ", section)
+        self.assertIn("valeur du compteur incohérente", section)
+
+    def test_valeur_hors_bornes_ne_montre_jamais_sur_indisponible(self) -> None:
+        # Totale hors bornes d'affichage (fichier hostile) : « non mesuré » et
+        # jamais « … sur indisponible ».
+        self.ecrire_essai(
+            audio=observation_reelle_audio(),
+            chargement=observation(
+                provenance=PROVENANCE_REELLE,
+                memoire=memoire_systeme(
+                    releve_le=RELEVE_CHARGEMENT,
+                    totale=10**400,
+                    disponible=DISPONIBLE_CHARGEMENT,
+                ),
+            ),
+        )
+
+        corps = self.page_detail()
+        bloc = self.bloc(corps)
+        section = bloc[bloc.index("Après chargement du modèle") :]
+
+        self.assertNotIn("sur indisponible", section)
+        self.assertIn(VALEUR_ABSENTE, section)
+
+    def test_motif_inconnu_ne_fuit_jamais(self) -> None:
+        # Un motif hors des codes écrits rend l'objet hors contrat à la lecture :
+        # le code reçu ne s'affiche nulle part, un libellé fixe le remplace.
+        self.ecrire_essai(
+            audio=observation(
+                provenance=PROVENANCE_REELLE,
+                cpu=cpu_systeme(
+                    pourcentage=None, intervalle=1.2, motif="code-sauvage"
+                ),
+                memoire=memoire_systeme(
+                    releve_le=RELEVE_AUDIO,
+                    totale=TOTAL_OCTETS,
+                    disponible=DISPONIBLE_AUDIO,
+                ),
+            ),
+        )
+
+        corps = self.page_detail()
+
+        self.assertNotIn("code-sauvage", corps)
+        self.assertIn("relevé hors contrat", self.bloc(corps))

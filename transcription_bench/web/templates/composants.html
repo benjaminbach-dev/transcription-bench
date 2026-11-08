@@ -175,7 +175,13 @@
 {%- set cpu_affiche = formater_pourcentage_premier_niveau(cpu.pourcentage_moyen) if cpu is not none else "non mesuré" -%}
 {%- set ram_affichee = "non mesuré" -%}
 {%- if memoire is not none and memoire.disponible_octets is not none and memoire.totale_octets is not none -%}
-{%- set ram_affichee = formater_memoire_premier_niveau(memoire.disponible_octets) ~ " sur " ~ formater_memoire_premier_niveau(memoire.totale_octets) -%}
+{%- set dispo = formater_memoire_premier_niveau(memoire.disponible_octets) -%}
+{%- set total = formater_memoire_premier_niveau(memoire.totale_octets) -%}
+{#- Une valeur non formattable (hors bornes) rend l'affiche « non mesuré » :
+    jamais « X sur indisponible » ni une valeur partielle. -#}
+{%- if dispo not in ("non mesuré", "indisponible") and total not in ("non mesuré", "indisponible") -%}
+{%- set ram_affichee = dispo ~ " sur " ~ total -%}
+{%- endif -%}
 {%- endif -%}
 <div class="resultat-mesures">
 <div class="resultat-mesure">
@@ -236,7 +242,11 @@
 {%- set simulee = chargement is not none and chargement.simulee -%}
 {%- set ram_affichee = "non mesuré" -%}
 {%- if memoire is not none and memoire.disponible_octets is not none and memoire.totale_octets is not none -%}
-{%- set ram_affichee = formater_memoire_premier_niveau(memoire.disponible_octets) ~ " sur " ~ formater_memoire_premier_niveau(memoire.totale_octets) -%}
+{%- set dispo = formater_memoire_premier_niveau(memoire.disponible_octets) -%}
+{%- set total = formater_memoire_premier_niveau(memoire.totale_octets) -%}
+{%- if dispo not in ("non mesuré", "indisponible") and total not in ("non mesuré", "indisponible") -%}
+{%- set ram_affichee = dispo ~ " sur " ~ total -%}
+{%- endif -%}
 {%- endif -%}
 <div class="resultat-mesures">
 <div class="resultat-mesure">

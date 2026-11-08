@@ -49,3 +49,21 @@ Note de reprise fraîche, point d'entrée unique avant compaction de session. El
 - relates_to [[Reprise refonte parcours résultats — pause après le lot 4, 2026-11-07]]
 - relates_to [[Décisions du prototype de benchmark]]
 - relates_to [[Lecture grand public et occupation des ressources — cadrage 2026-11-04]]
+
+## Prochaines specs — lots et tâches (ordre d'exécution)
+
+Découpage prêt à exécuter par la méthode ci-dessus (worker par tâche → relecture principal → navigator → push ; advisor en fin de lot ; max 3 tâches par lot). Chaque tâche cite son numéro dans son `tasks.md`.
+
+**Change 1 — `mesurer-charge-systeme` (0/12), en premier : indépendant, aucun préalable propriétaire, volets PC/CI moteur laissés ouverts.**
+- Lot A : 1.1 helper relevés psutil (tests amorçage/non-blocage/intervalle/exceptions) ; 1.2 CPU autour des bornes + instantanés RAM (horloge injectée, moteur factice) ; 2.1 objets facultatifs sur événements + persistance D3 (additif, sans schéma global 2).
+- Lot B : 2.2 consultation et vues typées (fichiers anciens, objets inconnus, lecture après suppression de modèle) ; 2.3 interruption/échec/abandon (conservation premier audio + relevés, immutabilité) ; 3.1 bloc repliable « Contexte de l'ordinateur » détail/comparaison (jamais de colonne système dans les listes, pas de faux total-RSS, compatibilité composants refonte).
+- Lot C : 3.2 aide et guide alignés (instantanés, autres programmes, aucune garantie de fluidité, indicateurs moteur distincts) ; 4.1 tests ciblés + sonde psutil deux appels même thread (consigner plateformes, aucun seuil de performance) ; 4.2 liste blanche rapports CI nettoyés + test d'absence d'export sensible.
+- Lot D (conditionnel) : 4.3 runner réel sur PC Linux déclaré par le propriétaire (annonce du lot d'abord) ; 4.4 job Windows moteur **uniquement après autorisation** ; 4.5 observation navigator du bloc contexte (bureau/mobile, clair/sombre — constat honnête attendu sur le sombre) + `openspec validate --strict`. Tâche fermante : consignation mémoire + demande d'archivage dédiée.
+
+**Change 2 — `rediger-documentation-utilisateur` (7/19) : plusieurs tâches exigent une décision/une validation propriétaire — annoncer le lot concerné.**
+- Lot E : 1.0 (vérifier le préalable `habiller-interface-sumi` — libellés/navigateurs définitifs) ; 1.1 **décision propriétaire** : public visé + exemple principal (design D5 : whisper-large-v3-turbo-gguf Q5_K_M).
+- Lot F : 2.1 guide `docs/guide-utilisateur.md` (parcours en trois parties, winget/ZIP en alternatives) ; 2.5 niveaux de vérification par procédure (Linux daté / CI Windows / non vérifié) ; 2.7 supprimer le rappel clinique périmé de l'accueil (renvoi 8.11, lignes 5 et 138).
+- Lot G : 2.2 glossaire + accès réseau réels (D9) + dépannage depuis messages réellement produits ; 5.1 suite de tests + `openspec validate --strict` ; 5.2 consignation mémoire + `AGENTS.md` si besoin.
+- Lot H (conditionnel) : 4.1–4.2 parcours à froid sur **PC Linux déclaré** (lot annoncé et accepté : transcribe.cpp, Q5_K_M ≈ 620 Mo, copie vierge, dossier de données neuf) ; 4.3 relecture par le propriétaire (+ lecteur extérieur si disponible) ; 4.4 Windows sur preuves CI existantes **sans nouveau job**, non vérifié consigné honnêtement.
+
+Règles communes : aucun lot conditionnel (D, H) sans accord explicite du propriétaire ; les validations de l'ancienne documentation ne préjugent rien ; ne jamais présenter un parcours fluide comme médicalement correct.
