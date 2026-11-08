@@ -41,7 +41,7 @@ soumis à l'arbitrage du propriétaire.
 
 - `.github/workflows/tests.yml` : tests avec moteur factice sous Ubuntu 24.04 et Windows Server 2022, après installation des seules dépendances serveur verrouillées.
 - `.github/workflows/moteurs-windows.yml` : déclenchement manuel. Les imports installent les trois moteurs isolément depuis les verrous. Les inférences sélectionnables téléchargent chacune un seul des quatre modèles d'essai.
-- `scripts/ci/verifier.py` : appelle les services d'installation, de vérification/téléchargement des modèles et d'exécution du programme ; le runner et les adaptateurs ne sont pas remplacés par une sonde de bibliothèque indépendante.
+- `scripts/ci/verifier.py` : appelle les services d'installation, de vérification/téléchargement des modèles et d'exécution du programme ; le runner et les adaptateurs ne sont pas remplacés par une sonde de bibliothèque indépendante. Chaque rapport passe par une liste blanche explicite de champs, refusée avant écriture si un champ imprévu apparaît.
 - `scripts/ci/generer-parole.ps1` : utilise une voix System.Speech locale activée, sans exiger le français. Sélection déterministe : anglais, sinon français, sinon première voix disponible ; texte anglais ou français selon cette sélection. Culture de la voix et langue du texte sont consignées séparément, y compris si elles diffèrent. Sans aucune voix, la sonde échoue avant les poids ; aucun service distant ni nouvelle dépendance n'est ajouté.
 
 ## Sécurité et coûts
@@ -49,6 +49,8 @@ soumis à l'arbitrage du propriétaire.
 Runners standards uniquement, image `windows-2022` ; son contenu évolue, d'où la conservation de `ImageOS` et `ImageVersion`. Toutes les actions sont épinglées par SHA, les permissions sont `contents: read`, les identifiants du checkout ne sont pas persistés. Aucun secret applicatif ni jeton Hugging Face n'est utilisé ; l'envoi implicite d'un jeton HF est désactivé. Cache `setup-uv` explicitement désactivé.
 
 Les jobs lourds sont manuels, bornés et annulables lorsqu'une nouvelle exécution les remplace. Aucun poids, audio, environnement ni transcription n'est publié ou mis en cache par ces workflows. Seuls les résumés JSON nettoyés sous `data/ci/rapports/` sont conservés en artefacts pendant 14 jours. Ils consignent commit, image, versions, ressources, empreinte audio et résultat des vérifications, sans texte transcrit. Les données de travail restent sous `data/ci/` dans le job éphémère.
+
+Le contrat de ces rapports est une liste blanche : un champ non prévu est refusé avant toute écriture, plutôt que publié par inadvertance. Aucune observation système du runner (CPU global moyen, mémoire disponible, méthode, motifs, provenance) n'y est exportée : ces relevés restent dans les fichiers de résultats locaux, et aucun nouvel artefact ni cache n'est publié.
 
 Les jobs sont conditionnés à la visibilité publique : sur dépôt privé ils sont ignorés, ce qui ne constitue jamais une preuve ni un succès de validation Windows. Le harnais refuse en plus les opérations moteurs hors contexte explicite Windows CI public. Ces vérifications sont des garde-fous logiciels, pas une isolation de sécurité. Le workflow de tests pourrait techniquement fonctionner sur un dépôt privé ; son activation privée n'est pas décidée ici. La gratuité du calcul public concerne uniquement les runners standards ; stockage et limites du compte restent à surveiller.
 

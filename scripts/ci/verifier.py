@@ -4,7 +4,11 @@ Installation et modèles : services du programme. Inférence : configuration,
 décodage PyAV, supervision et runner du programme. Aucun accès réseau lors de
 l'import de ce module ; les commandes réseau exigent le contexte CI public.
 Les rapports publiables ne contiennent ni audio, ni texte transcrit, ni chemin
-personnel. Ce harnais ne prouve pas une coupure réseau ou un Ctrl+C interactif.
+personnel : leurs champs sont refusés hors liste blanche (`CHAMPS_RAPPORT`,
+`CHAMPS_VERIFICATION`, `CHAMPS_PAROLE`) avant toute écriture. Aucune observation
+système du runner (CPU global, mémoire disponible, motifs, provenance) n'est
+exportée ; elle reste dans les fichiers de résultats locaux. Ce harnais ne prouve
+pas une coupure réseau ou un Ctrl+C interactif.
 """
 from __future__ import annotations
 
@@ -13,6 +17,7 @@ import hashlib
 import json
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -49,6 +54,33 @@ CAS = {
 }
 MOTEURS = ("faster-whisper", "transcribe-cpp", "transformers")
 
+# Liste blanche des rapports publiés en artefact. Toute clé absente d'un de ces
+# ensembles est refusée : un ajout doit être décidé et testé, jamais hérité d'un
+# dictionnaire copié. Aucun champ d'observation système n'y figure : les
+# agrégats CPU/mémoire restent dans les résultats locaux, aucun motif ni chemin
+# n'est publié.
+CHAMPS_RAPPORT = frozenset({
+    "niveau", "date", "commit", "run", "tentative", "image", "version_image",
+    "python", "uv", "os", "architecture", "cpu_logiques", "ram_octets",
+    "disque_libre_octets", "verification",
+})
+CHAMPS_PAROLE = frozenset({
+    "voix", "culture_voix", "texte_langue", "audio_sha256", "duree_source_s",
+    "langue_imposee",
+})
+CHAMPS_VERIFICATION = {
+    "ressources": frozenset({"but"}),
+    "installation": frozenset({"moteur", "versions", "runner_factice", "import_adaptateur"}),
+    "modele": frozenset({"cas", "revision", "depot", "licence_declaree", "source", "fichiers"}),
+    "inference": frozenset({
+        "cas", "etat", "raison", "parole", "evaluation_qualite",
+        "nature_controle", "revision", "audio_synthetique", "audio_sha256",
+        "duree_audio_s", "texte_non_vide", "caracteres", "threads_demandes",
+        "threads_appliques", "cpu_relu", "reglages_effectifs", "timings_natifs",
+        "mode_hors_ligne_configure", "isolation_reseau_prouvee",
+    }),
+}
+
 
 def exiger_ci_publique() -> None:
     """Échouer, et non sauter silencieusement, hors du contexte adopté."""
@@ -58,9 +90,31 @@ def exiger_ci_publique() -> None:
         raise RuntimeError("Ces opérations exigent le runner CI Windows du dépôt public audité.")
 
 
+def champs_verification(nom: str) -> frozenset[str]:
+    """Champs autorisés du bloc `verification` d'un rapport."""
+    for famille, champs in CHAMPS_VERIFICATION.items():
+        if nom == famille or nom.startswith(f"{famille}-"):
+            return champs
+    raise RuntimeError(f"Rapport CI non prévu par la liste blanche : {nom}.")
+
+
+def verifier_rapport(nom: str, contenu: dict) -> None:
+    """Refuser tout champ hors liste blanche, avant toute écriture."""
+    if not re.fullmatch(r"[a-z0-9-]+", nom):
+        raise RuntimeError(f"Nom de rapport CI invalide : {nom}.")
+    inconnus = sorted(set(contenu) - champs_verification(nom))
+    if inconnus:
+        # Seuls les noms de champs (constantes du code) sont cités, jamais les valeurs.
+        raise RuntimeError(f"Champ non autorisé dans le rapport {nom} : {', '.join(inconnus)}.")
+    parole = contenu.get("parole")
+    if isinstance(parole, dict) and set(parole) - CHAMPS_PAROLE:
+        raise RuntimeError(f"Champ de parole non autorisé dans le rapport {nom}.")
+
+
 def rapport(nom: str, contenu: dict) -> None:
     import psutil
 
+    verifier_rapport(nom, contenu)
     RAPPORTS.mkdir(parents=True, exist_ok=True)
     preuve = {
         "niveau": "CI Windows" if os.environ.get("RUNNER_OS") == "Windows" else "contrôle local",
@@ -212,6 +266,31 @@ def preuve_audio(chemin: Path, langue_imposee: str | None = None) -> dict:
             "duree_source_s": duree, "langue_imposee": langue_imposee}
 
 
+def preuve_inference(cas: str, revision: str, parole: dict, evenement: dict) -> dict:
+    """Contenu nettoyé d'un rapport d'inférence, sans donnée sensible.
+
+    Ni texte transcrit, ni chemin, ni observation système : seuls le
+    fonctionnement observé, une empreinte audio et les réglages effectifs sont
+    conservés. L'événement source peut porter bien plus ; rien n'est recopié en
+    bloc.
+    """
+    effectifs = evenement["reglages_effectifs"]
+    return {
+        "nature_controle": "fonctionnement du programme, sans évaluation du modèle",
+        "parole": parole,
+        "cas": cas, "revision": revision, "audio_synthetique": True,
+        "audio_sha256": parole["audio_sha256"],
+        "duree_audio_s": evenement["duree_audio_s"],
+        "texte_non_vide": True, "caracteres": len(evenement["texte"]),
+        "threads_demandes": evenement["threads_demandes"],
+        "threads_appliques": evenement["threads_appliques"],
+        "cpu_relu": effectifs.get("device_relu") or effectifs.get("backend_relu"),
+        "reglages_effectifs": effectifs,
+        "timings_natifs": evenement.get("timings_natifs"),
+        "mode_hors_ligne_configure": True, "isolation_reseau_prouvee": False,
+    }
+
+
 def inferer(cas: str) -> None:
     exiger_ci_publique()
     from transcription_bench.execution_moteur import ExecutionMoteur
@@ -259,20 +338,7 @@ def inferer(cas: str) -> None:
         cpu_relu = effectifs.get("device_relu") or effectifs.get("backend_relu")
         if not isinstance(cpu_relu, str) or cpu_relu.lower() != "cpu":
             raise RuntimeError("Le périphérique CPU effectif n'est pas confirmé par l'adaptateur.")
-        rapport(f"inference-{cas}", {
-            "nature_controle": "fonctionnement du programme, sans évaluation du modèle",
-            "parole": parole,
-            "cas": cas, "revision": choix["revision"], "audio_synthetique": True,
-            "audio_sha256": hashlib.sha256(audio.read_bytes()).hexdigest(),
-            "duree_audio_s": evenement["duree_audio_s"],
-            "texte_non_vide": True, "caracteres": len(evenement["texte"]),
-            "threads_demandes": evenement["threads_demandes"],
-            "threads_appliques": evenement["threads_appliques"],
-            "cpu_relu": cpu_relu,
-            "reglages_effectifs": effectifs,
-            "timings_natifs": evenement.get("timings_natifs"),
-            "mode_hors_ligne_configure": True, "isolation_reseau_prouvee": False,
-        })
+        rapport(f"inference-{cas}", preuve_inference(cas, choix["revision"], parole, evenement))
     finally:
         execution.arreter_execution(arret_serveur=True)
         creneau.arreter()
