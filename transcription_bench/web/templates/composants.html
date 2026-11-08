@@ -51,7 +51,10 @@
    marquée comme scénario et sa date constante n'est jamais présentée comme un
    relevé réel. Les valeurs brutes (octets, pourcentage, intervalle, méthode et
    version psutil, instant du relevé) restent au second niveau repliable, sans
-   les trois décimales du premier niveau. #}
+   les trois décimales du premier niveau. L'aide du bloc reste courte : les
+   autres programmes inclus et l'instantané pris après l'audio y sont dits une
+   seule fois, le texte complet des limites vivant dans la page d'aide locale
+   (`aide_resultats.html`, design D4). #}
 
 {% macro resultat_compact(resultat) -%}
 {%- set case = resultat.case | default(none) -%}
@@ -129,7 +132,7 @@
 {%- endmacro %}
 
 {% macro aide_contexte_ordinateur() -%}
-<p class="prose small">Le CPU total inclut les autres programmes de l'ordinateur, et la mémoire disponible est un instantané relevé après l'audio, jamais un minimum resté disponible.</p>
+<p class="prose small">Le CPU total inclut les autres programmes de l'ordinateur, et la mémoire disponible est un instantané relevé après l'audio, jamais un minimum resté disponible. Les limites de ces valeurs sont détaillées dans l'aide « Comprendre les indicateurs ».</p>
 {%- endmacro %}
 
 {% macro motif_systeme(motif) -%}

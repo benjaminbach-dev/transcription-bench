@@ -226,6 +226,39 @@ class AideResultatsWebTest(SocleWebTest):
                 self.assertIn('href="/resultats/aide"', reponse.get_data(as_text=True))
 
 
+    def test_aide_explique_une_fois_les_limites_du_contexte_ordinateur(self) -> None:
+        """Section « Contexte de l'ordinateur » : D4 et exigence de limites."""
+        texte = html.unescape(self.rendre_aide())
+
+        # Chaque limite demandée est expliquée, une seule fois par page.
+        for attendu in (
+            "Le CPU total inclut les autres programmes de l'ordinateur",
+            "estimation du système à un instant donné",
+            "le minimum resté pendant la transcription",
+            "ressources visibles par le système",
+            "capacité matérielle garantie",
+            "garantie de confort d'usage",
+            "Le relevé après chargement et le relevé après audio",
+            "le contexte de cet essai",
+            "preuve de performance sur un autre ordinateur",
+            "ordinateur partagé ou virtualisé",
+        ):
+            with self.subTest(attendu=attendu):
+                self.assertEqual(texte.count(attendu), 1, attendu)
+
+        # Le texte complet vit ici : la phrase courte du bloc n'y est pas
+        # recopiée, et aucune promesse positive n'est ajoutée.
+        self.assertNotIn("Les limites de ces valeurs sont détaillées", texte)
+        for interdit in (
+            "marge restante de",
+            "ordinateur fluide",
+            "garantit la fluidité",
+            "garantie de performance sur un autre",
+            "propre au modèle",
+        ):
+            with self.subTest(interdit=interdit):
+                self.assertNotIn(interdit, texte)
+
     def test_explications_regroupees_dans_l_aide(self) -> None:
         execution_complete(self.dossier_data, IDENTIFIANT)
         execution_complete(self.dossier_data, IDENTIFIANT_ANCIEN)

@@ -224,6 +224,58 @@ class ContexteOrdinateurTest(SocleWebTest):
         self.assertLess(corps.rindex("</article>"), corps.index(RESUME_BLOC))
         self.assertEqual(avant_bloc.count('<div class="resultat-compact">'), 1)
 
+    def test_aucune_phrase_longue_repete_dans_les_pages_avec_contexte(self) -> None:
+        # Le bloc ajoute une phrase d'aide et une entrée par transcription :
+        # aucune phrase explicative de huit mots ou plus n'est répétée sur la
+        # page, comme pour les autres explications (détecteur partagé).
+        from tests.test_aide_resultats_web import repetitions
+
+        self.ecrire_essai(
+            audio=observation_reelle_audio(),
+            chargement=observation_reelle_chargement(),
+            modele="organisation/modele-a",
+        )
+        self.ecrire_essai(IDENTIFIANT_ANCIEN, modele="organisation/modele-b")
+
+        for chemin in (f"/resultats/{IDENTIFIANT}", self.chemin_comparaison()):
+            with self.subTest(chemin=chemin):
+                corps = html.unescape(self.corps(chemin))
+                self.assertEqual(repetitions(corps), {}, chemin)
+
+    def test_indicateurs_moteur_distincts_du_contexte_systeme(self) -> None:
+        # Consolidation 3.2 : aucun libellé ni aucune valeur du moteur dans le
+        # bloc système, aucune valeur système avant lui (donc dans la carte).
+        self.ecrire_observation_complete()
+
+        corps = self.page_detail()
+        bloc = self.bloc(corps)
+        avant_bloc = corps[: corps.index(RESUME_BLOC)]
+
+        # Le bloc secondaire ne porte aucun libellé du moteur.
+        for libelle in (
+            "CPU moteur",
+            "RAM moteur",
+            "pic cumulatif",
+            "Pic de mémoire du moteur",
+            "moteur",
+        ):
+            with self.subTest(libelle=libelle):
+                self.assertNotIn(libelle, bloc)
+
+        # Les valeurs du moteur (18 % de CPU, 2,4 Go de pic) restent hors du
+        # bloc ; les valeurs système (90 %, 5,2 Go) restent dans le bloc.
+        for valeur in ("18 %", "2,4 Go"):
+            self.assertIn(valeur, avant_bloc)
+            self.assertNotIn(valeur, bloc)
+        for valeur in ("CPU total", "RAM disponible", "90 %", "5,2 Go"):
+            self.assertNotIn(valeur, avant_bloc)
+            self.assertIn(valeur, bloc)
+
+        # Aucun ratio inventé entre les deux informations : ni part de RAM
+        # système (5,2 sur 16 Go), ni reste de l'ordinateur.
+        for faux in ("32,5", "32.5", "67,5", "67.5", "10,8"):
+            self.assertNotIn(faux, corps)
+
     def test_non_mesure_pour_chaque_etat_de_lecture(self) -> None:
         cas: tuple[tuple[str, dict[str, Any]], ...] = (
             # Fichier antérieur aux observations : clés absentes.

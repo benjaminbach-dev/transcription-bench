@@ -11,6 +11,10 @@ RACINE = Path(__file__).resolve().parent.parent
 GUIDE = RACINE / "docs" / "guide-utilisateur.md"
 README = RACINE / "README.md"
 DOSSIER_WEB = RACINE / "transcription_bench" / "web"
+#: Page d'aide locale des résultats, servie sur `/resultats/aide`.
+AIDE_RESULTATS = DOSSIER_WEB / "templates" / "aide_resultats.html"
+#: Début de la note du guide sur le contexte de l'ordinateur (tâche 3.2).
+NOTE_CONTEXTE = "*Contexte de l'ordinateur.*"
 
 # Gras du guide qui n'est pas un libellé d'interface : aucune pour l'instant.
 LIBELLES_HORS_INTERFACE: frozenset[str] = frozenset()
@@ -91,6 +95,12 @@ def sans_libelles(texte: str) -> str:
     return re.sub(r"\*\*[^*]+\*\*", "", texte)
 
 
+def note_contexte(texte: str) -> str:
+    """Paragraphe du guide consacré au contexte de l'ordinateur."""
+    debut = texte.index(NOTE_CONTEXTE)
+    fin = texte.find("\n", debut)
+    return texte[debut : fin if fin >= 0 else len(texte)]
+
 class DocumentationTest(unittest.TestCase):
     def test_libelles_en_gras_existent_dans_l_interface(self) -> None:
         interface = sources_interface()
@@ -130,6 +140,62 @@ class DocumentationTest(unittest.TestCase):
 
     def test_guide_a_un_glossaire(self) -> None:
         self.assertIn(TITRE_GLOSSAIRE, lire(GUIDE))
+
+
+class GuideContexteOrdinateurTest(unittest.TestCase):
+    """Note du guide alignée sur l'aide locale (tâche 3.2, design D4).
+
+    L'aide locale porte le texte complet des limites du contexte système ; le
+    guide en donne une note courte, sans promesse de confort ni marge inventée,
+    et sans contredire les sections qui l'entourent.
+    """
+
+    def test_note_situee_dans_la_lecture_d_un_resultat(self) -> None:
+        texte = lire(GUIDE)
+        debut = texte.index("## 10. Lire un résultat")
+        fin = texte.index("## 11. Comparer deux résultats")
+        self.assertIn(NOTE_CONTEXTE, texte[debut:fin])
+
+    def test_note_dit_les_limites_du_contexte_systeme(self) -> None:
+        note = note_contexte(lire(GUIDE))
+        for attendu in (
+            "**Contexte de l'ordinateur**",
+            "Le CPU total inclut les autres programmes",
+            "estimation du système à un instant donné",
+            "le minimum resté pendant la transcription",
+            "ressources visibles par le système",
+            "capacité matérielle garantie",
+            "ni fluidité ni confort",
+            "cet essai",
+            "un autre ordinateur",
+            "non mesuré",
+        ):
+            with self.subTest(attendu=attendu):
+                self.assertIn(attendu, note)
+        # Aucune présentation positive d'une garantie, d'une marge ou d'une
+        # propriété du modèle.
+        for interdit in (
+            "marge restante",
+            "ordinateur fluide",
+            "garantie de performance",
+            "propre au modèle",
+        ):
+            with self.subTest(interdit=interdit):
+                self.assertNotIn(interdit, note)
+
+    def test_note_et_aide_locale_disent_les_memes_limites(self) -> None:
+        note = note_contexte(lire(GUIDE))
+        aide = lire(AIDE_RESULTATS)
+        for terme in (
+            "autres programmes",
+            "un instant donné",
+            "ressources visibles par le système",
+            "capacité matérielle garantie",
+            "un autre ordinateur",
+        ):
+            with self.subTest(terme=terme):
+                self.assertIn(terme, note)
+                self.assertIn(terme, aide)
 
 
 if __name__ == "__main__":

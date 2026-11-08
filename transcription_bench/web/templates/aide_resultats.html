@@ -13,7 +13,7 @@
 <dt>Mémoire max</dt>
 <dd>Pic de mémoire résidente du processus moteur relevé après cet audio, rapporté à la RAM totale consignée. Le pic est cumulatif : il inclut le chargement du modèle, ses bibliothèques et ses tampons, et il peut donc provenir d'un audio précédent du même lot. Aucune marge restante n'est calculée et le pic du serveur n'y est pas ajouté.</dd>
 <dt>CPU du moteur</dt>
-<dd>Occupation moyenne du seul processus moteur, threads compris, pendant la transcription de cet audio. 100 % désigne tous les processeurs logiques visibles par le système de l'essai. Ce n'est ni la charge de l'ordinateur, ni une mesure d'énergie ou de la difficulté du calcul, ni une garantie de rapidité ou de fluidité.</dd>
+<dd>Occupation moyenne du seul processus moteur, threads compris, pendant la transcription de cet audio. 100 % désigne tous les processeurs logiques visibles par le système de l'essai. Ce n'est ni la charge de l'ordinateur, ni une mesure d'énergie ou de la difficulté du calcul.</dd>
 </dl>
 
 <h2>Calcul des ratios</h2>
@@ -56,9 +56,13 @@
 <li>La comparaison sélectionnée garde l'ordre reçu et n'applique aucun tri de colonnes. L'historique des exécutions reste complet, y compris les échecs et les résultats sans empreinte valide.</li>
 </ul>
 
+<h2>Contexte de l'ordinateur</h2>
+<p class="prose">Le détail et la comparaison sélectionnée ouvrent un bloc secondaire repliable « Contexte de l'ordinateur » : le CPU total moyen pendant la transcription de l'audio, la RAM disponible après cet audio avec sa capacité totale au même instant, puis le relevé pris juste après le chargement du modèle. Ces valeurs restent à part des indicateurs du moteur et ne servent à aucun classement.</p>
+<p class="prose">Le CPU total inclut les autres programmes de l'ordinateur : il ne décrit pas le seul moteur, et d'autres logiciels ont pu l'occuper pendant l'essai. La mémoire disponible est une estimation du système à un instant donné, relevée juste après l'audio : ce n'est ni le minimum resté pendant la transcription, ni une consommation attribuée à la transcription. Le relevé après chargement et le relevé après audio décrivent deux instants distincts : ils ne se soustraient pas et ne donnent aucune marge restante.</p>
+<p class="prose">Les pourcentages reposent sur les ressources visibles par le système : processeurs logiques, hyperthreading, quotas système, affinités, conteneurs et machines virtuelles limitent ce qu'ils représentent. Un quota, une affinité ou une ressource virtualisée n'est jamais une capacité matérielle garantie. Une observation décrit le contexte de cet essai, sur un ordinateur partagé ou virtualisé : elle n'est ni une propriété du modèle, ni une garantie de rapidité ou de fluidité, ni une garantie de confort d'usage, ni une preuve de performance sur un autre ordinateur. Sans observation, ou face à un objet écarté avant écriture, illisible ou d'une version inconnue, le bloc affiche « non mesuré » : aucune valeur n'est alors déduite du pic mémoire du moteur ni du CPU du moteur.</p>
+
 <h2>Limites d'interprétation</h2>
 <ul class="prose">
-<li>100 % ne signifie pas que l'ordinateur est saturé : l'hyperthreading, l'affinité, les quotas système, les conteneurs et les machines virtuelles limitent ce que représente le ratio.</li>
 <li>Un CPU peu occupé ne veut pas dire un texte meilleur, plus rapide ou plus fluide. La durée et la mémoire se lisent séparément.</li>
 <li>La mémoire est un pic cumulatif, pas une mesure isolée par audio ; le pic peut avoir été atteint pendant le chargement du modèle ou un audio précédent.</li>
 <li>Ces valeurs sont des mesures observées une seule fois par essai, sans intervalle d'incertitude, sans garantie de performance et sans score global de qualité ou d'efficacité.</li>
