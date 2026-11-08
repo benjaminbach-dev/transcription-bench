@@ -34,7 +34,24 @@
    Une ligne reçoit en plus une case de sélection quand le mapping porte `case`
    (page Comparaisons) : nom du champ, valeur `exécution:ordre`, libellé
    accessible et état coché. La case reste dans la cellule du modèle, sans
-   colonne technique ni second formulaire. #}
+   colonne technique ni second formulaire.
+
+   Contexte de l'ordinateur (tâche 3.1, design D4) : `aide_contexte_ordinateur`,
+   `valeurs_audio` et `valeurs_chargement` composent, dans les pages de détail et
+   de comparaison, un bloc secondaire repliable, fermé par défaut et sans
+   JavaScript, avec une entrée par audio. Il n'expose que les observations
+   système relues
+   (`ObservationSystemeVue`) : CPU total moyen pendant l'audio, RAM disponible
+   après l'audio avec la capacité totale du même instant, et RAM disponible
+   après chargement. Aucune valeur n'est déduite des indicateurs du moteur :
+   ni marge mémoire par différence avec le pic, ni part « autres
+   applications », ni minimum resté disponible. Une observation absente,
+   écartée à l'écriture, invalide ou d'une version inconnue affiche « non
+   mesuré », son motif restant au second niveau ; une observation simulée est
+   marquée comme scénario et sa date constante n'est jamais présentée comme un
+   relevé réel. Les valeurs brutes (octets, pourcentage, intervalle, méthode et
+   version psutil, instant du relevé) restent au second niveau repliable, sans
+   les trois décimales du premier niveau. #}
 
 {% macro resultat_compact(resultat) -%}
 {%- set case = resultat.case | default(none) -%}
@@ -111,6 +128,154 @@
 </div>
 {%- endmacro %}
 
+{% macro aide_contexte_ordinateur() -%}
+<p class="prose small">Le CPU total inclut les autres programmes de l'ordinateur, et la mémoire disponible est un instantané relevé après l'audio, jamais un minimum resté disponible.</p>
+{%- endmacro %}
+
+{% macro motif_systeme(motif) -%}
+{%- if motif is none -%}aucun motif consigné
+{%- elif motif == "lecture_impossible" -%}lecture impossible du compteur
+{%- elif motif == "intervalle_trop_court" -%}intervalle de mesure trop court
+{%- elif motif == "valeur_incoherente" -%}valeur du compteur incohérente
+{%- else -%}motif consigné
+{%- endif -%}
+{%- endmacro %}
+
+{% macro instant_releve(memoire, simulee) -%}
+{%- if memoire is none or memoire.releve_le is none -%}non mesuré
+{%- elif simulee -%}date de scénario simulé, non réelle
+{%- else -%}{{ memoire.releve_le }} (UTC)
+{%- endif -%}
+{%- endmacro %}
+
+{#- Motifs d'indisponibilité volontairement courts : une phrase explicative
+    n'est jamais répétée d'une entrée à l'autre du même bloc. -#}
+{% macro raison_absence_releve(observation) -%}
+{%- if observation is none -%}aucun relevé consigné
+{%- elif observation.etat == "absent" -%}{% if observation.ecarte_a_l_ecriture %}relevé écarté avant écriture{% else %}aucun relevé consigné{% endif %}
+{%- elif observation.etat == "version_inconnue" -%}version de relevé non prise en charge
+{%- else -%}relevé hors contrat
+{%- endif -%}
+{%- endmacro %}
+
+{% macro marque_simulation(simulee) -%}
+{%- if simulee -%}
+<p class="prose small"><strong>Scénario simulé</strong> — aucun ordinateur réel.</p>
+{%- endif -%}
+{%- endmacro %}
+
+{#- Valeurs d'un audio : CPU total moyen et RAM disponible après l'audio. Le
+    second niveau garde les valeurs brutes, la méthode et l'instant consignés.
+    Aucune valeur n'est déduite du pic mémoire du moteur. -#}
+{% macro valeurs_audio(observation) -%}
+{%- set lisible = observation is not none and observation.lisible -%}
+{%- set cpu = observation.cpu if lisible else none -%}
+{%- set memoire = observation.memoire_apres if lisible else none -%}
+{%- set simulee = observation is not none and observation.simulee -%}
+{%- set cpu_affiche = formater_pourcentage_premier_niveau(cpu.pourcentage_moyen) if cpu is not none else "non mesuré" -%}
+{%- set ram_affichee = "non mesuré" -%}
+{%- if memoire is not none and memoire.disponible_octets is not none and memoire.totale_octets is not none -%}
+{%- set ram_affichee = formater_memoire_premier_niveau(memoire.disponible_octets) ~ " sur " ~ formater_memoire_premier_niveau(memoire.totale_octets) -%}
+{%- endif -%}
+<div class="resultat-mesures">
+<div class="resultat-mesure">
+<span class="resultat-libelle">CPU total moyen pendant la transcription</span>
+<span class="resultat-valeur{% if cpu_affiche in ("non mesuré", "indisponible") %} resultat-valeur-absente{% endif %}">{{ cpu_affiche }}</span>
+</div>
+<div class="resultat-mesure">
+<span class="resultat-libelle">RAM disponible après l'audio</span>
+<span class="resultat-valeur{% if ram_affichee in ("non mesuré", "indisponible") %} resultat-valeur-absente{% endif %}">{{ ram_affichee }}</span>
+</div>
+</div>
+{{ marque_simulation(simulee) }}
+<details>
+<summary>Valeurs brutes et méthode</summary>
+<dl class="prose">
+{% if lisible %}
+<dt>CPU total moyen (valeur brute)</dt>
+<dd>{% if cpu.pourcentage_moyen is not none %}{{ "%.3f"|format(cpu.pourcentage_moyen) }} % sur 0 à 100{% else %}non mesuré{% endif %}</dd>
+<dt>Intervalle de mesure du CPU</dt>
+<dd>{% if cpu.intervalle_s is not none %}{{ "%.3f"|format(cpu.intervalle_s) }} s{% else %}non mesuré{% endif %}</dd>
+{% if cpu.motif is not none %}
+<dt>Motif du relevé CPU</dt>
+<dd>{{ motif_systeme(cpu.motif) }}</dd>
+{% endif %}
+<dt>RAM totale au même instant</dt>
+<dd>{% if memoire.totale_octets is not none %}{{ memoire.totale_octets }} octets{% else %}non mesuré{% endif %}</dd>
+<dt>RAM disponible après l'audio (valeur brute)</dt>
+<dd>{% if memoire.disponible_octets is not none %}{{ memoire.disponible_octets }} octets{% else %}non mesuré{% endif %}</dd>
+{% if memoire.motif is not none %}
+<dt>Motif du relevé de mémoire</dt>
+<dd>{{ motif_systeme(memoire.motif) }}</dd>
+{% endif %}
+<dt>Instant du relevé après l'audio</dt>
+<dd>{{ instant_releve(memoire, simulee) }}</dd>
+<dt>Méthode du CPU</dt>
+<dd>{{ observation.methode_cpu }}</dd>
+<dt>Version de psutil</dt>
+<dd>{{ observation.version_psutil }}</dd>
+<dt>Version du relevé</dt>
+<dd>{{ observation.version }}</dd>
+{% else %}
+<dt>Motif du relevé après l'audio</dt>
+<dd>{{ raison_absence_releve(observation) }}</dd>
+{% if observation is not none and observation.version is not none %}
+<dt>Version du relevé</dt>
+<dd>{{ observation.version }}</dd>
+{% endif %}
+{% endif %}
+</dl>
+</details>
+{%- endmacro %}
+
+{#- Valeur de l'instantané pris juste après le chargement du modèle. Le relevé
+    de chargement ne comporte aucun CPU moyen (design D3). -#}
+{% macro valeurs_chargement(chargement) -%}
+{%- set lisible = chargement is not none and chargement.lisible -%}
+{%- set memoire = chargement.memoire_apres if lisible else none -%}
+{%- set simulee = chargement is not none and chargement.simulee -%}
+{%- set ram_affichee = "non mesuré" -%}
+{%- if memoire is not none and memoire.disponible_octets is not none and memoire.totale_octets is not none -%}
+{%- set ram_affichee = formater_memoire_premier_niveau(memoire.disponible_octets) ~ " sur " ~ formater_memoire_premier_niveau(memoire.totale_octets) -%}
+{%- endif -%}
+<div class="resultat-mesures">
+<div class="resultat-mesure">
+<span class="resultat-libelle">RAM disponible après chargement</span>
+<span class="resultat-valeur{% if ram_affichee in ("non mesuré", "indisponible") %} resultat-valeur-absente{% endif %}">{{ ram_affichee }}</span>
+</div>
+</div>
+{{ marque_simulation(simulee) }}
+<details>
+<summary>Valeurs brutes et méthode</summary>
+<dl class="prose">
+{% if lisible %}
+<dt>RAM totale après chargement</dt>
+<dd>{% if memoire.totale_octets is not none %}{{ memoire.totale_octets }} octets{% else %}non mesuré{% endif %}</dd>
+<dt>RAM disponible après chargement (valeur brute)</dt>
+<dd>{% if memoire.disponible_octets is not none %}{{ memoire.disponible_octets }} octets{% else %}non mesuré{% endif %}</dd>
+{% if memoire.motif is not none %}
+<dt>Motif du relevé après chargement</dt>
+<dd>{{ motif_systeme(memoire.motif) }}</dd>
+{% endif %}
+<dt>Instant du relevé après chargement</dt>
+<dd>{{ instant_releve(memoire, simulee) }}</dd>
+<dt>Méthode du CPU</dt>
+<dd>{{ chargement.methode_cpu }}</dd>
+<dt>Version de psutil</dt>
+<dd>{{ chargement.version_psutil }}</dd>
+<dt>Version du relevé</dt>
+<dd>{{ chargement.version }}</dd>
+{% else %}
+<dt>Motif du relevé après chargement</dt>
+<dd>{{ raison_absence_releve(chargement) }}</dd>
+{% if chargement is not none and chargement.version is not none %}
+<dt>Version du relevé</dt>
+<dd>{{ chargement.version }}</dd>
+{% endif %}
+{% endif %}
+</dl>
+</details>
+{%- endmacro %}
 {% macro entete_groupe_audio(nom, duree_audio_s, empreinte_courte=none, empreinte=none, durees_divergentes=false) -%}
 <div class="resultat-groupe">
 <h2 class="resultat-audio">{{ nom or "fichier non consigné" }}</h2>
