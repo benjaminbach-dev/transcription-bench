@@ -892,11 +892,19 @@ class SondeDeFonctionnementPsutilTest(unittest.TestCase):
     """
 
     def test_deux_appels_non_bloquants_sur_le_meme_thread(self) -> None:
+        import threading
+
         releveur = ReleveurSysteme()
 
+        thread_avant = threading.get_ident()
         amorcage = releveur.amorcer_cpu()
         time.sleep(INTERVALLE_MINIMUM_S + 0.05)
         resultat = releveur.lire_cpu(amorcage)
+        thread_apres = threading.get_ident()
+
+        # Preuve explicite de la tâche 4.1 : les deux appels ont bien lieu sur
+        # le même thread (l'état non bloquant de psutil est propre au thread).
+        self.assertEqual(thread_avant, thread_apres)
 
         self.assertIsNone(resultat["motif"])
         self.assertIsInstance(resultat["pourcentage_moyen"], float)
