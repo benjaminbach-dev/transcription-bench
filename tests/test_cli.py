@@ -21,7 +21,7 @@ from unittest import mock
 from flask import Flask
 from waitress import serve as serve_waitress
 
-from transcription_bench import cli, paths, web
+from transcription_bench import cli, composition, paths, web
 from transcription_bench.execution_moteur import ExecutionMoteur
 from transcription_bench.instance import InstanceDejaActive, VerrouInstance
 from transcription_bench.operations import CreneauOperations
@@ -177,7 +177,7 @@ class CliTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as donnees:
             base = Path(donnees) / "data-projet"
             with mock.patch.object(paths, "DOSSIER_DATA", base):
-                with mock.patch.object(cli, "CreneauOperations", CreneauEspion):
+                with mock.patch.object(composition, "CreneauOperations", CreneauEspion):
                     with mock.patch.object(cli, "serve") as servir:
                         with contextlib.redirect_stdout(io.StringIO()):
                             self.assertEqual(cli.main([]), 0)
@@ -204,6 +204,147 @@ class CliTest(unittest.TestCase):
         )
         self.assertEqual(resultat.stdout.strip(), "")
         self.assertEqual(resultat.stderr, "")
+
+
+CODE_PARSING_ONLY = """
+import sys
+from pathlib import Path
+from transcription_bench import cli, paths
+
+paths.DOSSIER_DATA = Path(sys.argv[1])
+raise SystemExit(cli.main(sys.argv[2:]))
+"""
+
+
+class SubcommandsTest(unittest.TestCase):
+    """Sous-commande `serve` par défaut, port racine, aide et arguments invalides."""
+
+    def setUp(self) -> None:
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.base = Path(temporary.name) / "data-projet"
+        patch = mock.patch.object(paths, "DOSSIER_DATA", self.base)
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def test_legacy_forms_and_serve_start_the_same_server(self) -> None:
+        cases = {
+            (): 8765,
+            ("--port", "9131"): 9131,
+            ("serve",): 8765,
+            ("serve", "--port", "9132"): 9132,
+            ("--port", "9133", "serve"): 9133,
+        }
+        for argv, port in cases.items():
+            with self.subTest(argv=argv):
+                with mock.patch.object(cli, "serve") as serve_mock:
+                    with contextlib.redirect_stdout(io.StringIO()):
+                        code = cli.main(list(argv))
+
+                self.assertEqual(code, 0)
+                serve_mock.assert_called_once()
+                self.assertEqual(
+                    serve_mock.call_args.kwargs, {**CONFIGURATION_ATTENDUE, "port": port}
+                )
+
+    def test_serve_port_does_not_overwrite_root_port(self) -> None:
+        parser = cli.construire_analyseur()
+
+        self.assertEqual(parser.parse_args([]).command, "serve")
+        self.assertEqual(parser.parse_args(["serve"]).command, "serve")
+        self.assertEqual(parser.parse_args(["serve"]).port, 8765)
+        self.assertEqual(parser.parse_args(["--port", "8080", "serve"]).port, 8080)
+        self.assertEqual(parser.parse_args(["serve", "--port", "9000"]).port, 9000)
+        # Le port donné à la sous-commande, plus proche de la commande, l'emporte.
+        self.assertEqual(
+            parser.parse_args(["--port", "8080", "serve", "--port", "9000"]).port,
+            9000,
+        )
+
+    def test_json_is_refused_at_root_and_on_serve(self) -> None:
+        for argv in (["--json"], ["serve", "--json"], ["--port", "8080", "serve", "--json"]):
+            with self.subTest(argv=argv):
+                stderr = io.StringIO()
+                with (
+                    mock.patch.object(cli, "serve") as serve_mock,
+                    contextlib.redirect_stderr(stderr),
+                    contextlib.redirect_stdout(io.StringIO()),
+                ):
+                    with self.assertRaises(SystemExit) as exit_error:
+                        cli.main(argv)
+
+                self.assertEqual(exit_error.exception.code, 2)
+                self.assertIn("--json", stderr.getvalue())
+                serve_mock.assert_not_called()
+        self.assertFalse(self.base.exists())
+
+    def test_invalid_arguments_exit_2_without_effect(self) -> None:
+        cases = (
+            ["foo"],
+            ["serve", "8080"],
+            ["serve", "--port", "80"],
+            ["serve", "--port", "abc"],
+            ["--port", "65536", "serve"],
+            ["serve", "--port"],
+            ["--port", "8080", "serve", "--port", "0"],
+        )
+        for argv in cases:
+            with self.subTest(argv=argv):
+                with (
+                    mock.patch.object(cli, "serve") as serve_mock,
+                    mock.patch.object(cli, "open_data_session") as open_session,
+                    contextlib.redirect_stderr(io.StringIO()),
+                    contextlib.redirect_stdout(io.StringIO()),
+                ):
+                    with self.assertRaises(SystemExit) as exit_error:
+                        cli.main(argv)
+
+                self.assertEqual(exit_error.exception.code, 2)
+                serve_mock.assert_not_called()
+                open_session.assert_not_called()
+        self.assertFalse(self.base.exists())
+
+    def test_french_help_without_data_read_or_write(self) -> None:
+        cases = (
+            ["--help"],
+            ["-h"],
+            ["serve", "--help"],
+            ["--port", "8080", "serve", "-h"],
+        )
+        for argv in cases:
+            with self.subTest(argv=argv):
+                stdout = io.StringIO()
+                with (
+                    mock.patch.object(cli, "open_data_session") as open_session,
+                    mock.patch.object(cli, "serve") as serve_mock,
+                    contextlib.redirect_stdout(stdout),
+                ):
+                    with self.assertRaises(SystemExit) as exit_error:
+                        cli.main(argv)
+
+                self.assertEqual(exit_error.exception.code, 0)
+                open_session.assert_not_called()
+                serve_mock.assert_not_called()
+                text = stdout.getvalue()
+                self.assertIn("serve", text)
+                self.assertIn("codes de sortie", text)
+                self.assertIn("affiche cette aide et quitte", text)
+        self.assertFalse(self.base.exists())
+
+    def test_real_process_help_and_refusals_without_data(self) -> None:
+        cases = (
+            (["--help"], 0),
+            (["serve", "--help"], 0),
+            (["serve", "--json"], 2),
+            (["foo"], 2),
+        )
+        for argv, expected_code in cases:
+            with self.subTest(argv=argv):
+                process = lancer_code(CODE_PARSING_ONLY, str(self.base), *argv)
+
+                self.assertEqual(process.returncode, expected_code, process.stderr)
+                self.assertNotIn("Traceback", process.stderr)
+                self.assertFalse(self.base.exists())
 
 
 def port_local_ecoute() -> tuple[socket.socket, int]:
@@ -356,6 +497,37 @@ class DemarrageOrdonneTest(unittest.TestCase):
         creer.assert_not_called()
         servir.assert_not_called()
         self.assertEqual(os.listdir(self.base), ["instance.lock"])
+        VerrouInstance(self.base).acquerir().liberer()
+
+    def test_refusal_then_failed_lock_release_exits_with_failure_code(self) -> None:
+        liberer_reel = VerrouInstance.liberer
+
+        def liberer_echoue(lock: VerrouInstance) -> None:
+            liberer_reel(lock)
+            raise OSError("libération simulée")
+
+        def recuperer(donnees: Path) -> None:
+            raise EtatAnterieurNonTraitable("résultat antérieur non traitable (simulé)")
+
+        with (
+            mock.patch.object(paths, "DOSSIER_DATA", self.base),
+            mock.patch.object(VerrouInstance, "liberer", liberer_echoue),
+            mock.patch.object(cli, "create_app") as creer,
+            mock.patch.object(cli, "serve") as servir,
+        ):
+            erreur = io.StringIO()
+            with (
+                contextlib.redirect_stderr(erreur),
+                contextlib.redirect_stdout(io.StringIO()),
+            ):
+                code = cli.main([], recuperer=recuperer)
+
+        # Le refus reste affiché ; l'échec de libération fait passer le code à 1.
+        self.assertEqual(code, cli.CODE_ECHEC)
+        self.assertIn("non traitable", erreur.getvalue())
+        self.assertIn("libération du verrou d'instance impossible", erreur.getvalue())
+        creer.assert_not_called()
+        servir.assert_not_called()
         VerrouInstance(self.base).acquerir().liberer()
 
     def test_port_occupe_erreur_claire_sans_verrou_ni_trace(self) -> None:

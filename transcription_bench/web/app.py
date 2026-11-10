@@ -90,8 +90,9 @@ from pathlib import Path
 from flask import Flask, Response, abort, redirect, render_template, request, url_for
 from werkzeug.exceptions import HTTPException
 
-from engines.registre import MoteurInconnu, creer_registre_fourni
+from engines.registre import MoteurInconnu
 from transcription_bench.audios import FORMATS_AUDIO, AudioListe, lister_audios
+from transcription_bench.composition import assemble_services
 from transcription_bench.consultation_resultats import (
     LIBELLES_TRI,
     REPERE_RTF,
@@ -106,10 +107,15 @@ from transcription_bench.consultation_resultats import (
     analyser_selection,
     analyser_tri,
 )
+from transcription_bench.execution_launch import (
+    EngineNotReady,
+    ExecutionAlreadyReserved,
+    launch_execution,
+    validate_execution_fields,
+)
 from transcription_bench.execution_moteur import (
     ARRET_AUCUN,
     ARRET_SURVIVANT,
-    ExecutionImpossible,
     ExecutionMoteur,
 )
 from transcription_bench.executions import (
@@ -371,26 +377,23 @@ def create_app(config: ConfigApplication, services: ServicesApplication) -> Flas
     application.extensions[NOM_CHAMP_JETON] = jeton
     hotes = frozenset(f"{adresse}:{config.port}" for adresse in HOTES_AUTORISES)
     origines = frozenset(f"http://{adresse_port}" for adresse_port in hotes)
-    registre = creer_registre_fourni()
-    service_moteurs = services.moteurs or InstallationMoteurs(
-        config.dossier_data, registre, services.creneau
-    )
-    service_modeles = services.modeles or GestionModeles(
+    # Les services absents sont construits par la composition partagée avec la
+    # CLI ; la CLI injecte déjà tous les siens, sans aucune construction ici.
+    composed = assemble_services(
         config.dossier_data,
-        registre,
-        services.creneau,
-        service_moteurs,
-    )
-    service_executions = services.executions or ConfigurationExecutions(
-        config.dossier_data,
-        registre,
-        service_modeles.inventaire,
+        operations=services.creneau,
+        engines=services.moteurs,
+        models=services.modeles,
+        preparation=services.executions,
+        execution=services.execution,
+        results=services.resultats,
         lister=services.lister_audios,
     )
-    service_execution = services.execution or ExecutionMoteur(
-        config.dossier_data, registre, service_moteurs
-    )
-    service_resultats = services.resultats or ConsultationResultats(config.dossier_data)
+    service_moteurs = composed.engines
+    service_modeles = composed.models
+    service_executions = composed.preparation
+    service_execution = composed.execution
+    service_resultats = composed.results
 
     @application.context_processor
     def injecter_jeton() -> dict[str, object]:
@@ -734,7 +737,6 @@ def _enregistrer_routes(
         silencieusement (tâche 4.3, design D4).
         """
         try:
-            refuser_champs_repetes(request.form.items(multi=True))
             demande = _demande_validee(service_executions)
         except ValeurRefusee:
             return _page_demande_refusee(
@@ -764,9 +766,14 @@ def _enregistrer_routes(
         transmis au travail de fond, qui ne reçoit que la demande validée.
         """
         try:
-            refuser_champs_repetes(request.form.items(multi=True))
-            demande = _demande_validee(service_executions)
-            service_execution.verifier_lancable(demande)
+            # Enchaînement partagé avec la CLI (`execution_launch`) : validation,
+            # `verifier_lancable`, `reserver` avant l'admission, annulation si refus.
+            launch_execution(
+                service_executions,
+                service_execution,
+                services.creneau,
+                list(request.form.items(multi=True)),
+            )
         except ValeurRefusee:
             # Refus de la demande elle-même : rien n'est lancé, la page reprend
             # les choix encore valides au lieu de les laisser disparaître.
@@ -777,42 +784,22 @@ def _enregistrer_routes(
                 services,
                 config,
             )
-        except ExecutionImpossible:
+        except EngineNotReady:
             # Refus métier, distinct du refus de jeton : garder les choix valides.
             return _page_demande_refusee(
                 service_executions, service_resultats, service_execution,
                 services, config, statut=403, message=MESSAGE_MOTEUR_NON_PRET,
             )
-        try:
-            # Réservation posée avant l'admission : un arrêt demandé dans
-            # l'intervalle n'est pas perdu, et `lancer` ne remet rien à zéro.
-            service_execution.reserver()
-        except ExecutionImpossible:
-            return _page_demande_refusee(
-                service_executions, service_resultats, service_execution,
-                services, config, statut=409, message=MESSAGES_ERREUR[409],
-            )
-        try:
-            services.creneau.demarrer(
-                TYPE_EXECUTION,
-                lambda travailleur: service_execution.lancer(demande, travailleur),
-                cible=demande.identifiant,
-            )
-        except CreneauOccupe:
-            service_execution.annuler_reservation()
+        except (ExecutionAlreadyReserved, CreneauOccupe):
             return _page_demande_refusee(
                 service_executions, service_resultats, service_execution,
                 services, config, statut=409, message=MESSAGES_ERREUR[409],
             )
         except ServiceArrete:
-            service_execution.annuler_reservation()
             return _page_demande_refusee(
                 service_executions, service_resultats, service_execution,
                 services, config, statut=503, message=MESSAGES_ERREUR[503],
             )
-        except BaseException:
-            service_execution.annuler_reservation()
-            raise
         return redirect(url_for("executions") + "#operation", code=303)
 
     @application.post("/executions/arreter")
@@ -1136,18 +1123,13 @@ def _enregistrer_routes(
 def _demande_validee(service: ConfigurationExecutions) -> DemandeExecution:
     """Forme consommable du formulaire d'exécution, ou `ValeurRefusee`.
 
-    Les champs sont lus depuis la requête courante : la route appelante les
-    revalide donc entièrement, même si la page les a déjà affichés. Le champ
-    `moteur` du panneau de préparation est revalidé avec la référence : fourni,
-    il doit être celui qu'elle déclare.
+    Les champs sont lus depuis la requête courante, sous forme de paires
+    multivaluées, puis validés par le service partagé de lancement : la route
+    appelante les revalide donc entièrement, même si la page les a déjà affichés.
+    Le champ `moteur` du panneau de préparation est revalidé avec la référence :
+    fourni, il doit être celui qu'elle déclare.
     """
-    return service.valider(
-        modele=request.form.get("modele", ""),
-        audios=request.form.getlist("audios"),
-        threads=request.form.get("threads", ""),
-        reglages=reglages_depuis_formulaire(request.form),
-        moteur=request.form.get("moteur"),
-    )
+    return validate_execution_fields(service, list(request.form.items(multi=True)))
 
 
 def _preparation_de_la_demande(

@@ -196,7 +196,7 @@ import sys
 from pathlib import Path
 
 from engines.hors_ligne import commande_runner
-from transcription_bench import cli, paths
+from transcription_bench import cli, composition, paths
 from transcription_bench.execution_moteur import ExecutionMoteur
 
 CODE = {code!r}
@@ -214,7 +214,7 @@ class ServiceEnveloppe(ExecutionMoteur):
         super().__init__(*arguments, **options)
 
 
-cli.ExecutionMoteur = ServiceEnveloppe
+composition.ExecutionMoteur = ServiceEnveloppe
 paths.DOSSIER_DATA = Path(sys.argv[1])
 raise SystemExit(cli.main(["--port", sys.argv[2]]))
 """

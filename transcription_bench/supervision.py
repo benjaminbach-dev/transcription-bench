@@ -157,6 +157,84 @@ def signaux_supervises() -> Iterator[GestionnaireSignaux]:
         gestionnaire.restaurer()
 
 
+class SignalFlag:
+    """Drapeau d'arrêt d'une commande (tâche 1.5) : enregistre, ne lève jamais.
+
+    Le premier signal d'arrêt normal est noté (`received`, `signal_number`) ; la boucle de
+    suivi de `operation_watch` le constate et engage l'arrêt de l'opération. Les
+    signaux suivants sont seulement comptés (`ignored_count`) : ils n'interrompent
+    ni la clôture ni l'écriture du journal. Les gestionnaires précédents sont
+    rétablis à la sortie du bloc `with`.
+    """
+
+    def __init__(self, signals: Sequence[int] | None = None) -> None:
+        self._signals = tuple(signaux_arret_normal() if signals is None else signals)
+        self._previous: dict[int, Any] = {}
+        self._installed = False
+        self._signal_number: int | None = None
+        self._ignored_count = 0
+        self._keep_ignored = False
+
+    def __enter__(self) -> SignalFlag:
+        self.install()
+        return self
+
+    def __exit__(
+        self,
+        error_type: type[BaseException] | None,
+        error: BaseException | None,
+        traceback: Any,
+    ) -> None:
+        self.restore()
+
+    @property
+    def received(self) -> bool:
+        """Vrai dès qu'un signal d'arrêt a été reçu."""
+        return self._signal_number is not None
+
+    @property
+    def signal_number(self) -> int | None:
+        """Numéro du premier signal reçu, `None` s'il n'y en a pas eu."""
+        return self._signal_number
+
+    @property
+    def ignored_count(self) -> int:
+        """Nombre de signaux reçus après le premier, ignorés sans effet."""
+        return self._ignored_count
+
+    def install(self) -> None:
+        """Pose le gestionnaire sur les signaux surveillés, en mémorisant les précédents."""
+        if self._installed:
+            return
+        self._previous = {signal_number: signal.getsignal(signal_number) for signal_number in self._signals}
+        self._installed = True
+        for signal_number in self._signals:
+            signal.signal(signal_number, self._handle)
+
+    def ignore_until_exit(self) -> None:
+        """Maintient l'arrêt protégé si la clôture reste incomplète."""
+        self._keep_ignored = True
+        for number in self._signals:
+            signal.signal(number, signal.SIG_IGN)
+
+    def restore(self) -> None:
+        """Rétablit les gestionnaires, sauf si la clôture reste incomplète."""
+        if not self._installed or self._keep_ignored:
+            return
+        self._installed = False
+        previous, self._previous = self._previous, {}
+        for signal_number, handler in previous.items():
+            # `getsignal` renvoie `None` pour un gestionnaire posé hors Python.
+            signal.signal(signal_number, signal.SIG_DFL if handler is None else handler)
+
+    def _handle(self, signal_number: int, frame: FrameType | None = None) -> None:
+        """Pose le drapeau au premier signal, compte les suivants sans agir."""
+        if self._signal_number is None:
+            self._signal_number = signal_number
+        else:
+            self._ignored_count += 1
+
+
 def signaler(message: str) -> None:
     """Écrit une ligne de supervision sur la sortie d'erreur, sans trace."""
     print(f"transcription-bench : {message}", file=sys.stderr, flush=True)

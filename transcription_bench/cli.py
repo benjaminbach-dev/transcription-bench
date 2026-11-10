@@ -38,26 +38,21 @@ from __future__ import annotations
 
 import argparse
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from waitress import serve
 
-from engines.registre import creer_registre_fourni
 from transcription_bench import paths
-from transcription_bench.execution_moteur import ExecutionMoteur
-from transcription_bench.gestion_modeles import GestionModeles
-from transcription_bench.instance import InstanceDejaActive, VerrouInstance
-from transcription_bench.moteurs import InstallationMoteurs
-from transcription_bench.operations import CreneauOperations
-from transcription_bench.recuperation import (
-    EtatAnterieurNonTraitable,
-    recuperer_executions_anterieures,
+from transcription_bench.command_session import (
+    CODE_ECHEC,
+    CODE_REFUS,
+    CommandSpec,
+    run_session,
 )
-from transcription_bench.supervision import (
-    GestionnaireSignaux,
-    NettoyageArret,
-)
+from transcription_bench.composition import SessionRefused, open_data_session
+from transcription_bench.output import add_json_option, configure_utf8_streams
+from transcription_bench.supervision import GestionnaireSignaux
 from transcription_bench.web import ConfigApplication, ServicesApplication, create_app
 
 DESCRIPTION = (
@@ -71,8 +66,26 @@ ADRESSE_ECOUTE = "127.0.0.1"
 THREADS_REQUETES = 4
 TAILLE_MAX_CORPS_SERVEUR = 1024 * 1024
 
-CODE_REFUS = 2
-CODE_ECHEC = 1
+#: Commandes à résultat unique enregistrées publiquement : aucune pour l'instant ;
+#: les tests les injectent par `main(commandes=...)`.
+COMMANDS: tuple[CommandSpec, ...] = ()
+
+COMMAND_SERVE = "serve"
+EXIT_CODES_HELP = (
+    "codes de sortie :\n"
+    "  0  succès ou arrêt normal\n"
+    "  1  échec (port indisponible, libération du verrou impossible)\n"
+    "  2  refus ou argument invalide (verrou tenu, état antérieur non traitable)"
+)
+COMMAND_EXIT_CODES_HELP = (
+    "codes de sortie :\n"
+    "  0  succès\n"
+    "  1  échec de l'opération (installation, téléchargement, exécution en erreur,\n"
+    "     vérification en échec ou audio en erreur)\n"
+    "  2  refus ou argument invalide (verrou tenu, ressource non prête, dépôt incompatible)\n"
+    "  3  interrompu par un signal (Ctrl+C, SIGTERM sous Linux)"
+)
+PORT_HELP = f"port d'écoute local sur {ADRESSE_ECOUTE} (défaut : {PORT_DEFAUT})"
 
 
 def port_valide(valeur: str) -> int:
@@ -87,23 +100,94 @@ def port_valide(valeur: str) -> int:
     return port
 
 
-def construire_analyseur() -> argparse.ArgumentParser:
-    """Construit l'analyseur d'arguments, sans aucune lecture ni écriture."""
-    analyseur = argparse.ArgumentParser(prog="transcription-bench", description=DESCRIPTION)
+def construire_analyseur(
+    commands: Sequence[CommandSpec] = (),
+) -> argparse.ArgumentParser:
+    """Construit l'analyseur d'arguments, sans aucune lecture ni écriture.
+
+    Sans sous-commande, la racine lance `serve` (`set_defaults`). La racine et
+    `serve` portent `--port` ; celui de `serve` a `default=argparse.SUPPRESS`
+    pour ne pas réécrire le port donné avant la sous-commande. Aucune autre
+    option n'est acceptée par `serve` (pas de `--json`). `commands` ajoute un
+    sous-analyseur par commande ; `serve` et les noms dupliqués sont refusés.
+    """
+    analyseur = argparse.ArgumentParser(
+        prog="transcription-bench",
+        description=DESCRIPTION,
+        epilog=(
+            "Sans sous-commande, le serveur web est lancé comme avec « serve ».\n\n"
+            + EXIT_CODES_HELP
+            + "\n\nLes commandes ont leurs propres codes de sortie : voir leur aide."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        add_help=False,
+    )
+    _add_help_option(analyseur)
     analyseur.add_argument(
         "--port",
         type=port_valide,
         default=PORT_DEFAUT,
         metavar="N",
-        help=f"port d'écoute local sur {ADRESSE_ECOUTE} (défaut : {PORT_DEFAUT})",
+        help=PORT_HELP,
     )
+    subcommands = analyseur.add_subparsers(
+        dest="command", title="sous-commandes"
+    )
+    # Après `add_subparsers` : l'action de sous-commande reprend ce défaut.
+    analyseur.set_defaults(command=COMMAND_SERVE)
+    serve = subcommands.add_parser(
+        COMMAND_SERVE,
+        help="lance le serveur web local (commande par défaut)",
+        description=f"Lance le serveur web local sur {ADRESSE_ECOUTE}.",
+        epilog=EXIT_CODES_HELP,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        add_help=False,
+    )
+    _add_help_option(serve)
+    serve.add_argument(
+        "--port",
+        type=port_valide,
+        default=argparse.SUPPRESS,
+        metavar="N",
+        help=PORT_HELP,
+    )
+    reserved_names = {COMMAND_SERVE}
+    for command in commands:
+        if command.name in reserved_names:
+            raise ValueError(
+                f"nom de commande dupliqué ou réservé : {command.name!r}"
+            )
+        reserved_names.add(command.name)
+        command_parser = subcommands.add_parser(
+            command.name,
+            help=command.help_text,
+            description=command.help_text,
+            epilog=COMMAND_EXIT_CODES_HELP,
+            formatter_class=argparse.RawDescriptionHelpFormatter,
+            add_help=False,
+        )
+        _add_help_option(command_parser)
+        command.configure(command_parser)
+        add_json_option(command_parser)
     return analyseur
+
+
+def _add_help_option(analyseur: argparse.ArgumentParser) -> None:
+    """Ajoute `-h/--help` avec un libellé français."""
+    analyseur.add_argument(
+        "-h",
+        "--help",
+        action="help",
+        default=argparse.SUPPRESS,
+        help="affiche cette aide et quitte",
+    )
 
 
 def main(
     argv: list[str] | None = None,
     *,
     recuperer: Callable[[Path], None] | None = None,
+    commands: Sequence[CommandSpec] | None = None,
 ) -> int:
     """Verrouille, récupère, prépare, sert, puis libère le verrou.
 
@@ -112,91 +196,78 @@ def main(
     survivant vérifié et clôt en `abandoned` les exécutions restées en cours, ou
     refuse le démarrage avec un code non nul si un état douteux subsiste. Elle
     n'est jamais appelée si une autre instance tient déjà le verrou.
-    """
-    arguments = construire_analyseur().parse_args(argv)
-    dossier_data = paths.DOSSIER_DATA
-    try:
-        verrou = VerrouInstance(dossier_data).acquerir()
-    except InstanceDejaActive as erreur:
-        _signaler(str(erreur))
-        return CODE_REFUS
-    except OSError as erreur:
-        _signaler(f"verrou d'instance indisponible dans {dossier_data} : {erreur}")
-        return CODE_REFUS
 
-    recuperation = (
-        recuperer_executions_anterieures if recuperer is None else recuperer
-    )
-    nettoyage: NettoyageArret | None = None
+    Toute sous-commande autre que `serve` est une commande de `commands`,
+    exécutée par `command_session.run_session` (session close dans tous les cas).
+    """
+    # Avant l'analyse : l'aide écrit aussi sur la sortie standard.
+    configure_utf8_streams(sys.stdout, sys.stderr)
+    if commands is None:
+        commands = COMMANDS
+    arguments = construire_analyseur(commands).parse_args(argv)
+    dossier_data = paths.DOSSIER_DATA
+    if arguments.command != COMMAND_SERVE:
+        command = next(c for c in commands if c.name == arguments.command)
+        return run_session(
+            dossier_data,
+            lambda services, signal_flag: command.run(arguments, services, signal_flag),
+            recover=recuperer,
+        )
+    try:
+        session = open_data_session(dossier_data, recover=recuperer)
+    except SessionRefused as erreur:
+        _signaler(str(erreur))
+        for diagnostic in erreur.diagnostics:
+            _signaler(diagnostic)
+        return CODE_REFUS if erreur.lock_released else CODE_ECHEC
+
     gestionnaire: GestionnaireSignaux | None = None
     code = 0
     try:
+        services = session.services
+        application = create_app(
+            ConfigApplication(port=arguments.port, dossier_data=dossier_data),
+            ServicesApplication(
+                creneau=services.operations,
+                moteurs=services.engines,
+                modeles=services.models,
+                executions=services.preparation,
+                execution=services.execution,
+                resultats=services.results,
+            ),
+        )
+        print(
+            f"Interface disponible : http://{ADRESSE_ECOUTE}:{arguments.port}",
+            flush=True,
+        )
+        # Les signaux d'arrêt sont surveillés autour du seul appel public
+        # `serve` : la clôture de la session suit dans le `finally` extérieur,
+        # même si Waitress intercepte l'exception levée par le gestionnaire.
+        gestionnaire = GestionnaireSignaux()
+        gestionnaire.installer()
         try:
-            recuperation(dossier_data)
-        except EtatAnterieurNonTraitable as erreur:
-            _signaler(str(erreur))
-            code = CODE_REFUS
-        else:
-            paths.preparer_dossiers_data(dossier_data)
-            creneau = CreneauOperations()
-            registre = creer_registre_fourni()
-            installation = InstallationMoteurs(dossier_data, registre, creneau)
-            modeles = GestionModeles(dossier_data, registre, creneau, installation)
-            # Le service d'exécution est construit une fois et injecté dans
-            # l'application : la supervision d'arrêt doit pouvoir terminer le
-            # moteur de l'exécution réellement en cours.
-            execution = ExecutionMoteur(dossier_data, registre, installation)
-            application = create_app(
-                ConfigApplication(port=arguments.port, dossier_data=dossier_data),
-                ServicesApplication(
-                    creneau=creneau,
-                    moteurs=installation,
-                    modeles=modeles,
-                    execution=execution,
-                ),
+            serve(
+                application,
+                host=ADRESSE_ECOUTE,
+                port=arguments.port,
+                threads=THREADS_REQUETES,
+                max_request_body_size=TAILLE_MAX_CORPS_SERVEUR,
             )
-            nettoyage = NettoyageArret(
-                verrou=verrou,
-                creneau=creneau,
-                execution=execution,
-                installation=installation,
+        except OSError as erreur:
+            _signaler(
+                f"impossible d'écouter sur http://{ADRESSE_ECOUTE}:{arguments.port} : "
+                f"{erreur}. Vérifiez qu'aucun autre programme n'utilise ce port, "
+                "puis relancez la commande avec --port N."
             )
-            print(
-                f"Interface disponible : http://{ADRESSE_ECOUTE}:{arguments.port}",
-                flush=True,
-            )
-            # Les signaux d'arrêt sont surveillés autour du seul appel public
-            # `serve` : le nettoyage applicatif suit dans le `finally` extérieur,
-            # même si Waitress intercepte l'exception levée par le gestionnaire.
-            gestionnaire = GestionnaireSignaux()
-            gestionnaire.installer()
-            try:
-                serve(
-                    application,
-                    host=ADRESSE_ECOUTE,
-                    port=arguments.port,
-                    threads=THREADS_REQUETES,
-                    max_request_body_size=TAILLE_MAX_CORPS_SERVEUR,
-                )
-            except OSError as erreur:
-                _signaler(
-                    f"impossible d'écouter sur http://{ADRESSE_ECOUTE}:{arguments.port} : "
-                    f"{erreur}. Vérifiez qu'aucun autre programme n'utilise ce port, "
-                    "puis relancez la commande avec --port N."
-                )
-                code = CODE_ECHEC
-            except (KeyboardInterrupt, SystemExit):
-                # Arrêt normal demandé par signal : le message d'arrêt et le code
-                # de sortie viennent du nettoyage, exécuté dans le `finally`.
-                code = 0
-            if gestionnaire.recu:
-                print("Arrêt du serveur.", flush=True)
+            code = CODE_ECHEC
+        except (KeyboardInterrupt, SystemExit):
+            # Arrêt normal demandé par signal : le message d'arrêt et le code
+            # de sortie viennent de la clôture, exécutée dans le `finally`.
+            code = 0
+        if gestionnaire.recu:
+            print("Arrêt du serveur.", flush=True)
     finally:
-        if nettoyage is None:
-            # Refus de récupération ou échec avant le service : aucun travail de
-            # fond ne peut exister, seul le verrou d'instance est à libérer.
-            nettoyage = NettoyageArret(verrou=verrou)
-        if not nettoyage.executer():
+        if not session.close():
             code = CODE_ECHEC
         if gestionnaire is not None:
             # Rétablissement seulement après la clôture : après un signal, il
