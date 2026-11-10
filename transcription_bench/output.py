@@ -209,9 +209,9 @@ def output_from_arguments(
 
 # --- Sérialiseurs par vue -------------------------------------------------
 #
-# Chaque sérialiseur liste ses champs explicitement. Les propriétés calculées
-# des vues (`simule`, `annotation_ram`, `indicateurs`, `lisible`, ...) sont
-# appelées ici et non recalculées.
+# Chaque sérialiseur liste ses champs explicitement et lit les propriétés
+# calculées disponibles. Pour une liste d'exécutions, la marque de simulation
+# est dérivée des marques existantes, sans conclure si elles sont inconnues.
 
 
 def _simulated(markers: Sequence[str] | None) -> bool | None:

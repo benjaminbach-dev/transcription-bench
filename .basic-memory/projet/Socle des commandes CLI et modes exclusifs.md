@@ -33,3 +33,12 @@ Développement serveur du change `ajouter-cli-agent`, à partir de `7ce5cc1` sur
 ## Relations
 
 - relates_to [[Décisions du prototype de benchmark]]
+
+## Lot de lecture CLI — 2026-11-10
+
+- [status] Tâches 2.1 à 2.6 vérifiées : audios/dossiers, moteurs et journaux, inventaire modèles, options de préparation, résultats groupés/historique/aide, détail et comparaison. Les exigences et coches restent dans OpenSpec.
+- [decision] À la demande de l'utilisateur, chevaucher travail du worker suivant et contrôles principaux uniquement sur des fichiers distincts ; pas d'édition concurrente des fichiers communs. Nouveaux appels advisor suspendus depuis sa demande explicite.
+- [implementation] Le texte d'aide est extrait dans `web/results_help.py` et rendu par un gabarit échappé. Comparaison ponctuelle du texte visible intégral, exemples compris, avec la version précédente : identique après normalisation des espaces. Les contrôles documentaires portent désormais sur la page réellement rendue.
+- [validation] Dernière vérification principale du lot : 107 tests ciblés commandes/CLI/aide/documentation/CSP réussis. Un test redondant de l'aide a été retiré ; aucun nouveau test pour la seule différence de mise en page.
+- [limit] Hyper a refusé le worker 2.5 avec HTTP402 (crédits épuisés). Repli vers Anthropic Haiku5.5high explicitement autorisé par l'utilisateur et effectué ; le nouveau worker a repris les fichiers sans recommencer la tâche. Une reprise de session conservait le modèle Hyper : un nouveau worker Haiku a été nécessaire.
+- [limit] Pas de qualification réelle Linux/Windows des commandes, aucune inférence ou téléchargement de poids. Les neuf avertissements de longueur OpenSpec restent à traiter avant validation finale.

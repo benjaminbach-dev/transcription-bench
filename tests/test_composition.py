@@ -39,6 +39,7 @@ class ServicesAssemblyTest(unittest.TestCase):
 
         services = assemble_services(self.base, operations=operations)
 
+        self.assertIs(services.data_dir, self.base)
         self.assertIs(services.operations, operations)
         self.assertIsInstance(services.engines, InstallationMoteurs)
         self.assertIsInstance(services.models, GestionModeles)

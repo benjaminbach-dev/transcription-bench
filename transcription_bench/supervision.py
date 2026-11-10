@@ -160,11 +160,12 @@ def signaux_supervises() -> Iterator[GestionnaireSignaux]:
 class SignalFlag:
     """Drapeau d'arrêt d'une commande (tâche 1.5) : enregistre, ne lève jamais.
 
-    Le premier signal d'arrêt normal est noté (`received`, `signal_number`) ; la boucle de
-    suivi de `operation_watch` le constate et engage l'arrêt de l'opération. Les
-    signaux suivants sont seulement comptés (`ignored_count`) : ils n'interrompent
-    ni la clôture ni l'écriture du journal. Les gestionnaires précédents sont
-    rétablis à la sortie du bloc `with`.
+    Le premier signal d'arrêt normal est noté (`received`, `signal_number`).
+    Le suivi constate ce drapeau et engage l'arrêt de l'opération. Les signaux
+    suivants sont comptés (`ignored_count`) sans interrompre la clôture ni
+    l'écriture. Les gestionnaires précédents sont rétablis à la sortie du bloc
+    `with`, sauf si une clôture incomplète exige de les ignorer jusqu'à la fin
+    réelle du processus.
     """
 
     def __init__(self, signals: Sequence[int] | None = None) -> None:

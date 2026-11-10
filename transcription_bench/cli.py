@@ -6,6 +6,9 @@ moteur survivant, clôture en état `abandoned`, nettoyage des restes du dossier
 de travail, refus explicite si un état douteux subsiste), préparation des
 dossiers, création de l'application, puis service HTTP par la seule API publique
 `waitress.serve`.
+Les commandes (`audios list`, `data check`, …) partagent cette même session :
+verrou, récupération, préparation, services injectés (design D2/D3) ; le `--port`
+donné à la racine n'est accepté que pour `serve` et refusé sinon.
 Une seconde instance est donc refusée avant toute récupération et sans toucher
 aux données existantes. Un port occupé produit un message clair, un code de
 sortie non nul, sans trace, et le verrou est libéré.
@@ -47,9 +50,11 @@ from transcription_bench import paths
 from transcription_bench.command_session import (
     CODE_ECHEC,
     CODE_REFUS,
+    CommandGroup,
     CommandSpec,
     run_session,
 )
+from transcription_bench.commands import COMMANDS
 from transcription_bench.composition import SessionRefused, open_data_session
 from transcription_bench.output import add_json_option, configure_utf8_streams
 from transcription_bench.supervision import GestionnaireSignaux
@@ -66,9 +71,8 @@ ADRESSE_ECOUTE = "127.0.0.1"
 THREADS_REQUETES = 4
 TAILLE_MAX_CORPS_SERVEUR = 1024 * 1024
 
-#: Commandes à résultat unique enregistrées publiquement : aucune pour l'instant ;
-#: les tests les injectent par `main(commandes=...)`.
-COMMANDS: tuple[CommandSpec, ...] = ()
+#: Registre public importé de `transcription_bench.commands` ; les tests
+#: injectent leurs propres groupes ou commandes par `main(commands=...)`.
 
 COMMAND_SERVE = "serve"
 EXIT_CODES_HELP = (
@@ -100,16 +104,50 @@ def port_valide(valeur: str) -> int:
     return port
 
 
+#: Message de refus du `--port` racine devant une commande autre que `serve` :
+#: un port silencieusement ignoré serait un piège pour l'appelant.
+PORT_OUTSIDE_SERVE_MESSAGE = (
+    "l'option --port ne s'applique qu'au serveur web : utilisez « serve --port N » "
+    "ou lancez le programme sans sous-commande"
+)
+
+
+class RootPortAction(argparse.Action):
+    """Consigne un `--port` donné à la racine, pour le refuser hors `serve`.
+
+    La valeur est stockée comme l'action standard ; seul le drapeau
+    `explicit_port` est ajouté, relu par `main` une fois la sous-commande
+    connue : à l'analyse, l'action précède forcément la sous-commande.
+    """
+
+    def __call__(
+        self,
+        parser: argparse.ArgumentParser,
+        namespace: argparse.Namespace,
+        values: int,
+        option_string: str | None = None,
+    ) -> None:
+        setattr(namespace, self.dest, values)
+        namespace.explicit_port = True
+
+
 def construire_analyseur(
-    commands: Sequence[CommandSpec] = (),
+    commands: Sequence[CommandSpec | CommandGroup] = (),
 ) -> argparse.ArgumentParser:
     """Construit l'analyseur d'arguments, sans aucune lecture ni écriture.
 
     Sans sous-commande, la racine lance `serve` (`set_defaults`). La racine et
     `serve` portent `--port` ; celui de `serve` a `default=argparse.SUPPRESS`
-    pour ne pas réécrire le port donné avant la sous-commande. Aucune autre
-    option n'est acceptée par `serve` (pas de `--json`). `commands` ajoute un
-    sous-analyseur par commande ; `serve` et les noms dupliqués sont refusés.
+    pour ne pas réécrire le port donné avant la sous-commande, et celui de la
+    racine est refusé devant toute commande autre que `serve` (il ne sert alors
+    à rien : voir `RootPortAction` et `PORT_OUTSIDE_SERVE_MESSAGE`). Aucune autre option
+    n'est acceptée par `serve` (pas de `--json`).
+
+    `commands` ajoute un sous-analyseur par commande ou groupe : une `CommandSpec`
+    s'enregistre directement, un `CommandGroup` crée un analyseur de groupe
+    dont les feuilles sont ses `commands` (une invocation sans feuille est
+    refusée). `--json` appartient aux feuilles, jamais au groupe ni à `serve`.
+    `serve` et les noms dupliqués sont refusés.
     """
     analyseur = argparse.ArgumentParser(
         prog="transcription-bench",
@@ -127,6 +165,7 @@ def construire_analyseur(
         "--port",
         type=port_valide,
         default=PORT_DEFAUT,
+        action=RootPortAction,
         metavar="N",
         help=PORT_HELP,
     )
@@ -134,7 +173,7 @@ def construire_analyseur(
         dest="command", title="sous-commandes"
     )
     # Après `add_subparsers` : l'action de sous-commande reprend ce défaut.
-    analyseur.set_defaults(command=COMMAND_SERVE)
+    analyseur.set_defaults(command=COMMAND_SERVE, explicit_port=False)
     serve = subcommands.add_parser(
         COMMAND_SERVE,
         help="lance le serveur web local (commande par défaut)",
@@ -158,18 +197,47 @@ def construire_analyseur(
                 f"nom de commande dupliqué ou réservé : {command.name!r}"
             )
         reserved_names.add(command.name)
-        command_parser = subcommands.add_parser(
-            command.name,
-            help=command.help_text,
-            description=command.help_text,
-            epilog=COMMAND_EXIT_CODES_HELP,
-            formatter_class=argparse.RawDescriptionHelpFormatter,
-            add_help=False,
-        )
-        _add_help_option(command_parser)
-        command.configure(command_parser)
-        add_json_option(command_parser)
+        if isinstance(command, CommandGroup):
+            group_parser = subcommands.add_parser(
+                command.name,
+                help=command.help_text,
+                description=command.help_text,
+                epilog=COMMAND_EXIT_CODES_HELP,
+                formatter_class=argparse.RawDescriptionHelpFormatter,
+                add_help=False,
+            )
+            _add_help_option(group_parser)
+            leaves = group_parser.add_subparsers(
+                dest="subcommand", title="sous-commandes", required=True
+            )
+            leaf_names: set[str] = set()
+            for leaf in command.commands:
+                if leaf.name in leaf_names:
+                    raise ValueError(
+                        f"nom de sous-commande dupliqué : {leaf.name!r}"
+                    )
+                leaf_names.add(leaf.name)
+                _add_leaf(leaves, leaf)
+        else:
+            _add_leaf(subcommands, command)
     return analyseur
+
+
+def _add_leaf(
+    subcommands: argparse._SubParsersAction, command: CommandSpec
+) -> None:
+    """Enregistre une commande feuille : arguments propres, puis `--json`."""
+    command_parser = subcommands.add_parser(
+        command.name,
+        help=command.help_text,
+        description=command.help_text,
+        epilog=COMMAND_EXIT_CODES_HELP,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        add_help=False,
+    )
+    _add_help_option(command_parser)
+    command.configure(command_parser)
+    add_json_option(command_parser)
 
 
 def _add_help_option(analyseur: argparse.ArgumentParser) -> None:
@@ -187,7 +255,7 @@ def main(
     argv: list[str] | None = None,
     *,
     recuperer: Callable[[Path], None] | None = None,
-    commands: Sequence[CommandSpec] | None = None,
+    commands: Sequence[CommandSpec | CommandGroup] | None = None,
 ) -> int:
     """Verrouille, récupère, prépare, sert, puis libère le verrou.
 
@@ -198,16 +266,24 @@ def main(
     n'est jamais appelée si une autre instance tient déjà le verrou.
 
     Toute sous-commande autre que `serve` est une commande de `commands`,
-    exécutée par `command_session.run_session` (session close dans tous les cas).
+    exécutée par `command_session.run_session` (session close dans tous les cas) ;
+    un groupe y est résolu jusqu'à sa feuille (`find_command`). Le `--port` donné
+    à la racine est refusé avant toute session quand la commande n'est pas
+    `serve`.
     """
     # Avant l'analyse : l'aide écrit aussi sur la sortie standard.
     configure_utf8_streams(sys.stdout, sys.stderr)
     if commands is None:
         commands = COMMANDS
-    arguments = construire_analyseur(commands).parse_args(argv)
+    analyseur = construire_analyseur(commands)
+    arguments = analyseur.parse_args(argv)
+    if arguments.command != COMMAND_SERVE and arguments.explicit_port:
+        # Refus avant toute session : le port racine ne sert à rien ici et ne
+        # doit pas être ignoré silencieusement.
+        analyseur.error(PORT_OUTSIDE_SERVE_MESSAGE)
     dossier_data = paths.DOSSIER_DATA
     if arguments.command != COMMAND_SERVE:
-        command = next(c for c in commands if c.name == arguments.command)
+        command = find_command(commands, arguments)
         return run_session(
             dossier_data,
             lambda services, signal_flag: command.run(arguments, services, signal_flag),
@@ -279,6 +355,28 @@ def main(
 def _signaler(message: str) -> None:
     """Écrit un message d'erreur en français sur la sortie d'erreur, sans trace."""
     print(f"transcription-bench : {message}", file=sys.stderr, flush=True)
+
+
+def find_command(
+    commands: Sequence[CommandSpec | CommandGroup], arguments: argparse.Namespace
+) -> CommandSpec:
+    """Renvoie la commande feuille visée par les arguments analysés.
+
+    `argparse` a déjà validé les noms de groupes et de feuilles ; les branches
+    d'échec ne servent qu'à ne pas laisser passer silencieusement un
+    enregistrement incohérent entre l'analyseur et le registre des commandes.
+    """
+    for command in commands:
+        if command.name != arguments.command:
+            continue
+        if isinstance(command, CommandGroup):
+            leaf_name = getattr(arguments, "subcommand", None)
+            for leaf in command.commands:
+                if leaf.name == leaf_name:
+                    return leaf
+            raise ValueError(f"sous-commande introuvable : {leaf_name!r}")
+        return command
+    raise ValueError(f"commande introuvable : {arguments.command!r}")
 
 
 if __name__ == "__main__":

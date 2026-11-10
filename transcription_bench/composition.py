@@ -41,12 +41,15 @@ from transcription_bench.supervision import NettoyageArret
 class DataServices:
     """Services reliés pour un même dossier de données.
 
-    `operations` est l'unique créneau d'opération longue ; `engines` le service
-    d'installation, `models` la gestion des modèles, `preparation` la
-    préparation des exécutions, `execution` le lancement supervisé et `results`
-    la consultation en lecture seule.
+    `data_dir` est la racine des données de la session : les commandes de la
+    CLI y trouvent le dossier dont elles décrivent l'état, sans le déduire
+    d'une globale. `operations` est l'unique créneau d'opération longue ;
+    `engines` le service d'installation, `models` la gestion des modèles,
+    `preparation` la préparation des exécutions, `execution` le lancement
+    supervisé et `results` la consultation en lecture seule.
     """
 
+    data_dir: Path
     operations: CreneauOperations
     registry: RegistreMoteurs
     engines: InstallationMoteurs
@@ -101,6 +104,7 @@ def assemble_services(
         ConsultationResultats(data_dir) if results is None else results
     )
     return DataServices(
+        data_dir=data_dir,
         operations=operations,
         registry=resolved_registry,
         engines=resolved_engines,

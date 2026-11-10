@@ -4,15 +4,19 @@ from __future__ import annotations
 
 import ast
 import re
+import tempfile
 import unittest
 from pathlib import Path
+
+from tests.test_aide_resultats_web import texte_visible
+from tests.test_web import ADRESSE_LOCALE, PORT_TEST
+from transcription_bench.operations import CreneauOperations
+from transcription_bench.web import ConfigApplication, ServicesApplication, create_app
 
 RACINE = Path(__file__).resolve().parent.parent
 GUIDE = RACINE / "docs" / "guide-utilisateur.md"
 README = RACINE / "README.md"
 DOSSIER_WEB = RACINE / "transcription_bench" / "web"
-#: Page d'aide locale des résultats, servie sur `/resultats/aide`.
-AIDE_RESULTATS = DOSSIER_WEB / "templates" / "aide_resultats.html"
 #: Début de la note du guide sur le contexte de l'ordinateur (tâche 3.2).
 NOTE_CONTEXTE = "*Contexte de l'ordinateur.*"
 
@@ -101,6 +105,25 @@ def note_contexte(texte: str) -> str:
     fin = texte.find("\n", debut)
     return texte[debut : fin if fin >= 0 else len(texte)]
 
+def help_text() -> str:
+    """Texte visible de la page « Comprendre les indicateurs », rendue par l'application.
+
+    La route `/resultats/aide` rend le gabarit à partir de la source unique
+    (`web/results_help.py`) : le contrôle porte sur le texte réellement affiché,
+    sans balisage, et non sur la mise en page du module source.
+    """
+    with tempfile.TemporaryDirectory() as temporary:
+        application = create_app(
+            ConfigApplication(port=PORT_TEST, dossier_data=Path(temporary) / "data"),
+            ServicesApplication(creneau=CreneauOperations()),
+        )
+        response = application.test_client().get(
+            "/resultats/aide", base_url=f"http://{ADRESSE_LOCALE}:{PORT_TEST}"
+        )
+    if response.status_code != 200:
+        raise AssertionError(f"page d'aide non servie : {response.status_code}")
+    return texte_visible(response.get_data(as_text=True))
+
 class DocumentationTest(unittest.TestCase):
     def test_libelles_en_gras_existent_dans_l_interface(self) -> None:
         interface = sources_interface()
@@ -185,7 +208,7 @@ class GuideContexteOrdinateurTest(unittest.TestCase):
 
     def test_note_et_aide_locale_disent_les_memes_limites(self) -> None:
         note = note_contexte(lire(GUIDE))
-        aide = lire(AIDE_RESULTATS)
+        aide = help_text()
         for terme in (
             "autres programmes",
             "un instant donné",

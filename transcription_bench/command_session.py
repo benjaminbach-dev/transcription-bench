@@ -19,7 +19,9 @@ session et le passe à l'action, qui le consulte ; un signal reçu pendant la
 récupération n'interrompt donc rien brutalement, et l'action n'est pas appelée.
 
 `CommandSpec` décrit une commande pour `cli` : nom, aide, arguments et action.
-Aucune commande publique n'est enregistrée à ce stade ; les tests les injectent.
+`CommandGroup` rassemble des feuilles sous un même nom de groupe. Les commandes
+publiques (groupes « audios », « data », …) vivent dans
+`transcription_bench.commands` ; les tests injectent leurs propres commandes.
 """
 
 from __future__ import annotations
@@ -56,6 +58,21 @@ class CommandSpec:
     help_text: str
     configure: Callable[[argparse.ArgumentParser], None]
     run: Callable[[argparse.Namespace, DataServices, SignalFlag], int]
+
+
+@dataclass(frozen=True)
+class CommandGroup:
+    """Groupe de sous-commandes publié sous un même nom (par exemple « audios »).
+
+    Le groupe porte l'aide commune ; ses feuilles sont des `CommandSpec`
+    enregistrées comme sous-commandes du groupe. Aucun argument ne s'ajoute au
+    groupe lui-même : ni `--json` ni option, tout appartient aux feuilles, et une
+    invocation sans feuille est refusée à l'analyse des arguments (code 2).
+    """
+
+    name: str
+    help_text: str
+    commands: tuple[CommandSpec, ...]
 
 
 def run_session(

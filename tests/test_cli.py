@@ -287,13 +287,20 @@ class SubcommandsTest(unittest.TestCase):
             ["--port", "65536", "serve"],
             ["serve", "--port"],
             ["--port", "8080", "serve", "--port", "0"],
+            # Un groupe sans feuille, et `--json` qui n'appartient qu'aux feuilles.
+            ["audios"],
+            ["audios", "--json"],
+            # Le `--port` racine devant une commande autre que `serve` est
+            # explicitement refusé, jamais ignoré silencieusement.
+            ["--port", "8080", "audios", "list"],
         )
         for argv in cases:
             with self.subTest(argv=argv):
+                erreur = io.StringIO()
                 with (
                     mock.patch.object(cli, "serve") as serve_mock,
                     mock.patch.object(cli, "open_data_session") as open_session,
-                    contextlib.redirect_stderr(io.StringIO()),
+                    contextlib.redirect_stderr(erreur),
                     contextlib.redirect_stdout(io.StringIO()),
                 ):
                     with self.assertRaises(SystemExit) as exit_error:
@@ -302,6 +309,8 @@ class SubcommandsTest(unittest.TestCase):
                 self.assertEqual(exit_error.exception.code, 2)
                 serve_mock.assert_not_called()
                 open_session.assert_not_called()
+                if "--port" in argv and "serve" not in argv:
+                    self.assertIn("--port", erreur.getvalue())
         self.assertFalse(self.base.exists())
 
     def test_french_help_without_data_read_or_write(self) -> None:
@@ -337,6 +346,11 @@ class SubcommandsTest(unittest.TestCase):
             (["serve", "--help"], 0),
             (["serve", "--json"], 2),
             (["foo"], 2),
+            # Aide des groupes en français, sans lecture ni écriture de `data/`.
+            (["audios", "--help"], 0),
+            (["data", "--help"], 0),
+            (["audios"], 2),
+            (["--port", "8080", "audios", "list"], 2),
         )
         for argv, expected_code in cases:
             with self.subTest(argv=argv):

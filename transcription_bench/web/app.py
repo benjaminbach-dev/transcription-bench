@@ -164,6 +164,7 @@ from transcription_bench.paths import (
     preparer_dossiers_data,
 )
 from transcription_bench.resultats import MOTIF_IDENTIFIANT
+from transcription_bench.web.results_help import RESULTS_HELP
 from transcription_bench.web.vues_modeles import (
     formater_taille_modele,
     vues_modeles_locaux,
@@ -373,6 +374,9 @@ def create_app(config: ConfigApplication, services: ServicesApplication) -> Flas
         formater_memoire_premier_niveau=formater_memoire_premier_niveau,
         formater_pourcentage_premier_niveau=formater_pourcentage_premier_niveau,
         formater_taille_modele=formater_taille_modele,
+        # Source unique du texte d'aide des indicateurs (design D7) : le
+        # gabarit `aide_resultats.html` ne fait que la rendre, échappée.
+        results_help=RESULTS_HELP,
     )
     application.extensions[NOM_CHAMP_JETON] = jeton
     hotes = frozenset(f"{adresse}:{config.port}" for adresse in HOTES_AUTORISES)
