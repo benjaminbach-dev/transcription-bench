@@ -16,10 +16,15 @@ fichiers simulés, sans poids réels) puis relus par le service d'inventaire.
 from __future__ import annotations
 
 import contextlib
+import functools
 import io
 import json
+import os
+import signal
 import tempfile
+import threading
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from unittest import mock
 
@@ -36,7 +41,16 @@ from tests.test_consultation_resultats import (
     execution_complete,
     run_json,
 )
-from tests.test_audios import ecrire_wav
+from tests.entetes_gguf_de_test import entete_gguf
+from tests.test_verification_modeles import (
+    COMMIT,
+    CONTENUS_CTRANSLATE2,
+    SECRET_FACTICE,
+    FauxClient,
+    infos_de,
+)
+from tests.test_audios import ecrire_wav, ecrire_wav_sans_echantillon
+from tests.test_gestion_modeles import FauxClientTelechargement
 from engines.declarations import (
     DECLARATION_FACTICE,
     DeclarationAdaptateur,
@@ -44,7 +58,15 @@ from engines.declarations import (
 )
 from engines.mesures_systeme import PROVENANCE_REELLE
 from engines.registre import RegistreMoteurs
-from transcription_bench import cli, commands, composition, paths
+from transcription_bench import (
+    cli,
+    commands,
+    composition,
+    gestion_modeles,
+    moteurs,
+    operations,
+    paths,
+)
 from transcription_bench.executions import (
     CLE_MODELE_FACTICE,
     LIBELLE_MODELE_FACTICE,
@@ -57,13 +79,40 @@ from transcription_bench.gestion_modeles import (
 )
 from transcription_bench.instance import VerrouInstance
 from transcription_bench.consultation_resultats import CLE_OBSERVATION_AUDIO
-from transcription_bench.moteurs import SUFFIXE_JOURNAL
+from transcription_bench.command_session import (
+    CODE_ECHEC,
+    CODE_INTERRUPTED,
+    CODE_REFUS,
+    CODE_SUCCESS,
+)
+from transcription_bench.compatibilite_modeles import (
+    RAISON_FICHIER_GGUF_DECOUPE,
+    RAISON_FICHIER_GGUF_NON_CHOISI,
+    RAISON_FICHIERS_MANQUANTS,
+)
+from transcription_bench.moteurs import (
+    ETAT_PRET,
+    SUFFIXE_JOURNAL,
+    EtatMoteur,
+    ExecuteurCommandes,
+    InstallationMoteurs,
+    ResultatCommande,
+)
+from transcription_bench.operation_watch import LOG_EVENT
 from transcription_bench.output import DIAGNOSTIC_PREFIX
 from transcription_bench.resultats import (
     ETAT_ABANDONNEE,
     ETAT_INTERROMPUE,
     ETAT_TERMINEE,
     STATUT_NON_TRAITE,
+)
+from transcription_bench.verification_modeles import (
+    MESSAGES_ERREUR,
+    RAISON_ACCES_REFUSE,
+    RAISON_ERREUR_INATTENDUE,
+    RAISON_RESEAU_INDISPONIBLE,
+    ErreurClientModeles,
+    VerificationModeles,
 )
 from transcription_bench.web.app import MESSAGE_RESULTAT_NON_INTERPRETABLE
 
@@ -79,6 +128,23 @@ ENGINE_STATE_KEYS = [
     "note",
     "date_installation",
     "versions",
+]
+#: Clés d'un résultat de vérification, dans l'ordre du sérialiseur (tâche 3.2).
+VERIFICATION_RESULT_KEYS = [
+    "accepte",
+    "identifiant",
+    "moteur",
+    "famille",
+    "commit",
+    "id_resolu",
+    "fichiers",
+    "taille_totale",
+    "gguf_candidats",
+    "fichier_gguf",
+    "raison",
+    "message",
+    "fichiers_manquants",
+    "moteur_suggere",
 ]
 #: Clés d'un modèle local, dans l'ordre du sérialiseur (tâche 2.3).
 LOCAL_MODEL_KEYS = [
@@ -129,12 +195,34 @@ COMPARISON_KEYS = [
     "cartes",
     "synthese",
 ]
+#: Clés d'un audio d'exécution, dans l'ordre du sérialiseur (tâche 3.5).
+RUN_AUDIO_KEYS = [
+    "index",
+    "nom",
+    "prepare",
+    "evenement",
+    "erreur",
+    "factice",
+    "synthetique",
+    "non_traite",
+]
 JSON_SNAPSHOT_KEYS = {
     ("audios", "list"): ["schema", "input_dir", "audios"],
     ("data", "check"): ["schema", "data_dir", "folders"],
     ("engines", "list"): ["schema", "engines"],
     ("engines", "log"): ["schema", "engine", "name", "factice", "limit", "lines"],
+    ("engines", "install"): ["schema", "engine", "operation", "error", "state"],
     ("models", "list"): ["schema", "models"],
+    ("models", "check"): ["schema", "operation", "verification"],
+    ("models", "download"): [
+        "schema",
+        "verification_operation",
+        "download_operation",
+        "already_ready",
+        "verification",
+        "reference",
+    ],
+    ("models", "delete"): ["schema", "engine", "key", "deleted"],
     ("run", "options"): [
         "schema",
         "models",
@@ -142,12 +230,28 @@ JSON_SNAPSHOT_KEYS = {
         "preparation",
         "boolean_values",
     ],
+    ("run", "check"): ["schema", "request"],
+    ("run", "start"): [
+        "schema",
+        "operation",
+        "error",
+        "identifiant_resultat",
+        "execution",
+    ],
     ("results", "list"): ["schema", "sort", "groups"],
     ("results", "history"): ["schema", "executions"],
     ("results", "explain"): ["schema", "title", "intro", "sections"],
     ("results", "show"): ["schema", *RUN_DETAIL_KEYS],
     ("compare",): ["schema", *COMPARISON_KEYS],
 }
+#: Clés d'un événement de journal émis en flux (tâche 3.1), commun à toute opération.
+JOURNAL_EVENT_KEYS = ["schema", "event", "operation", "generation", "line"]
+#: Clés de l'événement « revision » publié avant un transfert (tâche 3.3).
+REVISION_EVENT_KEYS = ["schema", "event", "revision", "taille_totale"]
+#: Durée maximale d'attente d'un signal dans le faux exécuteur (tâche 3.1).
+DELAI_TEST = 30.0
+#: Interpréteur simulé d'un venv, relatif au dossier du moteur (tâche 3.1).
+INTERPRETEUR_VENV = ("Scripts", "python.exe") if os.name == "nt" else ("bin", "python")
 #: Clés d'un modèle proposable, dans l'ordre du sérialiseur (tâche 2.4).
 MODEL_OPTION_KEYS = [
     "reference",
@@ -508,6 +612,154 @@ class EnginesLogTest(CommandTestCase):
         self.assertEqual(exit_error.exception.code, 2)
 
 
+class FakeInstallationExecutor(ExecuteurCommandes):
+    """Exécuteur d'installation factice : aucun `uv`, aucun réseau, aucun moteur.
+
+    Le venv est simulé par un interpréteur vide, la sonde de préfixe rend
+    l'environnement lui-même et le contrôle d'import rend les modules demandés.
+    `sync_failure` donne un code 1 à `uv pip sync` ; `interrupt`
+    envoie SIGINT depuis le fil d'installation pendant la synchronisation, puis
+    attend `arreter` comme un `uv` tué.
+    """
+
+    def __init__(
+        self, *, sync_failure: bool = False, interrupt: bool = False
+    ) -> None:
+        self.sync_failure = sync_failure
+        self.interrupt = interrupt
+        self.calls: list[list[str]] = []
+        self._stop = threading.Event()
+
+    def executer(self, arguments, *, env, journaliser, delai=None) -> ResultatCommande:
+        self.calls.append(list(arguments))
+        if "venv" in arguments:
+            interpreter = Path(arguments[-1]).joinpath(*INTERPRETEUR_VENV)
+            interpreter.parent.mkdir(parents=True, exist_ok=True)
+            interpreter.write_text("", encoding="utf-8")
+            return ResultatCommande(code=0, sortie="")
+        if "sync" in arguments:
+            if self.interrupt:
+                signal.raise_signal(signal.SIGINT)
+                self._stop.wait(DELAI_TEST)
+                return ResultatCommande(code=-1, sortie="synchronisation arrêtée")
+            if self.sync_failure:
+                return ResultatCommande(code=1, sortie="échec simulé")
+            return ResultatCommande(code=0, sortie="")
+        if "sys.prefix" in arguments[-1]:
+            return ResultatCommande(
+                code=0, sortie=str(Path(arguments[0]).parent.parent)
+            )
+        modules = json.loads(arguments[-1])
+        return ResultatCommande(
+            code=0, sortie=json.dumps({"modules": dict.fromkeys(modules)})
+        )
+
+    def arreter(self) -> None:
+        self._stop.set()
+
+
+def with_installer(executor: ExecuteurCommandes):
+    """Service d'installation réel, dont seul l'exécuteur de commandes est remplacé."""
+    return mock.patch.object(
+        composition,
+        "InstallationMoteurs",
+        functools.partial(InstallationMoteurs, executeur=executor),
+    )
+
+
+class EnginesInstallTest(CommandTestCase):
+    """« engines install » : succès, échec, refus avant opération, interruption.
+
+    Le service d'installation est réel (contrôles, marqueur, journal, créneau) ;
+    seul son exécuteur est factice. Le moteur `faster-whisper` garde son verrou
+    du dépôt, rien n'est installé.
+    """
+
+    ENGINE = "faster-whisper"
+
+    def marker(self) -> Path:
+        return self.base / paths.NOM_DOSSIER_MOTEURS / self.ENGINE / moteurs.NOM_MARQUEUR
+
+    def test_success_streams_journal_then_ready_result(self) -> None:
+        executor = FakeInstallationExecutor()
+        with with_installer(executor):
+            code, stdout, stderr = self.run_command(
+                ["engines", "install", self.ENGINE, "--json"]
+            )
+
+        self.assertEqual(code, CODE_SUCCESS)
+        self.assertEqual(stderr, "")
+        lines = stdout.splitlines()
+        events = [json.loads(line) for line in lines[:-1]]
+        result = json.loads(lines[-1])
+        self.assertTrue(events, "le journal est streamé avant le résultat")
+        for event in events:
+            self.assertEqual(list(event.keys()), JOURNAL_EVENT_KEYS)
+            self.assertEqual(event["event"], "log")
+            self.assertEqual(event["operation"], "installation")
+        self.assertTrue(any("Moteur prêt" in event["line"] for event in events))
+        self.assertEqual(list(result.keys()), JSON_SNAPSHOT_KEYS[("engines", "install")])
+        self.assertEqual(result["schema"], 1)
+        self.assertEqual(result["engine"], self.ENGINE)
+        self.assertEqual(result["operation"], "terminee")
+        self.assertIsNone(result["error"])
+        self.assertEqual(list(result["state"].keys()), ENGINE_STATE_KEYS)
+        self.assertEqual(result["state"]["etat"], "pret")
+        self.assertTrue(self.marker().is_file())
+        self.assert_unlocked()
+
+    def test_failed_synchronisation_exits_1_with_reason_and_not_ready(self) -> None:
+        executor = FakeInstallationExecutor(sync_failure=True)
+        with with_installer(executor):
+            code, stdout, _ = self.run_command(
+                ["engines", "install", self.ENGINE, "--json"]
+            )
+
+        self.assertEqual(code, CODE_ECHEC)
+        result = json.loads(stdout.splitlines()[-1])
+        self.assertEqual(result["operation"], "echouee")
+        self.assertIn("uv pip sync a échoué", result["error"])
+        self.assertNotEqual(result["state"]["etat"], "pret")
+        self.assertFalse(self.marker().exists())
+        self.assert_unlocked()
+
+    def test_refused_before_any_operation_with_reason(self) -> None:
+        cases = (("moteur-inconnu", "moteur inconnu"), ("factice", "moteur factice"))
+        for engine, reason in cases:
+            with self.subTest(engine=engine):
+                executor = FakeInstallationExecutor()
+                with with_installer(executor):
+                    code, stdout, stderr = self.run_command(
+                        ["engines", "install", engine, "--json"]
+                    )
+
+                self.assertEqual(code, CODE_REFUS)
+                self.assertEqual(stdout, "")
+                self.assertIn(reason, stderr)
+                self.assertNotIn("Traceback", stderr)
+                self.assertEqual(executor.calls, [])
+                self.assert_unlocked()
+
+    def test_signal_during_installation_leaves_engine_not_ready(self) -> None:
+        executor = FakeInstallationExecutor(interrupt=True)
+        with with_installer(executor):
+            code, stdout, stderr = self.run_command(
+                ["engines", "install", self.ENGINE, "--json"]
+            )
+
+        self.assertEqual(code, CODE_INTERRUPTED)
+        lines = stdout.splitlines()
+        for line in lines:
+            json.loads(line)
+        result = json.loads(lines[-1])
+        self.assertEqual(result["operation"], "interrompue")
+        self.assertNotEqual(result["state"]["etat"], "pret")
+        self.assertFalse(self.marker().exists())
+        self.assertIn("arrêt demandé par signal", stderr)
+        self.assertNotIn("Traceback", stderr)
+        self.assert_unlocked()
+
+
 class ModelsListTest(CommandTestCase):
     """« models list » : inventaire mixte (prêt + manifeste incohérent), vide."""
 
@@ -660,6 +912,501 @@ class ModelsListTest(CommandTestCase):
 
         self.assertEqual((code, stderr), (0, ""))
         self.assertIn(commands.NO_MODEL_MESSAGE, text)
+        self.assert_unlocked()
+
+
+class ReadyEnginesInstallation(InstallationMoteurs):
+    """Moteurs réels déclarés prêts, sans environnement : seul l'état « prêt » compte.
+
+    Les états d'installation réels (verrou, marqueur, interpréteur) sont couverts
+    par les tests de « engines install » ; la vérification n'a besoin que de l'état
+    « prêt » du service d'installation.
+    """
+
+    def inventaire(self) -> tuple[EtatMoteur, ...]:
+        return tuple(replace(state, etat=ETAT_PRET) for state in super().inventaire())
+
+
+class ModelsCheckTest(CommandTestCase):
+    """« models check » : compatible, refus, GGUF, échecs client, refus avant vérification.
+
+    Le service de vérification est réel (règles de compatibilité, résultat publié,
+    créneau) ; seul son client distant est le faux client des tests de vérification.
+    Aucun réseau ni poids : le dossier des modèles ne reçoit aucun fichier.
+    """
+
+    ENGINE = "faster-whisper"
+    REPO = "org/modele-simule"
+    GGUF_ENGINE = "transcribe-cpp"
+    GGUF_REPO = "org/modele-gguf"
+    GGUF_F16 = "modele-f16.gguf"
+    GGUF_Q8 = "modele-q8_0.gguf"
+    GGUF_FRAGMENT = "modele-00001-of-00002.gguf"
+    GGUF_FRAGMENT_NEXT = "modele-00002-of-00002.gguf"
+
+    def check(
+        self, argv: list[str], client: FauxClient, *, ready: bool = True
+    ) -> tuple[int, str, str]:
+        """Exécute « models check » avec le client distant injecté, sans réseau."""
+        installation = ReadyEnginesInstallation if ready else InstallationMoteurs
+        verification = functools.partial(VerificationModeles, client=client)
+        with (
+            mock.patch.object(composition, "InstallationMoteurs", installation),
+            mock.patch.object(gestion_modeles, "VerificationModeles", verification),
+        ):
+            return self.run_command(["models", "check", *argv])
+
+    def assert_no_model_file(self) -> None:
+        """Aucun fichier n'a été écrit sous le dossier des modèles."""
+        models_dir = self.base / paths.NOM_DOSSIER_MODELES
+        self.assertEqual([path for path in models_dir.rglob("*") if path.is_file()], [])
+
+    def gguf_contents(self) -> dict[str, bytes]:
+        """Deux variantes GGUF ; seule la seconde porte une architecture lisible."""
+        header = entete_gguf(("general.architecture", "string", "whisper"))
+        return {
+            self.GGUF_F16: b"gguf-a-ne-pas-lire",
+            self.GGUF_Q8: header + b"poids-gguf-a-ne-pas-lire",
+        }
+
+    def test_json_compatible_repo_streams_journal_then_result(self) -> None:
+        client = FauxClient(infos_de(CONTENUS_CTRANSLATE2), CONTENUS_CTRANSLATE2)
+
+        code, stdout, stderr = self.check(
+            [self.REPO, "--engine", self.ENGINE, "--revision", "main", "--json"],
+            client,
+        )
+
+        self.assertEqual(code, CODE_SUCCESS)
+        self.assertEqual(stderr, "")
+        lines = stdout.splitlines()
+        events = [json.loads(line) for line in lines[:-1]]
+        result = json.loads(lines[-1])
+        self.assertTrue(events, "le journal est streamé avant le résultat")
+        for event in events:
+            self.assertEqual(list(event.keys()), JOURNAL_EVENT_KEYS)
+            self.assertEqual(event["operation"], "verification")
+        self.assertTrue(any("dépôt compatible" in event["line"] for event in events))
+        self.assertEqual(list(result.keys()), JSON_SNAPSHOT_KEYS[("models", "check")])
+        self.assertEqual(result["schema"], 1)
+        self.assertEqual(result["operation"], "terminee")
+        verification = result["verification"]
+        self.assertEqual(list(verification.keys()), VERIFICATION_RESULT_KEYS)
+        self.assertTrue(verification["accepte"])
+        self.assertEqual(verification["commit"], COMMIT)
+        self.assertEqual(verification["famille"], "whisper")
+        self.assertIn("model.bin", [file["nom"] for file in verification["fichiers"]])
+        self.assertEqual(
+            verification["taille_totale"],
+            sum(file["taille"] for file in verification["fichiers"]),
+        )
+        self.assertEqual(client.appels_infos, [(self.REPO, "main")])
+        self.assert_no_model_file()
+        self.assert_unlocked()
+
+    def test_text_output_names_commit_family_and_files(self) -> None:
+        client = FauxClient(infos_de(CONTENUS_CTRANSLATE2), CONTENUS_CTRANSLATE2)
+
+        code, stdout, stderr = self.check([self.REPO, "--engine", self.ENGINE], client)
+
+        self.assertEqual(code, CODE_SUCCESS)
+        self.assertEqual(stderr, "")
+        self.assertIn(f"Révision résolue : {COMMIT}", stdout)
+        self.assertIn("famille whisper", stdout)
+        self.assertIn("model.bin", stdout)
+        self.assertIn("Aucun poids n'a été téléchargé", stdout)
+        self.assert_no_model_file()
+
+    def test_incompatible_repo_exits_2_with_service_reason(self) -> None:
+        # Sans model.bin : le service refuse ; le créneau reste « terminée ».
+        contents = {
+            nom: payload
+            for nom, payload in CONTENUS_CTRANSLATE2.items()
+            if nom != "model.bin"
+        }
+        client = FauxClient(infos_de(contents), contents)
+
+        code, stdout, stderr = self.check(
+            [self.REPO, "--engine", self.ENGINE, "--json"], client
+        )
+
+        self.assertEqual(code, CODE_REFUS)
+        self.assertEqual(stderr, "")
+        result = json.loads(stdout.splitlines()[-1])
+        self.assertEqual(result["operation"], "terminee")
+        verification = result["verification"]
+        self.assertFalse(verification["accepte"])
+        self.assertEqual(verification["raison"], RAISON_FICHIERS_MANQUANTS)
+        self.assertIn("model.bin", verification["fichiers_manquants"])
+        self.assertEqual(verification["fichiers"], [])
+        self.assert_no_model_file()
+        self.assert_unlocked()
+
+    def test_gguf_without_file_is_refused_with_candidates(self) -> None:
+        contents = self.gguf_contents()
+        code, stdout, _ = self.check(
+            [self.GGUF_REPO, "--engine", self.GGUF_ENGINE, "--json"],
+            FauxClient(infos_de(contents), contents),
+        )
+
+        self.assertEqual(code, CODE_REFUS)
+        verification = json.loads(stdout.splitlines()[-1])["verification"]
+        self.assertEqual(verification["raison"], RAISON_FICHIER_GGUF_NON_CHOISI)
+        self.assertEqual(verification["gguf_candidats"], [self.GGUF_F16, self.GGUF_Q8])
+        self.assertEqual(verification["fichiers"], [])
+        self.assert_no_model_file()
+
+        # Même refus en texte : la liste vient du message du service.
+        code, stdout, _ = self.check(
+            [self.GGUF_REPO, "--engine", self.GGUF_ENGINE],
+            FauxClient(infos_de(contents), contents),
+        )
+        self.assertEqual(code, CODE_REFUS)
+        self.assertIn(f"{self.GGUF_F16}, {self.GGUF_Q8}", stdout)
+        self.assert_no_model_file()
+
+    def test_gguf_file_choice_is_passed_and_fragment_is_refused_by_service(self) -> None:
+        contents = self.gguf_contents()
+        code, stdout, _ = self.check(
+            [
+                self.GGUF_REPO,
+                "--engine",
+                self.GGUF_ENGINE,
+                "--file",
+                self.GGUF_Q8,
+                "--json",
+            ],
+            FauxClient(infos_de(contents), contents),
+        )
+
+        self.assertEqual(code, CODE_SUCCESS)
+        verification = json.loads(stdout.splitlines()[-1])["verification"]
+        self.assertTrue(verification["accepte"])
+        self.assertEqual(verification["fichier_gguf"], self.GGUF_Q8)
+        self.assertEqual(verification["famille"], "whisper")
+
+        fragments = {
+            self.GGUF_FRAGMENT: b"gguf-a-ne-pas-lire",
+            self.GGUF_FRAGMENT_NEXT: b"gguf-a-ne-pas-lire",
+        }
+        code, stdout, _ = self.check(
+            [
+                self.GGUF_REPO,
+                "--engine",
+                self.GGUF_ENGINE,
+                "--file",
+                self.GGUF_FRAGMENT,
+                "--json",
+            ],
+            FauxClient(infos_de(fragments), fragments),
+        )
+
+        self.assertEqual(code, CODE_REFUS)
+        verification = json.loads(stdout.splitlines()[-1])["verification"]
+        self.assertEqual(verification["raison"], RAISON_FICHIER_GGUF_DECOUPE)
+        self.assertEqual(verification["fichiers"], [])
+        self.assert_no_model_file()
+
+    def test_client_failures_exit_1_without_secret_or_exception_text(self) -> None:
+        cases = (
+            (ErreurClientModeles(RAISON_RESEAU_INDISPONIBLE), RAISON_RESEAU_INDISPONIBLE),
+            (ErreurClientModeles(RAISON_ACCES_REFUSE), RAISON_ACCES_REFUSE),
+            (RuntimeError(f"jeton {SECRET_FACTICE}"), RAISON_ERREUR_INATTENDUE),
+        )
+        for error, reason in cases:
+            with self.subTest(reason=reason):
+                client = FauxClient(erreur_infos=error)
+
+                code, stdout, stderr = self.check(
+                    [self.REPO, "--engine", self.ENGINE, "--json"], client
+                )
+
+                self.assertEqual(code, CODE_ECHEC)
+                result = json.loads(stdout.splitlines()[-1])
+                self.assertEqual(result["operation"], "terminee")
+                verification = result["verification"]
+                self.assertFalse(verification["accepte"])
+                self.assertEqual(verification["raison"], reason)
+                self.assertEqual(verification["message"], MESSAGES_ERREUR[reason])
+                self.assertNotIn(SECRET_FACTICE, stdout + stderr)
+                self.assertNotIn("Traceback", stderr)
+                self.assert_no_model_file()
+                self.assert_unlocked()
+
+    def test_refused_before_verification_exits_2_without_client_call(self) -> None:
+        cases = (
+            ("moteur-inconnu", True, "moteur inconnu"),
+            ("factice", True, "moteur factice"),
+            (self.ENGINE, False, "n'est pas installé et prêt"),
+        )
+        for engine, ready, reason in cases:
+            with self.subTest(engine=engine):
+                client = FauxClient()
+
+                code, stdout, stderr = self.check(
+                    [self.REPO, "--engine", engine, "--json"], client, ready=ready
+                )
+
+                self.assertEqual(code, CODE_REFUS)
+                self.assertEqual(stdout, "")
+                self.assertIn(reason, stderr)
+                self.assertNotIn("Traceback", stderr)
+                self.assertEqual(client.appels_infos, [])
+                self.assert_no_model_file()
+                self.assert_unlocked()
+
+
+class InterruptedDownloadClient(FauxClientTelechargement):
+    """Transfert non annulable : signal pendant le transfert, fin après l'arrêt.
+
+    Le signal est levé depuis le fil de téléchargement comme un Ctrl+C ; le transfert
+    ne reprend qu'une fois l'arrêt passé au créneau, puis termine ses fichiers. Le
+    service ne doit alors publier aucun marqueur prêt.
+    """
+
+    def __init__(self, contenus: dict[str, bytes]) -> None:
+        super().__init__(contenus)
+        self.stop_event = threading.Event()
+
+    def telecharger(self, id_resolu, commit, fichiers, dossier) -> None:
+        signal.raise_signal(signal.SIGINT)
+        if not self.stop_event.wait(DELAI_TEST):
+            raise AssertionError("arrêt du créneau non observé")
+        super().telecharger(id_resolu, commit, fichiers, dossier)
+
+
+class ModelsDownloadTest(CommandTestCase):
+    """« models download » : enchaînement, déjà prêt, refus GGUF, interruption.
+
+    Vérification et téléchargement sont les services réels (créneau, journal,
+    marqueur prêt) ; seuls leurs clients distants sont factices. Aucun réseau ni
+    poids : le téléchargement écrit des contenus factices sous `data/`.
+    """
+
+    ENGINE = "faster-whisper"
+    REPO = "org/modele-simule"
+    GGUF_ENGINE = "transcribe-cpp"
+    GGUF_REPO = "org/modele-gguf"
+
+    def download(
+        self,
+        argv: list[str],
+        verification_client: FauxClient,
+        download_client: FauxClientTelechargement,
+    ) -> tuple[int, str, str]:
+        """Exécute « models download » avec les deux clients injectés."""
+        verification = functools.partial(VerificationModeles, client=verification_client)
+        models = functools.partial(
+            gestion_modeles.GestionModeles,
+            fabrique_client=lambda: download_client,
+        )
+        with (
+            mock.patch.object(composition, "InstallationMoteurs", ReadyEnginesInstallation),
+            mock.patch.object(gestion_modeles, "VerificationModeles", verification),
+            mock.patch.object(composition, "GestionModeles", models),
+        ):
+            return self.run_command(["models", "download", *argv])
+
+    def split_events(self, stdout: str) -> tuple[list[dict], dict]:
+        """Événements (toutes les lignes sauf la dernière) et résultat final."""
+        lines = stdout.splitlines()
+        return [json.loads(line) for line in lines[:-1]], json.loads(lines[-1])
+
+    def test_success_chains_verification_revision_and_download(self) -> None:
+        download_client = FauxClientTelechargement(CONTENUS_CTRANSLATE2)
+        code, stdout, stderr = self.download(
+            [self.REPO, "--engine", self.ENGINE, "--revision", "main", "--json"],
+            FauxClient(infos_de(CONTENUS_CTRANSLATE2), CONTENUS_CTRANSLATE2),
+            download_client,
+        )
+
+        self.assertEqual((code, stderr), (CODE_SUCCESS, ""))
+        events, result = self.split_events(stdout)
+        self.assertEqual(list(result.keys()), JSON_SNAPSHOT_KEYS[("models", "download")])
+        self.assertEqual(result["schema"], 1)
+        self.assertEqual(result["verification_operation"], "terminee")
+        self.assertEqual(result["download_operation"], "terminee")
+        self.assertFalse(result["already_ready"])
+        verification = result["verification"]
+        self.assertEqual(list(verification.keys()), VERIFICATION_RESULT_KEYS)
+        self.assertEqual(verification["commit"], COMMIT)
+        self.assertEqual(
+            result["reference"],
+            f"{self.ENGINE}/{cle_stockage(verification['id_resolu'], COMMIT)}",
+        )
+
+        # Révision et taille publiées entre les deux journaux, chacun complet.
+        revisions = [event for event in events if event["event"] == commands.REVISION_EVENT]
+        self.assertEqual(len(revisions), 1)
+        revision = revisions[0]
+        self.assertEqual(list(revision.keys()), REVISION_EVENT_KEYS)
+        self.assertEqual(revision["revision"], COMMIT)
+        self.assertEqual(revision["taille_totale"], verification["taille_totale"])
+        position = events.index(revision)
+        before, after = events[:position], events[position + 1 :]
+        for event in events:
+            if event is not revision:
+                self.assertEqual(list(event.keys()), JOURNAL_EVENT_KEYS)
+                self.assertEqual(event["event"], "log")
+        self.assertTrue(before and after)
+        self.assertTrue(all(event["operation"] == "verification" for event in before))
+        self.assertTrue(all(event["operation"] == "telechargement" for event in after))
+        self.assertTrue(any("dépôt compatible" in event["line"] for event in before))
+        self.assertTrue(
+            any("Téléchargement terminé : modèle prêt." in event["line"] for event in after)
+        )
+        self.assertNotEqual(
+            {event["generation"] for event in before},
+            {event["generation"] for event in after},
+        )
+
+        # Un seul transfert, à la révision publiée, et le modèle est prêt.
+        self.assertEqual([appel[1] for appel in download_client.appels], [COMMIT])
+        model_dir = self.base / paths.NOM_DOSSIER_MODELES / self.ENGINE / cle_stockage(
+            verification["id_resolu"], COMMIT
+        )
+        self.assertTrue((model_dir / NOM_MARQUEUR).is_file())
+        self.assert_unlocked()
+
+    def test_signal_after_verification_skips_transfer(self) -> None:
+        client = FauxClientTelechargement(CONTENUS_CTRANSLATE2)
+        original_event = commands.CommandOutput.event
+
+        def signal_on_revision(output, data, text=""):
+            original_event(output, data, text)
+            if data.get("event") == commands.REVISION_EVENT:
+                signal.raise_signal(signal.SIGINT)
+
+        with mock.patch.object(commands.CommandOutput, "event", signal_on_revision):
+            code, stdout, _ = self.download(
+                [self.REPO, "--engine", self.ENGINE, "--json"],
+                FauxClient(infos_de(CONTENUS_CTRANSLATE2), CONTENUS_CTRANSLATE2),
+                client,
+            )
+        self.assertEqual(code, CODE_INTERRUPTED)
+        self.assertEqual(client.appels, [])
+        self.assertIsNone(self.split_events(stdout)[1]["download_operation"])
+        self.assert_unlocked()
+
+    def test_ready_model_is_reported_without_transfer_in_json_and_text(self) -> None:
+        download_client = FauxClientTelechargement(CONTENUS_CTRANSLATE2)
+        verification = FauxClient(infos_de(CONTENUS_CTRANSLATE2), CONTENUS_CTRANSLATE2)
+        code, first, _ = self.download(
+            [self.REPO, "--engine", self.ENGINE, "--json"], verification, download_client
+        )
+        self.assertEqual(code, CODE_SUCCESS)
+        reference = json.loads(first.splitlines()[-1])["reference"]
+
+        code, stdout, stderr = self.download(
+            [self.REPO, "--engine", self.ENGINE, "--json"],
+            FauxClient(infos_de(CONTENUS_CTRANSLATE2), CONTENUS_CTRANSLATE2),
+            download_client,
+        )
+
+        self.assertEqual((code, stderr), (CODE_SUCCESS, ""))
+        events, result = self.split_events(stdout)
+        # La révision est publiée même sans transfert ; seul le journal de la
+        # vérification existe, aucune opération de téléchargement n'est lancée.
+        revisions = [event for event in events if event["event"] == commands.REVISION_EVENT]
+        self.assertEqual(len(revisions), 1)
+        self.assertTrue(
+            all(event["operation"] == "verification" for event in events if event["event"] == "log")
+        )
+        self.assertIsNone(result["download_operation"])
+        self.assertTrue(result["already_ready"])
+        self.assertEqual(result["reference"], reference)
+        self.assertEqual(len(download_client.appels), 1, "aucun transfert supplémentaire")
+
+        code, text, stderr = self.download(
+            [self.REPO, "--engine", self.ENGINE],
+            FauxClient(infos_de(CONTENUS_CTRANSLATE2), CONTENUS_CTRANSLATE2),
+            download_client,
+        )
+
+        self.assertEqual((code, stderr), (CODE_SUCCESS, ""))
+        self.assertIn(f"Révision résolue : {COMMIT}", text)
+        self.assertIn("Modèle déjà prêt : aucun fichier n'a été téléchargé.", text)
+        self.assertIn(f"Référence du modèle : {reference}", text)
+        self.assertEqual(len(download_client.appels), 1)
+        self.assert_unlocked()
+
+    def test_refused_choices_exit_2_without_revision_or_transfer(self) -> None:
+        header = entete_gguf(("general.architecture", "string", "whisper"))
+        cases = (
+            (
+                "GGUF multiple sans --file",
+                [self.GGUF_REPO, "--engine", self.GGUF_ENGINE, "--json"],
+                {"modele-f16.gguf": b"gguf", "modele-q8_0.gguf": header + b"gguf"},
+                RAISON_FICHIER_GGUF_NON_CHOISI,
+            ),
+            (
+                "fragment GGUF découpé",
+                [
+                    self.GGUF_REPO,
+                    "--engine",
+                    self.GGUF_ENGINE,
+                    "--file",
+                    "modele-00001-of-00002.gguf",
+                    "--json",
+                ],
+                {
+                    "modele-00001-of-00002.gguf": b"gguf",
+                    "modele-00002-of-00002.gguf": b"gguf",
+                },
+                RAISON_FICHIER_GGUF_DECOUPE,
+            ),
+        )
+        for label, argv, contents, reason in cases:
+            with self.subTest(label):
+                download_client = FauxClientTelechargement(contents)
+
+                code, stdout, stderr = self.download(
+                    argv, FauxClient(infos_de(contents), contents), download_client
+                )
+
+                self.assertEqual(code, CODE_REFUS)
+                self.assertEqual(stderr, "")
+                events, result = self.split_events(stdout)
+                self.assertFalse(
+                    any(event["event"] == commands.REVISION_EVENT for event in events)
+                )
+                self.assertEqual(result["verification"]["raison"], reason)
+                self.assertIsNone(result["download_operation"])
+                self.assertIsNone(result["reference"])
+                self.assertEqual(download_client.appels, [])
+                self.assert_unlocked()
+
+    def test_signal_during_transfer_leaves_model_not_ready(self) -> None:
+        download_client = InterruptedDownloadClient(CONTENUS_CTRANSLATE2)
+        arreter = operations.CreneauOperations.passer_a_l_arret
+
+        def passer_a_l_arret(creneau: operations.CreneauOperations) -> None:
+            arreter(creneau)
+            download_client.stop_event.set()
+
+        with mock.patch.object(
+            operations.CreneauOperations, "passer_a_l_arret", passer_a_l_arret
+        ):
+            code, stdout, stderr = self.download(
+                [self.REPO, "--engine", self.ENGINE, "--json"],
+                FauxClient(infos_de(CONTENUS_CTRANSLATE2), CONTENUS_CTRANSLATE2),
+                download_client,
+            )
+
+        self.assertEqual(code, CODE_INTERRUPTED)
+        self.assertIn("arrêt demandé par signal", stderr)
+        self.assertNotIn("Traceback", stderr)
+        events, result = self.split_events(stdout)
+        self.assertTrue(
+            any(
+                "Modèle non marqué prêt : arrêt du serveur demandé." in event["line"]
+                for event in events
+                if event["event"] == "log"
+            )
+        )
+        self.assertIsNone(result["reference"])
+        self.assertFalse(result["already_ready"])
+        self.assertEqual(list((self.base / paths.NOM_DOSSIER_MODELES).rglob(NOM_MARQUEUR)), [])
         self.assert_unlocked()
 
 
@@ -1521,6 +2268,316 @@ class CompareTest(ResultsCommandsSocle):
                     self.run_command(["compare", EMPREINTE_A, selection, selection])
                 self.assertEqual(exit_error.exception.code, 2)
         self.assertFalse(self.base.exists())
+
+
+class ModelsDeleteTest(CommandTestCase):
+    """« models delete » : suppression d'un modèle synthétique, refus sans effet.
+
+    Le modèle (manifeste et fichiers factices) et le résultat d'exécution sont
+    écrits par les helpers de `ModelsListTest` et `ResultsCommandsSocle`, réutilisés
+    sans hériter de leurs tests. Le dépôt du résultat est celui du modèle supprimé.
+    """
+
+    MODEL_REPO = ModelsListTest.MODEL_REPO
+    MODEL_COMMIT = ModelsListTest.MODEL_COMMIT
+    MODEL_ENGINE = ModelsListTest.MODEL_ENGINE
+    MODEL_DATE = ModelsListTest.MODEL_DATE
+    MODEL_FILES = ModelsListTest.MODEL_FILES
+    REAL_MODEL = ResultsCommandsSocle.REAL_MODEL
+    RESULT_ID = ResultsCommandsSocle.LATER_ID
+    write_local_model = ModelsListTest.write_local_model
+    write_real_execution = ResultsCommandsSocle.write_real_execution
+
+    def model_dir(self, key: str) -> Path:
+        return self.base / paths.NOM_DOSSIER_MODELES / self.MODEL_ENGINE / key
+
+    def test_json_deletes_only_the_model_and_results_stay_readable(self) -> None:
+        key = self.write_local_model()
+        self.write_real_execution(self.RESULT_ID)
+        code, before, stderr = self.run_command(
+            ["results", "show", self.RESULT_ID, "--json"]
+        )
+        self.assertEqual((code, stderr), (0, ""))
+
+        code, stdout, stderr = self.run_command(
+            ["models", "delete", self.MODEL_ENGINE, key, "--json"]
+        )
+
+        self.assertEqual((code, stderr), (0, ""))
+        lines = [line for line in stdout.splitlines() if line]
+        self.assertEqual(len(lines), 1, "un seul objet JSON sur la sortie standard")
+        data = json.loads(lines[0])
+        self.assertEqual(list(data.keys()), JSON_SNAPSHOT_KEYS[("models", "delete")])
+        self.assertEqual(
+            data,
+            {
+                "schema": 1,
+                "engine": self.MODEL_ENGINE,
+                "key": key,
+                "deleted": True,
+            },
+        )
+        self.assertFalse(self.model_dir(key).exists())
+        self.assert_unlocked()
+
+        code, after, stderr = self.run_command(
+            ["results", "show", self.RESULT_ID, "--json"]
+        )
+        self.assertEqual((code, stderr), (0, ""))
+        self.assertEqual(after, before)
+        code, stdout, stderr = self.run_command(["models", "list", "--json"])
+        self.assertEqual(json.loads(stdout)["models"], [])
+
+    def test_text_output_names_the_deleted_reference(self) -> None:
+        key = self.write_local_model()
+
+        code, text, stderr = self.run_command(
+            ["models", "delete", self.MODEL_ENGINE, key]
+        )
+
+        self.assertEqual((code, stderr), (0, ""))
+        self.assertIn(f"Modèle local supprimé : {self.MODEL_ENGINE}/{key}", text)
+        self.assertIn("Les résultats déjà produits restent consultables.", text)
+        self.assertFalse(self.model_dir(key).exists())
+        self.assert_unlocked()
+
+    def test_refused_key_deletes_nothing(self) -> None:
+        key = self.write_local_model()
+        sentinel = self.base / "sentinelle"
+        sentinel.mkdir(parents=True)
+        for refused_key in ("../../sentinelle", "ABC"):
+            with self.subTest(key=refused_key):
+                code, stdout, stderr = self.run_command(
+                    ["models", "delete", self.MODEL_ENGINE, refused_key]
+                )
+
+                self.assertEqual((code, stdout), (2, ""))
+                self.assertIn(DIAGNOSTIC_PREFIX, stderr)
+                self.assertTrue(self.model_dir(key).is_dir())
+                self.assertTrue(sentinel.is_dir())
+                self.assert_unlocked()
+
+
+class RunCommandTest(CommandTestCase):
+    """Socle de « run check » et « run start » : audios, aucune écriture hors session."""
+
+    RUN_REFERENCE = f"factice/{CLE_MODELE_FACTICE}"
+
+    def write_audios(self, *names: str) -> None:
+        """WAV lisibles et synthétiques dans le dossier d'entrée."""
+        folder = self.base / paths.NOM_DOSSIER_AUDIO
+        folder.mkdir(parents=True)
+        for name in names:
+            ecrire_wav(folder / name, duree=0.5)
+
+    def assert_no_execution_written(self) -> None:
+        """Aucun résultat ni dossier de travail d'exécution n'a été créé."""
+        for name in (paths.NOM_DOSSIER_RESULTATS, paths.NOM_DOSSIER_CACHE):
+            folder = self.base / name
+            written = list(folder.iterdir()) if folder.exists() else []
+            self.assertEqual(written, [], name)
+
+
+class RunCheckTest(RunCommandTest):
+    """« run check » : demande normalisée à blanc, refus partagés avec la page."""
+
+    def test_valid_request_is_normalised_without_any_write(self) -> None:
+        self.write_audios("b.wav", "a.wav")
+
+        with mock.patch(
+            "transcription_bench.execution_moteur.ExecutionMoteur.verifier_lancable",
+            side_effect=AssertionError("La vérification web ne contrôle pas le lancement"),
+        ):
+            code, stdout, stderr = self.run_command(
+                [
+                    "run", "check", "--model", self.RUN_REFERENCE,
+                    "--audio", "b.wav", "--audio", "a.wav",
+                    "--threads", "2", "--json",
+                ]
+            )
+
+        self.assertEqual((code, stderr), (CODE_SUCCESS, ""))
+        lines = stdout.splitlines()
+        self.assertEqual(len(lines), 1, "un seul objet JSON, rien d'autre")
+        data = json.loads(lines[0])
+        self.assertEqual(list(data), JSON_SNAPSHOT_KEYS[("run", "check")])
+        request = data["request"]
+        self.assertEqual(request["reference"], self.RUN_REFERENCE)
+        self.assertEqual(request["audios"], ["b.wav", "a.wav"])
+        self.assertEqual(request["threads"], 2)
+        self.assertEqual(request["reglages"], [])
+        self.assertTrue(request["synthetique"])
+        self.assert_no_execution_written()
+        self.assert_unlocked()
+
+    def test_threads_default_and_text_output_name_the_simulated_engine(self) -> None:
+        self.write_audios("a.wav")
+
+        code, stdout, stderr = self.run_command(
+            ["run", "check", "--model", self.RUN_REFERENCE, "--audio", "a.wav"]
+        )
+
+        self.assertEqual((code, stderr), (CODE_SUCCESS, ""))
+        self.assertIn("Demande valide", stdout)
+        self.assertIn(f"Threads : {threads_par_defaut()}", stdout)
+        self.assertIn("Audios, dans l'ordre de traitement : a.wav", stdout)
+        self.assertIn(commands.SIMULATED_RUN_MESSAGE, stdout)
+        self.assert_no_execution_written()
+        self.assert_unlocked()
+
+    def test_refusals_come_from_the_shared_validation_with_code_2(self) -> None:
+        self.write_audios("a.wav")
+        (self.base / paths.NOM_DOSSIER_AUDIO / "casse.wav").write_bytes(
+            b"pas un fichier audio" * 8
+        )
+        reference = self.RUN_REFERENCE
+        cases = (
+            (
+                "modèle répété",
+                ["--model", reference, "--model", reference, "--audio", "a.wav"],
+                "plusieurs fois : modele",
+            ),
+            (
+                "threads répétés",
+                ["--model", reference, "--audio", "a.wav",
+                 "--threads", "2", "--threads", "3"],
+                "plusieurs fois : threads",
+            ),
+            (
+                "réglage répété",
+                ["--model", reference, "--audio", "a.wav",
+                 "--setting", "fenetre=1", "--setting", "fenetre=2"],
+                "plusieurs fois : reglage_fenetre",
+            ),
+            (
+                "réglage inapplicable",
+                ["--model", reference, "--audio", "a.wav", "--setting", "fenetre=3"],
+                "réglage non déclaré par la famille du modèle : fenetre",
+            ),
+            (
+                "modèle non prêt",
+                ["--model", f"factice/{'0' * 64}", "--audio", "a.wav"],
+                "modèle non prêt ou inconnu",
+            ),
+            (
+                "audio illisible",
+                ["--model", reference, "--audio", "casse.wav"],
+                "illisible",
+            ),
+        )
+        for label, options, fragment in cases:
+            with self.subTest(refus=label):
+                code, stdout, stderr = self.run_command(["run", "check", *options])
+
+                self.assertEqual((code, stdout), (CODE_REFUS, ""))
+                self.assertIn(DIAGNOSTIC_PREFIX, stderr)
+                self.assertIn(fragment, stderr)
+                self.assertNotIn("Traceback", stderr)
+                self.assert_no_execution_written()
+                self.assert_unlocked()
+
+    def test_missing_or_malformed_options_fail_at_parsing_without_session(self) -> None:
+        reference = self.RUN_REFERENCE
+        for argv in (
+            ["run", "check", "--audio", "a.wav"],
+            ["run", "check", "--model", reference],
+            ["run", "check", "--model", reference, "--audio", "a.wav",
+             "--setting", "fenetre"],
+        ):
+            with self.subTest(argv=argv[2:]):
+                with self.assertRaises(SystemExit) as exit_error:
+                    self.run_command(argv)
+                self.assertEqual(exit_error.exception.code, 2)
+        self.assertFalse(self.base.exists())
+
+
+class RunStartTest(RunCommandTest):
+    """« run start » : lot ordonné, identifiant, code 1 sur audio en erreur, refus."""
+
+    def test_batch_streams_journal_then_result_in_requested_order(self) -> None:
+        self.write_audios("a.wav", "b.wav", "c.wav")
+
+        code, stdout, stderr = self.run_command(
+            [
+                "run", "start", "--model", self.RUN_REFERENCE,
+                "--audio", "c.wav", "--audio", "a.wav", "--audio", "b.wav",
+                "--threads", "2", "--json",
+            ]
+        )
+
+        self.assertEqual((code, stderr), (CODE_SUCCESS, ""))
+        *events, final = [json.loads(line) for line in stdout.splitlines()]
+        self.assertTrue(events, "le journal de l'exécution est écrit en flux")
+        for event in events:
+            self.assertEqual(list(event), JOURNAL_EVENT_KEYS)
+            self.assertEqual(event["event"], LOG_EVENT)
+            self.assertEqual(event["operation"], operations.TYPE_EXECUTION)
+        self.assertEqual(list(final), JSON_SNAPSHOT_KEYS[("run", "start")])
+        self.assertEqual(final["operation"], operations.ETAT_TERMINEE)
+        self.assertIsNone(final["error"])
+        execution = final["execution"]
+        self.assertEqual(
+            [audio["nom"] for audio in execution["audios"]],
+            ["c.wav", "a.wav", "b.wav"],
+        )
+        for audio in execution["audios"]:
+            self.assertEqual(list(audio), RUN_AUDIO_KEYS)
+            self.assertIsNone(audio["erreur"])
+            self.assertFalse(audio["non_traite"])
+        self.assertTrue(execution["factice"])
+        self.assertTrue(execution["synthetique"])
+        identifier = final["identifiant_resultat"]
+        self.assertTrue(identifier)
+        self.assertEqual(execution["identifiant_resultat"], identifier)
+
+        # Même résultat que la page : la consultation le relit, audios dans l'ordre.
+        code, shown, _ = self.run_command(["results", "show", identifier, "--json"])
+        self.assertEqual(code, CODE_SUCCESS)
+        audios = sorted(json.loads(shown)["audios"], key=lambda audio: audio["ordre"])
+        self.assertEqual(
+            [audio["nom"] for audio in audios], ["c.wav", "a.wav", "b.wav"]
+        )
+        self.assert_unlocked()
+
+    def test_audio_in_error_gives_code_1_and_keeps_the_other_results(self) -> None:
+        self.write_audios("a.wav", "b.wav")
+        # Lisible pour la liste, mais sans échantillon : le décodage le refuse.
+        ecrire_wav_sans_echantillon(self.base / paths.NOM_DOSSIER_AUDIO / "zero.wav")
+
+        code, stdout, stderr = self.run_command(
+            [
+                "run", "start", "--model", self.RUN_REFERENCE,
+                "--audio", "a.wav", "--audio", "zero.wav", "--audio", "b.wav",
+                "--threads", "2", "--json",
+            ]
+        )
+
+        self.assertEqual((code, stderr), (CODE_ECHEC, ""))
+        final = json.loads(stdout.splitlines()[-1])
+        self.assertEqual(final["operation"], operations.ETAT_TERMINEE)
+        self.assertEqual(final["execution"]["audios_en_erreur"], ["zero.wav"])
+        audios = {audio["nom"]: audio for audio in final["execution"]["audios"]}
+        self.assertIn("décodage impossible", audios["zero.wav"]["erreur"])
+        for name in ("a.wav", "b.wav"):
+            self.assertIsNone(audios[name]["erreur"])
+            self.assertFalse(audios[name]["non_traite"])
+        self.assertIsNotNone(final["identifiant_resultat"])
+        self.assert_unlocked()
+
+    def test_duplicate_model_is_refused_and_nothing_is_launched(self) -> None:
+        self.write_audios("a.wav")
+
+        code, stdout, stderr = self.run_command(
+            [
+                "run", "start", "--model", self.RUN_REFERENCE,
+                "--model", self.RUN_REFERENCE, "--audio", "a.wav", "--json",
+            ]
+        )
+
+        self.assertEqual((code, stdout), (CODE_REFUS, ""))
+        self.assertIn("plusieurs fois : modele", stderr)
+        self.assert_no_execution_written()
+        self.assert_unlocked()
 
 
 if __name__ == "__main__":

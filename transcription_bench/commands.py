@@ -18,9 +18,35 @@ réutilise les mêmes services sans dupliquer le métier :
 - `engines log ID [--limit N]` appelle `lire_journal` : dernières lignes du
   journal d'installation, 2000 par défaut comme la page ; un moteur inconnu
   est refusé (code 2) comme le 404 de la page ;
+- `engines install ID` (tâche 3.1, opération longue hors lecture) appelle
+  `installer` dans le créneau unique, suivi par `OperationWatch` : mêmes refus
+  que `POST /moteurs/<id>/installer` (moteur inconnu, factice ou verrou absent :
+  code 2), journal écrit au fil de l'eau, code 0 seulement si le moteur est prêt
+  après l'opération, 1 en échec, 3 après un signal ; la ligne finale donne l'état
+  de l'opération et celui du moteur ;
 - `models list` appelle `inventaire` : modèles locaux prêts, relus depuis des
   manifestes cohérents uniquement ; un manifeste incohérent est ignoré par le
   service (aucun modèle n'est prêt), jamais signalé en échec, comme la page.
+- `models check REPO --engine E [--revision R] [--file F]` (tâche 3.2) appelle
+  `lancer_verification` dans le créneau unique, suivi par `OperationWatch` : le
+  dépôt est vérifié sans aucun téléchargement. Le code vient du résultat du
+  service (`dernier_resultat`), pas de l'état du créneau : compatible 0, dépôt
+  refusé par la compatibilité (dont GGUF multiple sans `--file`, fragment GGUF)
+  2, échec réseau, accès refusé ou erreur inattendue 1. Le résultat final porte
+  l'état de l'opération et le résultat de vérification, sérialisé comme les
+  vues existantes.
+- `models download REPO --engine E [--revision R] [--file F]` (tâche 3.3)
+  enchaîne, dans le même processus et avec un seul `OperationWatch`, la
+  vérification puis le téléchargement des fichiers retenus. La révision résolue
+  et la taille totale sont publiées (événement JSON `revision`, avant tout
+  transfert) ; un modèle déjà prêt donne le code 0 sans opération. La référence
+  locale `moteur/clé` est construite avec `cle_stockage` et n'est donnée que si
+  le modèle est prêt. Refus, codes et arrêt par signal suivent `models check`.
+- `models delete ENGINE KEY` (tâche 3.4) appelle `supprimer` : le dossier du
+  modèle et ses fichiers sont retirés sans question, la commande nommée valant
+  confirmation ; un moteur inconnu, une clé non conforme (SHA-256 attendu, donc
+  tout chemin traversant) ou un modèle absent donnent le code 2 sans rien
+  supprimer. Les résultats d'exécution ne sont jamais touchés.
 - `run options` appelle `modeles_proposables`, `audios_proposables` et
   `preparer` : l'inventaire complet des modèles exécutables ou non (modèle
   synthétique du moteur factice compris, motif du service à l'appui), les
@@ -29,6 +55,17 @@ réutilise les mêmes services sans dupliquer le métier :
   le choix applicable et annoncée par le `notice` du service ; comme la page
   rend alors un statut 400, la commande rend le code 2 avec ce motif, sans
   dupliquer la validation.
+- `run check --model REF --audio NAME... [--threads N] [--setting NOM=VALEUR]...`
+  (tâche 3.5) applique la validation partagée avec la page (`validate_execution_fields`)
+  puis `verifier_lancable`, sans réserver ni lancer : la demande normalisée est
+  affichée, aucun résultat n'est écrit.
+- `run start` (même options, tâche 3.5) passe par `launch_execution`, comme la route
+  `POST /executions/lancer` : réservation avant admission, puis `OperationWatch`
+  suit l'exécution dans le créneau unique avec son journal en direct. Code 0 si
+  l'exécution est terminée sans audio en erreur, 1 sinon, 2 pour un refus avant
+  admission, 3 après un signal. Les options répétées sont transmises telles quelles
+  aux services : `--model`, `--threads` et un même `--setting` donné deux fois sont
+  refusés (code 2), `--audio` garde l'ordre reçu.
 - `results list [--sort temps|ram|cpu|recent]` appelle `groupes_par_empreinte`
   avec le critère reçu (`recent` par défaut, comme la page Résultats) : chaque
   groupe porte son empreinte et chaque essai sa sélection `identifiant:ordre`,
@@ -73,11 +110,13 @@ from transcription_bench import paths
 from transcription_bench.audios import AudioListe, lister_audios
 from transcription_bench.command_session import (
     CODE_ECHEC,
+    CODE_INTERRUPTED,
     CODE_REFUS,
     CODE_SUCCESS,
     CommandGroup,
     CommandSpec,
 )
+from transcription_bench.compatibilite_modeles import RAISONS_REFUS
 from transcription_bench.composition import DataServices
 from transcription_bench.consultation_resultats import (
     AudioVue,
@@ -99,14 +138,31 @@ from transcription_bench.consultation_resultats import (
     TRI_RECENT,
     analyser_selection,
 )
+from transcription_bench.execution_launch import (
+    EngineNotReady,
+    ExecutionAlreadyReserved,
+    launch_execution,
+    validate_execution_fields,
+)
+from transcription_bench.execution_moteur import (
+    ResultatAudio,
+    ResultatExecution,
+)
 from transcription_bench.executions import (
+    PREFIXE_CHAMP_REGLAGE,
+    ConfigurationExecutions,
+    DemandeExecution,
     ModelePropose,
     PreparationExecution,
     SEPARATEUR_REFERENCE_MODELE,
     VALEUR_FAUSSE,
     VALEUR_VRAIE,
 )
-from transcription_bench.gestion_modeles import ModeleLocal
+from transcription_bench.gestion_modeles import (
+    ModeleLocal,
+    cle_stockage,
+    empreinte_verification,
+)
 from transcription_bench.indicateurs_resultats import (
     NON_MESURE,
     formater_date_courte,
@@ -114,9 +170,23 @@ from transcription_bench.indicateurs_resultats import (
     formater_memoire_premier_niveau,
     formater_pourcentage_premier_niveau,
 )
-from transcription_bench.moteurs import LIBELLES_ETATS_MOTEUR, EtatMoteur
-from transcription_bench.operations import CreneauOccupe, ServiceArrete
+from transcription_bench.moteurs import (
+    ETAT_PRET,
+    LIBELLES_ETATS_MOTEUR,
+    EtatMoteur,
+    InstallationIndisponible,
+)
+from transcription_bench.operation_watch import OperationWatch, execution_exit_code
+from transcription_bench.operations import (
+    ETAT_TERMINEE,
+    LIBELLES_ETATS,
+    TYPE_INSTALLATION,
+    CreneauOccupe,
+    InstantaneCreneau,
+    ServiceArrete,
+)
 from transcription_bench.output import (
+    CommandOutput,
     output_from_arguments,
     serialize_audio_entry,
     serialize_comparison,
@@ -127,6 +197,9 @@ from transcription_bench.output import (
     serialize_model_option,
     serialize_preparation,
     serialize_run_detail,
+    serialize_run_result,
+    serialize_run_request,
+    serialize_verification_result,
 )
 from transcription_bench.paths import (
     DOSSIERS_DATA,
@@ -134,6 +207,7 @@ from transcription_bench.paths import (
     ValeurRefusee,
 )
 from transcription_bench.supervision import SignalFlag
+from transcription_bench.verification_modeles import ResultatVerification
 from transcription_bench.web.app import (
     MESSAGES_ACTION,
     MESSAGE_DOSSIER_AUDIO_INACCESSIBLE,
@@ -433,10 +507,108 @@ ENGINES_LOG = CommandSpec(
     run=_run_engines_log,
 )
 
+def configure_engines_install(parser: argparse.ArgumentParser) -> None:
+    """Argument de « engines install » : l'identifiant du moteur à installer."""
+    parser.add_argument(
+        "engine_id",
+        metavar="ID",
+        help="identifiant du moteur à installer, comme sur la page Moteurs",
+    )
+
+
+def _engine_state(services: DataServices, engine_id: str) -> EtatMoteur:
+    """État courant d'un moteur, relu depuis le service d'inventaire."""
+    return next(
+        state
+        for state in services.engines.inventaire()
+        if state.identifiant == engine_id
+    )
+
+
+def _run_engines_install(
+    arguments: argparse.Namespace,
+    services: DataServices,
+    signal_flag: SignalFlag,
+) -> int:
+    """Installe un moteur dans le créneau unique et suit l'opération jusqu'à sa fin.
+
+    Les refus de la page (moteur inconnu, moteur factice ou verrou absent, créneau
+    occupé, arrêt en cours) donnent le code 2 avec le motif du service, avant toute
+    admission. L'installation réelle (`installer`) tourne dans le créneau et
+    `OperationWatch` écrit son journal au fil de l'eau. Le code vient de l'état du
+    moteur après l'opération : 0 seulement s'il est prêt, 1 sinon, 3 après un signal.
+    La ligne finale donne l'état de l'opération, son motif éventuel et l'état du
+    moteur, prêt ou non.
+    """
+    output = output_from_arguments(arguments)
+    engine_id = arguments.engine_id
+    try:
+        services.engines.verifier_installable(engine_id)
+    except MoteurInconnu:
+        output.diagnostic(f"moteur inconnu : {engine_id!r}")
+        return CODE_REFUS
+    except (InstallationIndisponible, ValeurRefusee) as error:
+        output.diagnostic(str(error))
+        return CODE_REFUS
+    try:
+        services.operations.demarrer(
+            TYPE_INSTALLATION,
+            lambda worker: services.engines.installer(engine_id, worker),
+            cible=engine_id,
+        )
+    except (CreneauOccupe, ServiceArrete) as error:
+        output.diagnostic(str(error))
+        return CODE_REFUS
+
+    def translate(snapshot: InstantaneCreneau) -> int:
+        ready = _engine_state(services, engine_id).etat == ETAT_PRET
+        return CODE_SUCCESS if snapshot.etat == ETAT_TERMINEE and ready else CODE_ECHEC
+
+    watch = OperationWatch(
+        services.operations, signal_flag, output, installation=services.engines
+    )
+    code = watch.wait(translate)
+    operation = services.operations.instantane()
+    state = _engine_state(services, engine_id)
+    output.result(
+        {
+            "engine": engine_id,
+            "operation": operation.etat,
+            "error": operation.erreur,
+            "state": serialize_engine_state(state),
+        },
+        install_text_lines(engine_id, operation, state),
+    )
+    return code
+
+
+def install_text_lines(
+    engine_id: str, operation: InstantaneCreneau, state: EtatMoteur
+) -> list[str]:
+    """Lignes de texte de « engines install » : opération, moteur, motif éventuel."""
+    lines = [
+        f"Opération « installation » : {LIBELLES_ETATS[operation.etat]}",
+        f"Moteur {engine_id} : {LIBELLES_ETATS_MOTEUR[state.etat]}",
+    ]
+    if operation.erreur is not None:
+        lines.append(f"Motif : {operation.erreur}")
+    return lines
+
+
+ENGINES_INSTALL = CommandSpec(
+    name="install",
+    help_text=(
+        "installe un moteur dans le créneau d'opération, avec le journal en direct ; "
+        "code 0 seulement si le moteur est prêt"
+    ),
+    configure=configure_engines_install,
+    run=_run_engines_install,
+)
+
 ENGINES = CommandGroup(
     name="engines",
-    help_text="état et journal d'installation des moteurs",
-    commands=(ENGINES_LIST, ENGINES_LOG),
+    help_text="état, installation et journal d'installation des moteurs",
+    commands=(ENGINES_LIST, ENGINES_INSTALL, ENGINES_LOG),
 )
 
 def _run_models_list(
@@ -500,10 +672,397 @@ MODELS_LIST = CommandSpec(
     run=_run_models_list,
 )
 
+def configure_models_check(parser: argparse.ArgumentParser) -> None:
+    """Arguments de « models check » : dépôt, moteur, révision et fichier GGUF.
+
+    Les valeurs partent vers `lancer_verification` : identifiant, révision et nom
+    GGUF y sont validés comme sur la page. `--file` ne sert qu'aux dépôts GGUF.
+    """
+    parser.add_argument(
+        "repo",
+        metavar="REPO",
+        help="identifiant du dépôt Hugging Face, de la forme organisation/nom",
+    )
+    parser.add_argument(
+        "--engine",
+        metavar="E",
+        required=True,
+        help="identifiant du moteur réel installé qui vérifiera le dépôt",
+    )
+    parser.add_argument(
+        "--revision",
+        metavar="R",
+        default=None,
+        help="révision à résoudre ; par défaut, la branche par défaut du dépôt",
+    )
+    parser.add_argument(
+        "--file",
+        metavar="F",
+        dest="gguf_file",
+        default=None,
+        help="fichier GGUF à retenir quand le dépôt en propose plusieurs",
+    )
+
+
+def _run_models_check(
+    arguments: argparse.Namespace,
+    services: DataServices,
+    signal_flag: SignalFlag,
+) -> int:
+    """Vérifie un dépôt sans télécharger de poids, comme la page Modèles.
+
+    La vérification tourne dans le créneau et `OperationWatch` écrit son journal
+    au fil de l'eau. Le code vient du résultat publié par le service, non de l'état
+    du créneau : un dépôt refusé donne le code 2 avec la raison du service, un
+    échec de vérification le code 1. Le dossier des modèles n'est pas écrit.
+    """
+    output = output_from_arguments(arguments)
+    try:
+        services.models.lancer_verification(
+            arguments.repo,
+            arguments.engine,
+            revision=(arguments.revision or "").strip() or None,
+            fichier_gguf=(arguments.gguf_file or "").strip() or None,
+        )
+    except MoteurInconnu:
+        output.diagnostic(f"moteur inconnu : {arguments.engine!r}")
+        return CODE_REFUS
+    except (ValeurRefusee, CreneauOccupe, ServiceArrete) as error:
+        output.diagnostic(str(error))
+        return CODE_REFUS
+
+    def translate(snapshot: InstantaneCreneau) -> int:
+        return check_exit_code(snapshot, services.models.dernier_resultat())
+
+    watch = OperationWatch(services.operations, signal_flag, output)
+    code = watch.wait(translate)
+    operation = services.operations.instantane()
+    result = services.models.dernier_resultat()
+    output.result(
+        {
+            "operation": operation.etat,
+            "verification": (
+                None if result is None else serialize_verification_result(result)
+            ),
+        },
+        check_text_lines(operation, result),
+    )
+    return code
+
+
+def check_exit_code(
+    operation: InstantaneCreneau, result: ResultatVerification | None
+) -> int:
+    """Code de « models check » : 0 accepté, 2 refus du dépôt, 1 échec.
+
+    Un refus de compatibilité (`RAISONS_REFUS` : dépôt incompatible, choix GGUF
+    manquant, fragment découpé) donne 2. Un échec réseau, un accès refusé, une
+    révision inconnue ou une erreur inattendue donne 1. L'état `terminee` seul ne
+    suffit pas : il ne dit pas si le dépôt est accepté.
+    """
+    if operation.etat != ETAT_TERMINEE or result is None:
+        return CODE_ECHEC
+    if result.accepte:
+        return CODE_SUCCESS
+    if result.raison in RAISONS_REFUS:
+        return CODE_REFUS
+    return CODE_ECHEC
+
+
+def check_text_lines(
+    operation: InstantaneCreneau, result: ResultatVerification | None
+) -> list[str]:
+    """Lignes de texte de « models check » : verdict, puis identité et fichiers.
+
+    Un dépôt compatible affiche sa révision résolue, sa famille, les fichiers
+    retenus et la taille totale (« taille inconnue » tant qu'une taille manque).
+    Un refus affiche la raison du service et son message, variantes GGUF comprises.
+    """
+    if result is None:
+        return [f"Opération « vérification » : {LIBELLES_ETATS[operation.etat]}"]
+    if not result.accepte:
+        return [f"Dépôt refusé ({result.raison}) : {result.message}"]
+    lines = [
+        f"Dépôt compatible : {result.identifiant}, moteur {result.moteur}, "
+        f"famille {result.famille}",
+        f"Révision résolue : {result.commit}",
+    ]
+    if result.fichier_gguf is not None:
+        lines.append(f"Variante GGUF retenue : {result.fichier_gguf}")
+    lines.append("Fichiers retenus :")
+    lines.extend(
+        f"  {file.nom} ({formater_taille_modele(file.taille)})"
+        for file in result.fichiers
+    )
+    lines.append(f"Taille totale : {formater_taille_modele(result.taille_totale)}")
+    lines.append("Aucun poids n'a été téléchargé : vérification seulement.")
+    return lines
+
+
+MODELS_CHECK = CommandSpec(
+    name="check",
+    help_text=(
+        "vérifie la compatibilité d'un dépôt sans télécharger de poids, à la "
+        "révision résolue ; code 0 si compatible"
+    ),
+    configure=configure_models_check,
+    run=_run_models_check,
+)
+
+#: Événement JSON publiant la révision résolue et la taille avant le transfert.
+REVISION_EVENT = "revision"
+
+
+def _run_models_download(
+    arguments: argparse.Namespace,
+    services: DataServices,
+    signal_flag: SignalFlag,
+) -> int:
+    """Vérifie un dépôt puis télécharge ses fichiers, dans le même processus.
+
+    La vérification tourne dans le créneau ; si elle n'accepte pas le dépôt, la
+    commande s'arrête là avec le code de `check_exit_code` (refus 2, échec 1). Sinon
+    la révision résolue et la taille sont publiées en événement, avant l'admission
+    du téléchargement, puis `lancer_telechargement` admet le transfert avec la
+    même empreinte. Un modèle déjà prêt donne 0 sans opération. Le même
+    `OperationWatch` suit les deux opérations : chaque journal est écrit en entier,
+    la génération séparant les deux. Le code de succès exige que le modèle soit
+    présent dans l'inventaire, non seulement que l'opération soit `terminee`.
+    """
+    output = output_from_arguments(arguments)
+    try:
+        services.models.lancer_verification(
+            arguments.repo,
+            arguments.engine,
+            revision=(arguments.revision or "").strip() or None,
+            fichier_gguf=(arguments.gguf_file or "").strip() or None,
+        )
+    except MoteurInconnu:
+        output.diagnostic(f"moteur inconnu : {arguments.engine!r}")
+        return CODE_REFUS
+    except (ValeurRefusee, CreneauOccupe, ServiceArrete) as error:
+        output.diagnostic(str(error))
+        return CODE_REFUS
+
+    watch = OperationWatch(services.operations, signal_flag, output)
+    code = watch.wait(
+        lambda snapshot: check_exit_code(snapshot, services.models.dernier_resultat())
+    )
+    verification = services.operations.instantane()
+    result = services.models.dernier_resultat()
+    if code != CODE_SUCCESS or result is None:
+        _emit_download_result(
+            output,
+            verification=verification,
+            result=result,
+            download=None,
+            reference=None,
+            already_ready=False,
+        )
+        return code
+
+    output.event(
+        {
+            "event": REVISION_EVENT,
+            "revision": result.commit,
+            "taille_totale": result.taille_totale,
+        },
+        revision_text_line(result),
+    )
+    if signal_flag.received:
+        services.operations.passer_a_l_arret()
+        _emit_download_result(
+            output, verification=verification, result=result, download=None,
+            reference=None, already_ready=False,
+        )
+        return CODE_INTERRUPTED
+    try:
+        started = services.models.lancer_telechargement(empreinte_verification(result))
+    except (ValeurRefusee, CreneauOccupe, ServiceArrete) as error:
+        output.diagnostic(str(error))
+        _emit_download_result(
+            output,
+            verification=verification,
+            result=result,
+            download=None,
+            reference=None,
+            already_ready=False,
+        )
+        return CODE_REFUS
+    if not started:
+        _emit_download_result(
+            output,
+            verification=verification,
+            result=result,
+            download=None,
+            reference=_local_reference(services, result),
+            already_ready=True,
+        )
+        return CODE_SUCCESS
+
+    def translate_download(snapshot: InstantaneCreneau) -> int:
+        ready = _local_reference(services, result) is not None
+        return CODE_SUCCESS if snapshot.etat == ETAT_TERMINEE and ready else CODE_ECHEC
+
+    code = watch.wait(translate_download)
+    _emit_download_result(
+        output,
+        verification=verification,
+        result=result,
+        download=services.operations.instantane(),
+        reference=_local_reference(services, result),
+        already_ready=False,
+    )
+    return code
+
+
+def _local_reference(services: DataServices, result: ResultatVerification) -> str | None:
+    """Référence `moteur/clé` du modèle, si ce modèle figure à l'inventaire prêt.
+
+    La clé vient de `cle_stockage`, comme pour le dossier écrit par le service ; un
+    modèle absent de l'inventaire (transfert interrompu, marqueur non publié) n'a
+    pas de référence.
+    """
+    if result.id_resolu is None or result.commit is None:
+        return None
+    key = cle_stockage(result.id_resolu, result.commit, result.fichier_gguf)
+    if any(
+        model.moteur == result.moteur and model.cle == key
+        for model in services.models.inventaire()
+    ):
+        return f"{result.moteur}{SEPARATEUR_REFERENCE_MODELE}{key}"
+    return None
+
+
+def _emit_download_result(
+    output: CommandOutput,
+    *,
+    verification: InstantaneCreneau,
+    result: ResultatVerification | None,
+    download: InstantaneCreneau | None,
+    reference: str | None,
+    already_ready: bool,
+) -> None:
+    """Résultat final de « models download » : états, vérification et référence."""
+    output.result(
+        {
+            "verification_operation": verification.etat,
+            "download_operation": None if download is None else download.etat,
+            "already_ready": already_ready,
+            "verification": (
+                None if result is None else serialize_verification_result(result)
+            ),
+            "reference": reference,
+        },
+        download_text_lines(verification, result, download, reference, already_ready),
+    )
+
+
+def revision_text_line(result: ResultatVerification) -> str:
+    """Ligne texte de la révision résolue et de la taille, avant le transfert."""
+    return (
+        f"Révision résolue : {result.commit}, taille totale : "
+        f"{formater_taille_modele(result.taille_totale)}"
+    )
+
+
+def download_text_lines(
+    verification: InstantaneCreneau,
+    result: ResultatVerification | None,
+    download: InstantaneCreneau | None,
+    reference: str | None,
+    already_ready: bool,
+) -> list[str]:
+    """Lignes de texte de « models download » : verdict, état et référence."""
+    if result is None or not result.accepte:
+        return check_text_lines(verification, result)
+    if already_ready:
+        lines = ["Modèle déjà prêt : aucun fichier n'a été téléchargé."]
+    elif download is None:
+        lines = ["Téléchargement non lancé."]
+    else:
+        lines = [f"Opération « téléchargement » : {LIBELLES_ETATS[download.etat]}"]
+    if reference is not None:
+        lines.append(f"Référence du modèle : {reference}")
+    return lines
+
+
+MODELS_DOWNLOAD = CommandSpec(
+    name="download",
+    help_text=(
+        "vérifie un dépôt puis télécharge ses fichiers à la révision résolue, avec "
+        "la révision et la taille publiées avant le transfert ; code 0 si prêt"
+    ),
+    configure=configure_models_check,
+    run=_run_models_download,
+)
+
+def configure_models_delete(parser: argparse.ArgumentParser) -> None:
+    """Arguments de « models delete » : moteur et clé du modèle local.
+
+    Les deux valeurs partent telles quelles vers `GestionModeles.supprimer`, qui
+    valide le moteur (registre) et la clé (SHA-256) avant tout accès disque.
+    """
+    parser.add_argument(
+        "engine",
+        metavar="ENGINE",
+        help="identifiant du moteur auquel appartient le modèle local",
+    )
+    parser.add_argument(
+        "key",
+        metavar="KEY",
+        help="clé de stockage du modèle, telle qu'affichée par « models list »",
+    )
+
+
+def _run_models_delete(
+    arguments: argparse.Namespace,
+    services: DataServices,
+    signal_flag: SignalFlag,
+) -> int:
+    """Supprime le dossier d'un modèle local, comme `POST /modeles/supprimer`.
+
+    La commande nommée vaut confirmation : aucune question n'est posée. Seuls le
+    dossier du modèle et ses fichiers sont retirés par le service ; les résultats
+    d'exécution restent consultables. Un moteur inconnu, une clé invalide, un
+    modèle absent ou une suppression refusée donnent le code 2 sans rien supprimer.
+    """
+    output = output_from_arguments(arguments)
+    try:
+        services.models.supprimer(arguments.engine, arguments.key)
+    except MoteurInconnu:
+        output.diagnostic(f"moteur inconnu : {arguments.engine!r}")
+        return CODE_REFUS
+    except (ValeurRefusee, CreneauOccupe, ServiceArrete) as error:
+        output.diagnostic(str(error))
+        return CODE_REFUS
+    reference = f"{arguments.engine}{SEPARATEUR_REFERENCE_MODELE}{arguments.key}"
+    output.result(
+        {"engine": arguments.engine, "key": arguments.key, "deleted": True},
+        [
+            f"Modèle local supprimé : {reference}",
+            "Les résultats déjà produits restent consultables.",
+        ],
+    )
+    return CODE_SUCCESS
+
+
+MODELS_DELETE = CommandSpec(
+    name="delete",
+    help_text=(
+        "supprime le dossier d'un modèle local par moteur et clé, sans confirmation "
+        "interactive ; les résultats restent consultables"
+    ),
+    configure=configure_models_delete,
+    run=_run_models_delete,
+)
+
 MODELS = CommandGroup(
     name="models",
-    help_text="inventaire local des modèles prêts",
-    commands=(MODELS_LIST,),
+    help_text=(
+        "modèles locaux : inventaire, vérification, téléchargement et suppression"
+    ),
+    commands=(MODELS_LIST, MODELS_CHECK, MODELS_DOWNLOAD, MODELS_DELETE),
 )
 
 def configure_run_options(parser: argparse.ArgumentParser) -> None:
@@ -667,10 +1226,246 @@ RUN_OPTIONS = CommandSpec(
     run=_run_run_options,
 )
 
+#: Champs du formulaire d'exécution lus par `execution_launch` (noms de la page).
+FORM_FIELD_MODEL = "modele"
+FORM_FIELD_AUDIOS = "audios"
+FORM_FIELD_THREADS = "threads"
+#: Même marque que les pages de résultats pour une exécution du moteur factice.
+SIMULATED_RUN_MESSAGE = (
+    "MESURES SIMULÉES : moteur factice, ces mesures ne sont pas des mesures "
+    "réelles de ce programme."
+)
+AUDIO_IN_ERROR_TEXT = "en erreur"
+AUDIO_NOT_TREATED_TEXT = "non traité"
+AUDIO_TREATED_TEXT = "traité"
+
+
+def setting_pair(value: str) -> tuple[str, str]:
+    """Découpe `NOM=VALEUR` au premier signe égal ; refus à l'analyse sinon."""
+    name, separator, setting_value = value.partition("=")
+    if not separator:
+        raise argparse.ArgumentTypeError(
+            f"réglage attendu sous la forme NOM=VALEUR : {value!r}"
+        )
+    return name, setting_value
+
+
+def configure_run_request(parser: argparse.ArgumentParser) -> None:
+    """Options communes de « run check » et « run start ».
+
+    `--model` et `--audio` sont obligatoires. `--model`, `--threads` et `--setting`
+    sont acceptés plusieurs fois **pour que** les services voient le doublon et le
+    refusent : un argument écrasé en silence serait une perte. `--audio` garde l'ordre
+    reçu, comme le lot coché sur la page.
+    """
+    parser.add_argument(
+        "--model",
+        metavar="REF",
+        action="append",
+        required=True,
+        help="référence du modèle prêt (<moteur>/<clé>), une seule fois",
+    )
+    parser.add_argument(
+        "--audio",
+        metavar="NAME",
+        action="append",
+        required=True,
+        help="nom d'un audio lisible du dossier d'entrée ; répétable, "
+        "l'ordre reçu est l'ordre de traitement",
+    )
+    parser.add_argument(
+        "--threads",
+        metavar="N",
+        action="append",
+        default=None,
+        help="nombre de threads, une seule fois ; par défaut celui de la préparation",
+    )
+    parser.add_argument(
+        "--setting",
+        metavar="NOM=VALEUR",
+        action="append",
+        type=setting_pair,
+        default=None,
+        help="réglage de la famille du modèle ; répétable, un même nom est refusé",
+    )
+
+
+def form_fields_from_arguments(
+    arguments: argparse.Namespace, preparation: ConfigurationExecutions
+) -> list[tuple[str, str]]:
+    """Champs de formulaire équivalents aux options, dans l'ordre de la ligne.
+
+    Les services valident ces paires comme celles d'un POST : un champ unique reçu
+    deux fois est refusé par eux. Les threads prennent la valeur par défaut de la
+    préparation quand `--threads` est absent.
+    """
+    threads = arguments.threads or [str(preparation.threads_par_defaut())]
+    fields = [(FORM_FIELD_MODEL, value) for value in arguments.model]
+    fields += [(FORM_FIELD_AUDIOS, name) for name in arguments.audio]
+    fields += [(FORM_FIELD_THREADS, value) for value in threads]
+    fields += [
+        (PREFIXE_CHAMP_REGLAGE + name, value)
+        for name, value in arguments.setting or ()
+    ]
+    return fields
+
+
+def _run_run_check(
+    arguments: argparse.Namespace,
+    services: DataServices,
+    signal_flag: SignalFlag,
+) -> int:
+    """Valide une demande sans rien lancer ni écrire, comme la page avant lancement.
+
+    `validate_execution_fields` applique les mêmes refus que la route de
+    vérification : champs répétés, modèle prêt, audios lisibles, threads et
+    réglages déclarés. Le contrôle de lancement du moteur reste propre à
+    `run start`, comme sur le web. Seule la préparation de `data/` de la session
+    a lieu. Un refus donne le code 2 avec le motif du service.
+    """
+    output = output_from_arguments(arguments)
+    fields = form_fields_from_arguments(arguments, services.preparation)
+    try:
+        request = validate_execution_fields(services.preparation, fields)
+    except ValeurRefusee as error:
+        output.diagnostic(str(error))
+        return CODE_REFUS
+    output.result({"request": serialize_run_request(request)}, run_check_text_lines(request))
+    return CODE_SUCCESS
+
+
+def _run_run_start(
+    arguments: argparse.Namespace,
+    services: DataServices,
+    signal_flag: SignalFlag,
+) -> int:
+    """Lance l'exécution dans le créneau unique et suit son journal jusqu'à sa fin.
+
+    `launch_execution` valide, contrôle le moteur, réserve puis admet : un refus
+    avant admission donne le code 2 avec le motif du service, sans opération. Le
+    code final vient du résultat de l'exécution (`execution_exit_code`) : 0 si
+    tous les audios sont traités, 1 si un audio est en erreur, 3 après un signal.
+    La ligne finale donne l'état de l'opération, l'identifiant du résultat et
+    l'issue de chaque audio, dans l'ordre demandé.
+    """
+    output = output_from_arguments(arguments)
+    fields = form_fields_from_arguments(arguments, services.preparation)
+    try:
+        launch_execution(
+            services.preparation,
+            services.execution,
+            services.operations,
+            fields,
+        )
+    except (
+        ValeurRefusee,
+        EngineNotReady,
+        ExecutionAlreadyReserved,
+        CreneauOccupe,
+        ServiceArrete,
+    ) as error:
+        output.diagnostic(str(error))
+        return CODE_REFUS
+
+    watch = OperationWatch(
+        services.operations, signal_flag, output, execution=services.execution
+    )
+    code = watch.wait(
+        lambda _snapshot: execution_exit_code(services.execution.derniere_execution())
+    )
+    operation = services.operations.instantane()
+    result = services.execution.derniere_execution()
+    identifier = services.execution.identifiant_resultat(operation.generation)
+    output.result(
+        {
+            "operation": operation.etat,
+            "error": operation.erreur,
+            "identifiant_resultat": identifier,
+            "execution": None if result is None else serialize_run_result(result),
+        },
+        run_start_text_lines(operation, result, identifier),
+    )
+    return code
+
+
+def run_check_text_lines(request: DemandeExecution) -> list[str]:
+    """Lignes de texte de « run check » : demande valide et choix effectifs."""
+    reference = f"{request.moteur}{SEPARATEUR_REFERENCE_MODELE}{request.cle}"
+    lines = [
+        "Demande valide : aucune exécution lancée, aucun résultat écrit.",
+        f"Modèle : {request.identifiant} (référence {reference}), "
+        f"moteur {request.moteur}, famille {request.famille}",
+    ]
+    if request.fichier_gguf is not None:
+        lines.append(f"Variante GGUF : {request.fichier_gguf}")
+    if request.synthetique:
+        lines.append(SIMULATED_RUN_MESSAGE)
+    lines.append(
+        f"Audios, dans l'ordre de traitement : {', '.join(request.audios)}"
+    )
+    lines.append(f"Threads : {request.threads}")
+    if not request.reglages:
+        lines.append("Réglages : aucun")
+    for setting in request.reglages:
+        lines.append(f"Réglage {setting.nom} : {setting_value_text(setting.valeur)}")
+    return lines
+
+
+def run_start_text_lines(
+    operation: InstantaneCreneau,
+    result: ResultatExecution | None,
+    identifier: str | None,
+) -> list[str]:
+    """Lignes de texte de « run start » : opération, résultat et état par audio."""
+    lines = [f"Opération « exécution » : {LIBELLES_ETATS[operation.etat]}"]
+    if operation.erreur is not None:
+        lines.append(f"Motif : {operation.erreur}")
+    if result is None:
+        return lines
+    if result.factice:
+        lines.append(SIMULATED_RUN_MESSAGE)
+    if identifier is not None:
+        lines.append(f"Résultat enregistré : {identifier}")
+    lines.append("Audios :")
+    lines.extend(
+        f"  {audio.nom} : {audio_state_text(audio)}" for audio in result.audios
+    )
+    return lines
+
+
+def audio_state_text(audio: ResultatAudio) -> str:
+    """État d'un audio : en erreur (avec le motif), non traité ou traité."""
+    if audio.erreur is not None:
+        return f"{AUDIO_IN_ERROR_TEXT} ({audio.erreur})"
+    if audio.non_traite:
+        return AUDIO_NOT_TREATED_TEXT
+    return AUDIO_TREATED_TEXT
+
+
+RUN_CHECK = CommandSpec(
+    name="check",
+    help_text=(
+        "valide une demande d'exécution sans rien lancer ni écrire, et affiche la "
+        "demande normalisée"
+    ),
+    configure=configure_run_request,
+    run=_run_run_check,
+)
+
+RUN_START = CommandSpec(
+    name="start",
+    help_text=(
+        "lance une exécution sur un ou plusieurs audios, avec le journal en direct ; "
+        "code 1 si un audio est en erreur"
+    ),
+    configure=configure_run_request,
+    run=_run_run_start,
+)
+
 RUN = CommandGroup(
     name="run",
-    help_text="préparation et vérification des exécutions",
-    commands=(RUN_OPTIONS,),
+    help_text="préparation, vérification et lancement des exécutions",
+    commands=(RUN_OPTIONS, RUN_CHECK, RUN_START),
 )
 
 #: « results list » : regroupement par empreinte et sélection par essai.
