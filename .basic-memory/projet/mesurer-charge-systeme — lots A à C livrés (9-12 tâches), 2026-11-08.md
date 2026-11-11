@@ -23,3 +23,10 @@ tags:
 
 - relates_to [[Reprise transcription-bench — méthode d'orchestration et état après la refonte résultats, 2026-11-07]]
 - relates_to [[Lecture grand public et occupation des ressources — cadrage 2026-11-04]]
+
+
+## Observation navigator et corrections du bloc contexte — 2026-11-11
+
+- [validation] Observation clair, bureau 1280 et mobile 390, sur copie isolée en /tmp avec moteur factice (mesures simulées) : liste, détail et comparaison. Constats corrigés : libellés `<summary>` distincts (« Valeurs brutes et méthode — après l'audio / après le chargement du modèle »), intertitre « Après chargement du modèle » ajouté à la comparaison (h4), h2 « Relevés système de cette exécution » rattachant les h3 du détail, titres du bloc réduits (`resultat-contexte-titre`), valeurs système plus discrètes (`resultat-valeur-systeme`, 1 rem contre 1,25 rem). Suite complète 1433 tests OK ; OpenSpec strict 9/9.
+- [decision] Acceptés comme préexistants/conformes aux specs : tableau « Toutes les mesures » défilant dans son conteneur, coupure de « Moteur factice (développement) » par overflow-wrap, bouton « Comparer » sans état inactif (formulaire sans JS).
+- [limit] **4.5 reste ouverte** : thème sombre non observable (outils Playwright sans émulation de prefers-color-scheme), sans-JS strict non simulé, largeur 360 px non contrôlée, aucune donnée réelle. Le h2 du bloc contexte et les h3 ont des tailles proches ; répétitions mineures de « Scénario simulé ». Décision du propriétaire attendue pour clore sans observation sombre (précédent refondre-parcours-resultats 1.5/6.1). 4.3/4.4 toujours sur accord PC/CI.
