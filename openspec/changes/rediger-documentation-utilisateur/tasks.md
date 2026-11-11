@@ -1,6 +1,6 @@
 ## 1. Cadrage
 
-- [ ] 1.0 Préalable : `habiller-interface-sumi` implémenté (navigation, libellés et navigateurs minimaux définitifs)
+- [x] 1.0 Préalable : `habiller-interface-sumi` implémenté (navigation, libellés et navigateurs minimaux définitifs)
 - [ ] 1.1 Faire valider par le propriétaire le public visé (hypothèse : à l'aise avec un ordinateur, sans programmation, prêt à copier-coller des commandes) ; l'exemple principal est décidé (design D5 : whisper-large-v3-turbo-gguf, Q5_K_M)
 - [x] 1.2 Inventorier le README actuel section par section et établir le tableau de correspondance sans perte (reste, déplacé, réécrit dans le guide, obsolète), joint au change dans `correspondance.md`
 - [x] 1.3 Relever dans l'interface les libellés, pages et messages réels (gabarits **et** chaînes Python de `transcription_bench/web`, CLI inclus) sur lesquels s'appuieront le guide et le dépannage
@@ -13,7 +13,7 @@
 - [x] 2.4 Réduire `README.md` (moins de soixante lignes) avec liens vers le guide et la documentation technique
 - [ ] 2.5 Renseigner pour chaque procédure son niveau de vérification (Linux daté, CI Windows, non vérifié)
 - [x] 2.6 Mettre à jour `docs/rapport-livraison.md` (la ligne qui cite « README.md à jour » comme preuve de la documentation de lancement) pour renvoyer au guide
-- [ ] 2.7 Renvoi du change `habiller-interface-sumi` (tâche 8.11) : `docs/guide-utilisateur.md` annonce encore un rappel de non-validation clinique sur l'accueil (lignes 5 et 138) alors que le bandeau a été retiré du squelette (lot 5, 2026-11-04) ; corriger au fil de la rédaction, en conservant l'avertissement global du prototype
+- [x] 2.7 Renvoi du change `habiller-interface-sumi` (tâche 8.11) : `docs/guide-utilisateur.md` annonce encore un rappel de non-validation clinique sur l'accueil (lignes 5 et 138) alors que le bandeau a été retiré du squelette (lot 5, 2026-11-04) ; corriger au fil de la rédaction, en conservant l'avertissement global du prototype
 
 ## 3. Contrôles automatiques
 

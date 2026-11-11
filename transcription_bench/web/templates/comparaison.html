@@ -97,8 +97,9 @@
 <summary>Contexte de l'ordinateur</summary>
 {{ composants.aide_contexte_ordinateur() }}
 {% for carte in comparaison.cartes %}
-<h3>{{ carte.libelle }}</h3>
+<h3 class="resultat-contexte-titre">{{ carte.libelle }}</h3>
 {{ composants.valeurs_audio(carte.entree.observation_systeme) }}
+<h4 class="resultat-contexte-titre">Après chargement du modèle</h4>
 {{ composants.valeurs_chargement(carte.entree.observation_chargement) }}
 {% endfor %}
 </details>

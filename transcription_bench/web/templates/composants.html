@@ -51,7 +51,12 @@
    marquée comme scénario et sa date constante n'est jamais présentée comme un
    relevé réel. Les valeurs brutes (octets, pourcentage, intervalle, méthode et
    version psutil, instant du relevé) restent au second niveau repliable, sans
-   les trois décimales du premier niveau. L'aide du bloc reste courte : les
+   les trois décimales du premier niveau ; le libellé repliable porte le
+   qualificatif de son relevé (« après l'audio », « après le chargement du
+   modèle ») pour distinguer des blocs répétés. Les titres des entrées et les
+   valeurs système portent les classes discrètes `resultat-contexte-titre` et
+   `resultat-valeur-systeme` (corps réduit), jamais la taille des mesures du
+   moteur. L'aide du bloc reste courte : les
    autres programmes inclus et l'instantané pris après l'audio y sont dits une
    seule fois, le texte complet des limites vivant dans la page d'aide locale
    (`aide_resultats.html`, design D4). #}
@@ -168,8 +173,9 @@
 {%- endmacro %}
 
 {#- Valeurs d'un audio : CPU total moyen et RAM disponible après l'audio. Le
-    second niveau garde les valeurs brutes, la méthode et l'instant consignés.
-    Aucune valeur n'est déduite du pic mémoire du moteur. -#}
+    second niveau garde les valeurs brutes, la méthode et l'instant consignés,
+    sous un libellé distinct de celui du relevé après chargement. Aucune valeur
+    n'est déduite du pic mémoire du moteur. -#}
 {% macro valeurs_audio(observation) -%}
 {%- set lisible = observation is not none and observation.lisible -%}
 {%- set cpu = observation.cpu if lisible else none -%}
@@ -189,16 +195,16 @@
 <div class="resultat-mesures">
 <div class="resultat-mesure">
 <span class="resultat-libelle">CPU total moyen pendant la transcription</span>
-<span class="resultat-valeur{% if cpu_affiche in ("non mesuré", "indisponible") %} resultat-valeur-absente{% endif %}">{{ cpu_affiche }}</span>
+<span class="resultat-valeur resultat-valeur-systeme{% if cpu_affiche in ("non mesuré", "indisponible") %} resultat-valeur-absente{% endif %}">{{ cpu_affiche }}</span>
 </div>
 <div class="resultat-mesure">
 <span class="resultat-libelle">RAM disponible après l'audio</span>
-<span class="resultat-valeur{% if ram_affichee in ("non mesuré", "indisponible") %} resultat-valeur-absente{% endif %}">{{ ram_affichee }}</span>
+<span class="resultat-valeur resultat-valeur-systeme{% if ram_affichee in ("non mesuré", "indisponible") %} resultat-valeur-absente{% endif %}">{{ ram_affichee }}</span>
 </div>
 </div>
 {{ marque_simulation(simulee) }}
 <details>
-<summary>Valeurs brutes et méthode</summary>
+<summary>Valeurs brutes et méthode — après l'audio</summary>
 <dl class="prose">
 {% if lisible %}
 <dt>CPU total moyen (valeur brute)</dt>
@@ -238,7 +244,8 @@
 {%- endmacro %}
 
 {#- Valeur de l'instantané pris juste après le chargement du modèle. Le relevé
-    de chargement ne comporte aucun CPU moyen (design D3). -#}
+    de chargement ne comporte aucun CPU moyen (design D3) ; son libellé
+    repliable se distingue de celui du relevé d'audio. -#}
 {% macro valeurs_chargement(chargement) -%}
 {%- set lisible = chargement is not none and chargement.lisible -%}
 {%- set memoire = chargement.memoire_apres if lisible else none -%}
@@ -254,12 +261,12 @@
 <div class="resultat-mesures">
 <div class="resultat-mesure">
 <span class="resultat-libelle">RAM disponible après chargement</span>
-<span class="resultat-valeur{% if ram_affichee in ("non mesuré", "indisponible") %} resultat-valeur-absente{% endif %}">{{ ram_affichee }}</span>
+<span class="resultat-valeur resultat-valeur-systeme{% if ram_affichee in ("non mesuré", "indisponible") %} resultat-valeur-absente{% endif %}">{{ ram_affichee }}</span>
 </div>
 </div>
 {{ marque_simulation(simulee) }}
 <details>
-<summary>Valeurs brutes et méthode</summary>
+<summary>Valeurs brutes et méthode — après le chargement du modèle</summary>
 <dl class="prose">
 {% if lisible %}
 <dt>RAM totale après chargement</dt>

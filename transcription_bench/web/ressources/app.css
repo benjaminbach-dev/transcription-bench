@@ -321,6 +321,21 @@ button[aria-disabled="true"] {
   overflow-wrap: normal;
 }
 
+/* Bloc « Contexte de l'ordinateur » (tâche 4.5) : les titres de ses entrées
+ * (h2 de section, h3 par audio ou transcription, intertitre après chargement)
+ * et ses valeurs système restent plus discrets que les mesures du moteur —
+ * jamais la taille 1,25 rem des valeurs temps/RAM/CPU. L'absence garde sa
+ * règle plus spécifique ci-dessus (0,875 rem, graisse 400). */
+
+.resultat-contexte-titre {
+  font-size: var(--s-resultat-taille-modele);
+  font-weight: 700;
+}
+
+.resultat-valeur-systeme {
+  font-size: var(--s-resultat-taille-texte);
+}
+
 /* Libellé court d'une meilleure mesure observée (temps ou RAM), juste après la
  * valeur : il reprend la couleur d'accent de sa mesure, jamais une teinte de
  * victoire verte ou rouge, et reste lisible au même seuil de contraste. */

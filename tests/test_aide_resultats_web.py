@@ -72,6 +72,13 @@ BLOCS_TEXTE = frozenset(
 )
 #: Données techniques et textes transcrits : jamais comptés comme prose.
 ELEMENTS_DONNEES = frozenset({"pre", "code", "script", "style"})
+#: Libellés de contrôles (summary d'un accordéon) : la spec « Explication
+#: unique » autorise leur répétition d'un résultat à l'autre (ce sont des
+#: libellés de champs, pas des phrases explicatives) ; le détecteur de
+#: répétitions ne vise que la prose.
+ELEMENTS_LIBELLES = frozenset({"summary"})
+#: Éléments dont le texte n'entre jamais dans le détecteur de répétitions.
+ELEMENTS_IGNORES = ELEMENTS_DONNEES | ELEMENTS_LIBELLES
 #: Nombre minimal de mots d'une phrase explicative suivie par ce contrôle.
 MOTS_MINIMUM = 8
 LONGUEUR_EMPREINTE = "d" * 64
@@ -87,13 +94,13 @@ class _TexteDesBlocs(HTMLParser):
         self.donnees = 0
 
     def handle_starttag(self, tag: str, attrs: list) -> None:
-        if tag in ELEMENTS_DONNEES:
+        if tag in ELEMENTS_IGNORES:
             self.donnees += 1
         elif tag in BLOCS_TEXTE:
             self.morceaux.append("\n")
 
     def handle_endtag(self, tag: str) -> None:
-        if tag in ELEMENTS_DONNEES:
+        if tag in ELEMENTS_IGNORES:
             self.donnees -= 1
         elif tag in BLOCS_TEXTE:
             self.morceaux.append("\n")

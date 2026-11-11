@@ -49,10 +49,26 @@ EMPREINTE = "c" * 64
 RESUME_BLOC = "<summary>Contexte de l'ordinateur</summary>"
 #: Fin du bloc dans la page de détail : la section suivante de l'exécution.
 FIN_BLOC_DETAIL = "<h2>Informations sur l'exécution</h2>"
-RESUME_BRUT = "<summary>Valeurs brutes et méthode</summary>"
+RESUME_BRUT_AUDIO = "<summary>Valeurs brutes et méthode — après l'audio</summary>"
+RESUME_BRUT_CHARGEMENT = (
+    "<summary>Valeurs brutes et méthode — après le chargement du modèle</summary>"
+)
+#: Titre de section du bloc (tâche 4.5) : les h3 des entrées s'y rattachent,
+#: jamais au h2 du dernier audio.
+TITRE_SECTION_CONTEXTE = (
+    '<h2>Relevés système de cette exécution</h2>'
+)
+ENTREE_AUDIO = '<h3 class="resultat-contexte-titre">Audio 1 — a.wav</h3>'
+INTERTITRE_CHARGEMENT_COMPARAISON = (
+    '<h4 class="resultat-contexte-titre">Après chargement du modèle</h4>'
+)
+INTERTITRE_CHARGEMENT = (
+    '<h3 class="resultat-contexte-titre">Après chargement du modèle</h3>'
+)
 AIDE = "inclut les autres programmes"
 VALEUR_ABSENTE = (
-    '<span class="resultat-valeur resultat-valeur-absente">non mesuré</span>'
+    '<span class="resultat-valeur resultat-valeur-systeme '
+    'resultat-valeur-absente">non mesuré</span>'
 )
 
 #: Valeur d'un argument d'écriture qui laisse la clé absente du fichier :
@@ -160,7 +176,7 @@ class ContexteOrdinateurTest(SocleWebTest):
     def valeurs_premier_niveau(self, corps: str) -> str:
         """Valeurs lisibles de la première entrée, avant ses valeurs brutes."""
         bloc = self.bloc(corps)
-        return bloc[: bloc.index(RESUME_BRUT)]
+        return bloc[: bloc.index(RESUME_BRUT_AUDIO)]
 
     def ecrire_observation_complete(self) -> None:
         self.ecrire_essai(
@@ -174,7 +190,7 @@ class ContexteOrdinateurTest(SocleWebTest):
         corps = self.page_detail()
         bloc = self.bloc(corps)
         premier_niveau = self.valeurs_premier_niveau(corps)
-        brutes = bloc[bloc.index(RESUME_BRUT) :]
+        brutes = bloc[bloc.index(RESUME_BRUT_AUDIO) :]
 
         # Bloc secondaire repliable, fermé par défaut et sans JavaScript :
         # la balise `details` ne porte aucun attribut, donc aucun `open`.
@@ -184,20 +200,22 @@ class ContexteOrdinateurTest(SocleWebTest):
         self.assertIn("instantané relevé après l'audio", premier_niveau)
 
         # CPU global moyen, explicité comme incluant les autres programmes.
-        self.assertIn("<h3>Audio 1 — a.wav</h3>", bloc)
+        self.assertIn(ENTREE_AUDIO, bloc)
         self.assertIn("CPU total moyen pendant la transcription", premier_niveau)
         self.assertIn("90 %", premier_niveau)
         # RAM disponible après l'audio, avec la capacité du même instant.
         self.assertIn("RAM disponible après l'audio", premier_niveau)
         self.assertIn("5,2 Go sur 16 Go", premier_niveau)
         # Relevé après chargement, dans le même niveau secondaire.
-        self.assertIn("<h3>Après chargement du modèle</h3>", bloc)
-        apres_chargement = bloc[bloc.index("<h3>Après chargement du modèle</h3>") :]
+        self.assertIn(INTERTITRE_CHARGEMENT, bloc)
+        apres_chargement = bloc[bloc.index(INTERTITRE_CHARGEMENT) :]
         self.assertIn("RAM disponible après chargement", apres_chargement)
         self.assertIn("7 Go sur 16 Go", apres_chargement)
 
-        # Les valeurs brutes restent au second niveau, avec la méthode.
-        self.assertEqual(bloc.count(RESUME_BRUT), 2)
+        # Les valeurs brutes restent au second niveau, avec la méthode ; chaque
+        # summary porte le qualificatif de son relevé (audio, puis chargement).
+        self.assertEqual(bloc.count(RESUME_BRUT_AUDIO), 1)
+        self.assertEqual(bloc.count(RESUME_BRUT_CHARGEMENT), 1)
         for valeur in (
             "90.000 % sur 0 à 100",
             "1.200 s",
@@ -223,6 +241,25 @@ class ContexteOrdinateurTest(SocleWebTest):
         self.assertNotIn("90 %", avant_bloc)
         self.assertLess(corps.rindex("</article>"), corps.index(RESUME_BLOC))
         self.assertEqual(avant_bloc.count('<div class="resultat-compact">'), 1)
+
+    def test_titres_du_bloc_rattaches_a_sa_propre_section(self) -> None:
+        # Tâche 4.5 : le plan rattachait les h3 « Audio n » du bloc au h2 du
+        # dernier audio de la page ; le bloc porte désormais son h2 de section
+        # et ses entrées s'y rattachent, sans saut de niveau.
+        self.ecrire_observation_complete()
+
+        corps = self.page_detail()
+        bloc = self.bloc(corps)
+
+        # La section du bloc se place après le dernier audio, avant la suite.
+        self.assertLess(corps.rindex("</article>"), corps.index(TITRE_SECTION_CONTEXTE))
+        self.assertLess(corps.index(TITRE_SECTION_CONTEXTE), corps.index(FIN_BLOC_DETAIL))
+        self.assertLess(
+            corps.index(TITRE_SECTION_CONTEXTE), corps.index(ENTREE_AUDIO)
+        )
+        # Dans le bloc : h2 de section, puis un h3 par entrée, sans saut.
+        niveaux = [int(niveau) for niveau in re.findall(r"<h([1-6])", bloc)]
+        self.assertEqual(niveaux, [2, 3, 3])
 
     def test_aucune_phrase_longue_repete_dans_les_pages_avec_contexte(self) -> None:
         # Le bloc ajoute une phrase d'aide et une entrée par transcription :
@@ -270,6 +307,13 @@ class ContexteOrdinateurTest(SocleWebTest):
         for valeur in ("CPU total", "RAM disponible", "90 %", "5,2 Go"):
             self.assertNotIn(valeur, avant_bloc)
             self.assertIn(valeur, bloc)
+
+        # Tâche 4.5 : la variante discrète des valeurs reste limitée au bloc ;
+        # les valeurs du moteur gardent la classe pleine, hors du bloc.
+        self.assertNotIn("resultat-valeur-systeme", avant_bloc)
+        self.assertIn(
+            '<span class="resultat-valeur resultat-valeur-systeme">90 %</span>', bloc
+        )
 
         # Aucun ratio inventé entre les deux informations : ni part de RAM
         # système (5,2 sur 16 Go), ni reste de l'ordinateur.
@@ -391,14 +435,27 @@ class ContexteOrdinateurTest(SocleWebTest):
         # Un seul bloc secondaire, une entrée par transcription comparée.
         self.assertEqual(corps.count(RESUME_BLOC), 1)
         bloc = self.bloc(corps, fin="</main>")
-        self.assertIn("<h3>modele-a</h3>", bloc)
-        self.assertIn("<h3>modele-b</h3>", bloc)
-        premiere = bloc[: bloc.index("<h3>modele-b</h3>")]
+        entree_a = '<h3 class="resultat-contexte-titre">modele-a</h3>'
+        entree_b = '<h3 class="resultat-contexte-titre">modele-b</h3>'
+        self.assertIn(entree_a, bloc)
+        self.assertIn(entree_b, bloc)
+        premiere = bloc[: bloc.index(entree_b)]
         self.assertIn("90 %", premiere)
         self.assertIn("5,2 Go sur 16 Go", premiere)
         self.assertIn("7 Go sur 16 Go", premiere)
-        seconde = bloc[bloc.index("<h3>modele-b</h3>") :]
+        seconde = bloc[bloc.index(entree_b) :]
         self.assertEqual(seconde.count(VALEUR_ABSENTE), 3, seconde)
+
+        # Tâche 4.5 : chaque carte porte l'intertitre du relevé après
+        # chargement (comme le détail), entre les deux summary distincts.
+        self.assertEqual(bloc.count(INTERTITRE_CHARGEMENT_COMPARAISON), 2)
+        self.assertEqual(bloc.count(RESUME_BRUT_AUDIO), 2)
+        self.assertEqual(bloc.count(RESUME_BRUT_CHARGEMENT), 2)
+        carte_a = bloc[bloc.index(entree_a) : bloc.index(entree_b)]
+        self.assertLess(carte_a.index(RESUME_BRUT_AUDIO), carte_a.index(INTERTITRE_CHARGEMENT_COMPARAISON))
+        self.assertLess(
+            carte_a.index(INTERTITRE_CHARGEMENT_COMPARAISON), carte_a.index(RESUME_BRUT_CHARGEMENT)
+        )
 
         # Aucune colonne système dans le tableau des mesures comparées.
         tableau = corps[corps.index("<table>") : corps.index("</table>")]
@@ -439,7 +496,7 @@ class ContexteOrdinateurTest(SocleWebTest):
         self.assertIsNone(re.search(r"\son[a-z]+\s*=", bloc))
         self.assertNotIn("style=", bloc)
         self.assertIn(RESUME_BLOC, bloc)
-        self.assertIn("<details>\n" + RESUME_BRUT, bloc)
+        self.assertIn("<details>\n" + RESUME_BRUT_AUDIO, bloc)
         # Contenu de texte courant : prose sur les paragraphes et la liste.
         self.assertIn('<p class="prose small">', bloc)
         self.assertIn('<dl class="prose">', bloc)

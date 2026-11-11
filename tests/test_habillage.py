@@ -64,9 +64,10 @@ CLASSES_AUTORISEES = frozenset(
     }
 )
 
-# Tâche 1.3 : classes du composant de résultat. Elles ne sont admises que dans
-# `composants.html`, qui doit les employer toutes, et doivent avoir une règle
-# dans `app.css` : aucune classe orpheline ni inventée dans un autre gabarit.
+# Tâche 1.3 : classes du composant de résultat (toutes portées par les macros
+# de `composants.html` ou par les gabarits qui les rendent, `resultat-tris` et
+# `resultat-contexte-titre` compris) ; chacune doit avoir une règle dans
+# `app.css` : aucune classe orpheline ni inventée dans un autre gabarit.
 GABARIT_COMPOSANT = "composants.html"
 CLASSES_COMPOSANT_RESULTAT = frozenset(
     {
@@ -86,6 +87,8 @@ CLASSES_COMPOSANT_RESULTAT = frozenset(
         "resultat-mesure-cpu",
         "resultat-valeur",
         "resultat-valeur-absente",
+        "resultat-valeur-systeme",
+        "resultat-contexte-titre",
         "resultat-etats",
         "resultat-etat",
         "resultat-section",

@@ -746,6 +746,15 @@ class FeuilleComplementaireTest(SocleFeuillesTest):
                 self.assertIsNotNone(mesure, jetons[jeton])
                 self.assertGreaterEqual(float(mesure.group(1)), minimum)
         self.assertEqual(feuille[".resultat-modele"]["font-weight"], "700")
+        # Tâche 4.5 : titres du bloc « Contexte de l'ordinateur » et valeurs
+        # système, plus discrets que les mesures du moteur (jetons existants).
+        titre = feuille[".resultat-contexte-titre"]
+        self.assertEqual(titre["font-size"], "var(--s-resultat-taille-modele)")
+        self.assertEqual(titre["font-weight"], "700")
+        self.assertEqual(
+            feuille[".resultat-valeur-systeme"]["font-size"],
+            "var(--s-resultat-taille-texte)",
+        )
 
     def test_absences_moins_saillantes_et_sans_coupure_forcee(self) -> None:
         feuille = regles(self.css)

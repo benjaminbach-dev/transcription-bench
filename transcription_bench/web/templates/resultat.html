@@ -160,13 +160,14 @@
 <details>
 <summary>Contexte de l'ordinateur</summary>
 {{ composants.aide_contexte_ordinateur() }}
+<h2>Relevés système de cette exécution</h2>
 {% for vue in vues_audios %}
 {% if vue.audio.transcription %}
-<h3>Audio {{ vue.audio.ordre }} — {{ vue.audio.nom }}</h3>
+<h3 class="resultat-contexte-titre">Audio {{ vue.audio.ordre }} — {{ vue.audio.nom }}</h3>
 {{ composants.valeurs_audio(vue.audio.observation_systeme) }}
 {% endif %}
 {% endfor %}
-<h3>Après chargement du modèle</h3>
+<h3 class="resultat-contexte-titre">Après chargement du modèle</h3>
 {{ composants.valeurs_chargement(detail.mesures.observation_chargement) }}
 </details>
 
