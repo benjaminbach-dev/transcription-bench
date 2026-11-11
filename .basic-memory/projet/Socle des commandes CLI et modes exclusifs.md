@@ -52,3 +52,12 @@ Développement serveur du change `ajouter-cli-agent`, à partir de `7ce5cc1` sur
 - [constraint] Pause après le lot 3. Ne pas commencer spontanément le lot 4. Aucun nouvel appel advisor n'est autorisé pour le moment ; cette suspension est toujours active.
 - [limit] Aucun moteur réel, poids ou inférence réelle ; ces essais Linux serveur avec factice ne qualifient ni le PC utilisateur ni Windows. La qualification 4.5 reste hors de cet hôte.
 - [next] À la reprise autorisée : lot 4 (parité, contrôles transversaux, documentation, revue/validation finale). Les neuf avertissements de longueur de la spec CLI bloquent toujours la validation OpenSpec stricte ; la revue advisor prévue en 4.4 reste soumise à la levée de sa suspension. Conserver les exigences, ne pas réduire silencieusement les tests ou la qualification.
+
+
+## Lot 4 CLI — 2026-11-11 (hôte lab, serveur de développement)
+
+- [decision] Web et commandes restent exclusifs (verrou unique du dossier de données) : décision confirmée à la clôture du lot ; la parité web/CLI est verrouillée par `transcription_bench/parity.py` + `tests/test_parity.py` (dans les deux sens).
+- [status] Tâches 4.1 à 4.4 faites (22/23) ; 4.5 (qualification réelle Linux puis Windows) reste différée, hors serveur de développement. Spec CLI : 9 exigences trop longues découpées sans perte (vérifié par advisor), `openspec validate --all --strict` sans avertissement. `refondre-parcours-resultats` archivé (2026-11-11).
+- [validation] Revue advisor : aucun bloquant ; corrections appliquées (sentinelle de chemins réellement hors `data/` avec motif de refus vérifié, garde non creuse, blocage réseau journalisé, imports try/if, doc : codes, réserve Windows, arguments, ancre README ; spec : UTF-8, terminaison brutale, scénarios JSON). Suite complète 1432 tests OK (54 s), `uv lock --check` et `git diff --check` OK.
+- [limit] Aucun moteur réel, poids ou inférence ; aucune qualification PC/Windows. Windows : Ctrl+C/SIGTERM d'agent à éprouver. Rien n'est commité à ce stade.
+- [method] Workers hyper/glm-5.3 high (un par tâche), contrôle principal, advisor réactivé par l'utilisateur pour la revue finale.

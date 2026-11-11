@@ -109,11 +109,15 @@ L'accès aux dépôts restreints SHALL utiliser le jeton Hugging Face déjà con
 - **THEN** l'interface indique que l'accès est refusé et comment fournir un jeton, sans afficher de secret
 
 ### Requirement: Inventaire des modèles locaux
-L'interface SHALL lister les modèles prêts avec leur moteur, identifiant, révision, variante ou quantification, famille et taille sur disque, et permettre leur suppression locale.
+Modèles SHALL présenter d'abord les modèles locaux prêts : nom, moteur, variante utile, taille lisible et action d'utilisation. Identifiant complet, révision, famille et fichiers restent accessibles en détail avec la suppression locale. La section d'ajout ne précède pas l'inventaire ; les explications générales ne sont pas répétées par modèle.
 
 #### Scenario: Suppression d'un modèle
 - **WHEN** l'utilisateur supprime un modèle local inutilisé
-- **THEN** ses fichiers sont retirés du dossier des modèles et les résultats déjà produits restent consultables
+- **THEN** ses fichiers sont retirés et les résultats déjà produits restent consultables ; l'explication de conservation des résultats n'est affichée qu'une fois sur la page
+
+#### Scenario: Inventaire non vide
+- **WHEN** plusieurs modèles locaux sont prêts
+- **THEN** leur liste constitue le premier contenu fonctionnel après le titre et les alertes nécessaires ; l'utilisateur peut aller préparer une exécution avec le modèle choisi sans traverser le formulaire d'ajout
 
 ### Requirement: Suppression d'un modèle actif interdite
 La suppression d'un modèle MUST être refusée tant qu'une exécution l'utilise.
@@ -121,3 +125,18 @@ La suppression d'un modèle MUST être refusée tant qu'une exécution l'utilise
 #### Scenario: Suppression pendant une exécution
 - **WHEN** l'utilisateur demande la suppression du modèle utilisé par l'exécution active
 - **THEN** la suppression est refusée avec l'indication de l'exécution en cours et les fichiers du modèle restent en place
+
+### Requirement: Ajout secondaire explicite
+La page SHALL proposer une entrée Ajouter un modèle après son inventaire ou dans une action secondaire. L'ouverture de cet espace ne vérifie aucun dépôt et ne télécharge rien. La saisie d'identifiant, le moteur installé, la révision facultative et le choix GGUF restent disponibles avec la vérification préalable et le téléchargement séparé.
+
+#### Scenario: Ajout depuis une liste existante
+- **WHEN** l'utilisateur ouvre Ajouter un modèle
+- **THEN** le formulaire s'affiche sans répéter l'inventaire ni déclencher de réseau ; une vérification ne commence qu'après sa soumission explicite et les fichiers ne sont téléchargés qu'après confirmation dédiée
+
+#### Scenario: Aucun modèle prêt
+- **WHEN** l'inventaire est vide
+- **THEN** un état vide court met en avant l'ajout ou, si nécessaire, l'installation d'un moteur, sans long inventaire technique vide
+
+#### Scenario: Erreur de vérification
+- **WHEN** une vérification refuse un dépôt ou exige un choix de fichier GGUF
+- **THEN** le motif et les choix nécessaires sont visibles au même endroit, sans être cachés dans un panneau fermé ni répétés dans chaque modèle prêt

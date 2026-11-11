@@ -6,11 +6,11 @@ Permet de relire les transcriptions produites avec leurs métadonnées et mesure
 ## Requirements
 
 ### Requirement: Liste des exécutions
-L'interface SHALL lister les exécutions, des plus récentes aux plus anciennes, avec leur date, modèle, moteur, état, nombre d'audios traités et durée totale.
+La page Résultats SHALL présenter en priorité les résultats regroupés par audio, triables à l'intérieur de chaque groupe. Un historique secondaire dans Exécutions conserve tous les essais, des plus récents aux plus anciens, avec date, modèle, moteur, état, audios traités et durée totale. Aucun échec ni résultat sans empreinte valide ne disparaît de cet historique.
 
 #### Scenario: Consultation de l'historique
-- **WHEN** l'utilisateur ouvre la page des résultats
-- **THEN** toutes les exécutions enregistrées apparaissent, y compris celles en échec ou interrompues
+- **WHEN** l'utilisateur ouvre Résultats
+- **THEN** il voit d'abord les résultats par audio et un accès à l'historique complet dans Exécutions, qui conserve toutes les exécutions enregistrées, y compris en échec, interrompues, sans transcription ou sans empreinte exploitable, sans que leurs identifiants techniques dominent la liste principale
 
 ### Requirement: États des exécutions affichés
 Chaque exécution MUST afficher un état explicite et distinct : en cours, terminée, interrompue, abandonnée ou en échec. Les résultats partiels d'une exécution non terminée MUST être accessibles et signalés comme partiels, sans être présentés comme un lot complet.
@@ -24,22 +24,22 @@ Chaque exécution MUST afficher un état explicite et distinct : en cours, termi
 - **THEN** ces résultats sont identifiés comme partiels
 
 ### Requirement: Détail d'une transcription
-L'utilisateur SHALL pouvoir lire chaque transcription avec ses segments horodatés éventuels, ses métadonnées et ses mesures.
+L'utilisateur SHALL lire chaque transcription avec un résumé compact du modèle, de la durée audio, du pic RAM moteur, du CPU moyen moteur, du moteur et du temps de transcription. Le texte complet suit immédiatement ; segments, réglages effectifs, machine, identifiants et mesures brutes restent accessibles en détail sans répéter le résumé.
 
 #### Scenario: Ouverture d'une transcription
 - **WHEN** l'utilisateur ouvre une transcription
-- **THEN** le texte, les réglages effectifs, les informations de modèle, de moteur et de machine, et les mesures sont affichés
+- **THEN** le modèle et les valeurs lisibles précèdent le texte, tandis que réglages, informations complètes de modèle/moteur/machine, segments éventuels et mesures brutes ne constituent pas un second résumé visible par défaut
 
 ### Requirement: Comparaison par audio
-Pour un audio donné, l'interface SHALL afficher les transcriptions sélectionnées en cartes côte à côte sur grand écran et empilées sur petit écran, avec le modèle, le moteur, les trois indicateurs principaux et le texte complet visibles. Les différences de configuration et les autres mesures SHALL être accessibles progressivement.
+Comparaisons SHALL permettre de choisir des transcriptions regroupées par empreinte audio, puis de lire les sélections côte à côte sur grand écran et empilées sur petit écran. Le choix affiche les mêmes valeurs compactes que Résultats ; les cartes finales mettent modèle et ressources avant les détails techniques et conservent le texte complet visible.
 
 #### Scenario: Comparaison de deux modèles
-- **WHEN** l'utilisateur sélectionne deux transcriptions d'un même audio produites par des modèles différents
-- **THEN** les deux cartes montrent leur modèle, leur moteur, la durée de transcription de cet audio, le pic mémoire du moteur rapporté à la RAM totale et le CPU moyen du moteur rapporté aux processeurs logiques consignés, puis leur texte complet ; les différences de configuration et la durée totale de l'opération restent accessibles dans les détails
+- **WHEN** l'utilisateur sélectionne deux transcriptions d'un même audio
+- **THEN** il voit deux cartes avec modèle, durée audio, pic RAM, CPU moteur, moteur et temps de transcription, puis les textes complets ; réglages différents et durée totale de l'opération restent consultables en détail
 
 #### Scenario: Lecture sur petit écran
-- **WHEN** deux transcriptions longues sont comparées à 360 px de large
-- **THEN** leurs cartes s'empilent, le texte se replie sans défilement horizontal de la page et aucune transcription n'est cachée dans un accordéon fermé
+- **WHEN** deux transcriptions longues sont comparées à 360 px
+- **THEN** les cartes s'empilent, leurs indicateurs sont lisibles sans défilement horizontal et aucun texte de la comparaison sélectionnée n'est enfermé dans un détail fermé
 
 ### Requirement: Identité de l'audio comparé
 Les transcriptions SHALL être regroupées par empreinte du fichier audio, et non par son seul nom ; les transcriptions de fichiers de même nom mais d'empreintes différentes MUST NOT être présentées comme comparables.
@@ -56,15 +56,15 @@ Les résultats produits par le moteur factice MUST être signalés comme factice
 - **THEN** cette exécution est marquée comme factice
 
 ### Requirement: Indicateurs principaux de chaque transcription
-Le détail d'un résultat et la comparaison SHALL présenter immédiatement la durée de transcription, la mémoire maximale du moteur et son occupation CPU moyenne. Le chargement et les audios antérieurs inclus dans le pic mémoire MUST être distingués de la seule inférence ; la durée totale d'un lot MUST NOT être présentée comme la durée d'un audio.
+Résultats, sélection comparative, détail et comparaison SHALL afficher modèle, pic RAM moteur, CPU moyen moteur, moteur et temps de transcription distinct. La durée décodée de l'audio figure dans l'entrée ou l'en-tête commun de son groupe. La durée d'un lot ne remplace jamais une durée audio ; RAM cumulative et états partiels restent signalés sans longs paragraphes répétés.
 
 #### Scenario: Lot de plusieurs audios
-- **WHEN** un audio n'est pas le premier dans l'ordre de la demande
-- **THEN** sa durée affichée est sa durée de transcription et une annotation visible indique que son pic mémoire cumulatif peut provenir d'un audio précédent ; l'aide précise que le chargement du modèle est inclus
+- **WHEN** un audio n'est pas le premier dans la demande
+- **THEN** sa durée audio et son temps de transcription restent propres à cet audio, et une mention courte signale son pic RAM cumulatif ; l'explication générale figure une seule fois dans l'aide
 
 #### Scenario: Indicateur absent ou partiel
-- **WHEN** une mesure manque ou correspond à un relevé partiel
-- **THEN** l'interface affiche « non mesuré » ou l'indication de mesure partielle, sans remplacer l'absence par zéro ni attribuer une distinction sur la valeur manquante ou partielle
+- **WHEN** une mesure manque ou est partielle
+- **THEN** son emplacement affiche « non mesuré » ou « partiel », sans zéro inventé ni distinction attribuée sur cette valeur
 
 ### Requirement: Ratios rapportés au matériel consigné
 L'occupation CPU du moteur SHALL être calculée par 100 × temps CPU / (durée de transcription × processeurs logiques). La part de RAM SHALL être calculée par 100 × pic mémoire / RAM totale. Seules les valeurs finies et valides de l'essai consigné MUST être utilisées, jamais celles de l'ordinateur qui consulte le résultat.
@@ -78,49 +78,71 @@ L'occupation CPU du moteur SHALL être calculée par 100 × temps CPU / (durée 
 - **THEN** le ratio est calculé en lecture dans le premier cas ; dans les autres cas il est indisponible ou signalé incohérent, jamais borné silencieusement à 100 %, et aucun fichier n'est réécrit
 
 ### Requirement: Formats lisibles des indicateurs
-Les indicateurs principaux SHALL employer des durées adaptées en secondes, minutes ou heures, de la mémoire en Mo ou Go décimaux et des pourcentages clairement nommés. Les valeurs brutes et leur précision SHALL rester accessibles en détail ; un nombre positif MUST NOT être présenté comme zéro par l'arrondi.
+Toutes les vues de premier niveau SHALL afficher durées en s/min/h, RAM en Mo/Go décimaux, CPU en pourcentage moyen explicitement attribué au moteur et dates courtes. Les valeurs brutes restent en détail. Les valeurs positives ne sont jamais arrondies à zéro ; durée audio et temps de transcription ont des libellés distincts.
 
 #### Scenario: Trois valeurs immédiatement compréhensibles
-- **WHEN** une carte possède une durée de 97 secondes, un pic de 2400000000 octets sur 16000000000 octets et un CPU moyen de 0,4 %
-- **THEN** elle affiche « Transcription : 1 min 37 s », « Mémoire max : 2,4 Go sur 16 Go — 15 % » et « CPU du moteur : < 1 % en moyenne », sans octets ni secondes CPU cumulées au premier niveau
+- **WHEN** un audio dure 180 secondes et sa transcription prend 97 secondes avec un pic de 2400000000 octets et un CPU moyen de 0,4 %
+- **THEN** la vue affiche « Audio : 3 min », « Transcription : 1 min 37 s », « RAM moteur : 2,4 Go » et « CPU moteur : < 1 % », sans octets ni secondes CPU cumulées au premier plan ; capacité et part RAM restent accessibles en détail
 
 ### Requirement: Classement choisi par audio
-Chaque groupe d'audio SHALL proposer tous ses résultats sans dédoublonnage silencieux, triables par temps de transcription, pic RAM, occupation CPU du moteur ou date d'essai. Le tri par défaut SHALL être le temps croissant ; les valeurs absentes ou incohérentes viennent après les valeurs valides, et les égalités ont un départage stable.
+Chaque groupe SHALL conserver ses résultats sans dédoublonnage, triables par temps de transcription, pic RAM moteur, occupation CPU moteur ou date. Un critère commun à la page ordonne les entrées à l'intérieur de chaque groupe, jamais les audios entre eux. Comparaisons utilise le temps croissant par défaut ; valeurs absentes/incohérentes en fin et départage stable. Les valeurs classées restent visibles.
 
 #### Scenario: Changement de critère
-- **WHEN** l'utilisateur choisit « Moins de RAM », « CPU le moins occupé » ou « Essais récents »
-- **THEN** une requête de lecture ordonne respectivement les pics mémoire croissants, les ratios CPU moteur croissants ou les dates décroissantes, avant arrondi ; la liste conserve date et réglages distinctifs de chaque résultat
+- **WHEN** l'utilisateur choisit Plus rapides, Moins de RAM, CPU le moins occupé ou Plus récents
+- **THEN** les résultats sont ordonnés sur les valeurs brutes correspondantes, et les valeurs temps/RAM/CPU restent visibles avec date courte et variante utile ; « Plus rapides » utilise le temps de transcription, jamais la durée source ni un score global
 
 #### Scenario: Tri borné et sélection HTML explicite
-- **WHEN** une requête de classement fournit un tri inconnu ou répété
-- **THEN** elle est refusée par une erreur explicite sans lancer d'opération ; un tri valide réordonne les listes de résultats des groupes d'audios et renvoie vers l'ancre du groupe choisi, sans promettre de conserver des cases cochées non soumises
+- **WHEN** une requête contient un tri inconnu ou dupliqué, ou une sélection invalide, disparue ou extérieure au groupe
+- **THEN** elle est refusée sans opération ; un changement de tri valide conserve les cases sélectionnées encore présentes, y compris sans JavaScript, et aucun résultat masqué n'est comparé sans être identifié dans la sélection
 
 #### Scenario: Ordre de la comparaison sélectionnée
-- **WHEN** l'utilisateur soumet les résultats à comparer
-- **THEN** la comparaison conserve l'ordre de la sélection reçue, validée selon les règles existantes, indépendamment du paramètre de tri des listes
+- **WHEN** l'utilisateur soumet une sélection valide
+- **THEN** la comparaison conserve l'ordre reçu et les bornes de sélection existantes
 
 #### Scenario: Résultats factices et incomplets
-- **WHEN** un groupe contient des mesures simulées ou des résultats partiels
-- **THEN** ils restent accessibles et identifiés, les factices sont séparés des résultats réels dans le classement, et aucune mesure simulée ou partielle ne reçoit de distinction de performance réelle
+- **WHEN** des résultats réels, factices et partiels coexistent
+- **THEN** les factices sont séparés des réels, les états restent visibles et aucune valeur simulée ou partielle ne reçoit de distinction de performance réelle
 
 ### Requirement: Contexte comparatif sans score global
-Une synthèse courte SHALL décrire séparément les résultats observés les plus rapides et les moins consommateurs de RAM, sans score global ni jugement de qualité. Les différences de matériel consigné, les données de contexte inconnues et les biais de pic mémoire MUST être visibles sans ouvrir les détails ; modèle, moteur et réglages différents restent comparables comme configurations testées.
+Les meilleures valeurs observées de temps et de RAM SHALL être signalées directement près des mesures, par couleur et libellé court, sans répéter les modèles dans une synthèse en prose ni attribuer de score global. Une faible occupation CPU n'est pas présentée comme une meilleure efficacité. Les différences ou inconnues de matériel restent signalées de façon concise.
 
 #### Scenario: Matériel différent ou inconnu
-- **WHEN** les valeurs consignées d'OS, d'architecture, de processeurs logiques ou de RAM totale diffèrent ou manquent entre deux essais
-- **THEN** les valeurs restent affichées et triables avec une mention « matériel différent » ou « matériel non vérifié » ; le nom du CPU est informatif et son absence seule ne déclenche pas d'alerte, mais une différence connue reste consultable ; des métadonnées identiques ne prouvent jamais l'identité de la machine
+- **WHEN** OS, architecture, processeurs logiques ou RAM totale diffèrent ou manquent entre essais
+- **THEN** une alerte courte reste visible et les valeurs consignées restent consultables ; le nom CPU seul manquant ne déclenche pas d'alerte et des métadonnées identiques ne prouvent pas l'identité de la machine
 
 #### Scenario: Un seul passage par essai
-- **WHEN** la synthèse présente un résultat en tête
-- **THEN** elle indique qu'il s'agit de mesures observées, sans intervalle d'incertitude inventé, sans performance garantie et sans assimiler faible occupation CPU à meilleure efficacité ou à meilleur texte
+- **WHEN** une valeur de temps ou RAM est signalée en tête sur des résultats réels complets
+- **THEN** le libellé décrit une mesure observée, égalités comprises, sans performance garantie, incertitude inventée ni jugement sur le texte ; factices et partiels ne reçoivent pas de distinction
 
 ### Requirement: Détails progressifs et explications regroupées
-Les vues de résultats SHALL privilégier les textes transcrits et les trois indicateurs, puis proposer les différences de configuration et enfin toutes les mesures et métadonnées. Les explications générales SHALL être regroupées dans une aide locale ; erreurs, états partiels, marques de simulation et avertissements utiles restent visibles.
+Les vues SHALL mettre les informations demandées avant la provenance technique. Date courte et variante utile restent secondaires, sans ajouter de longues colonnes d'identifiants ou de réglages. Aide générale, différences et métadonnées complètes restent accessibles sans répétition systématique entre en-tête, corps et pied d'un même résultat.
 
 #### Scenario: Lecture sans détails techniques
-- **WHEN** l'utilisateur ouvre une comparaison
-- **THEN** il voit les modèles, moteurs, indicateurs et textes sans ouvrir de détail ; empreintes, chemins, versions, temps CPU cumulé, chargement et RTF avec son repère restent consultables mais ne précèdent pas les textes
+- **WHEN** l'utilisateur ouvre un résultat ou une comparaison sélectionnée
+- **THEN** il voit modèle, durée audio, RAM, CPU, moteur, temps de transcription et texte, sans chemins, SHA-256, versions, PID, réglages complets ou paragraphes méthodologiques avant le texte
 
 #### Scenario: Accès aux résultats et à tout l'historique
-- **WHEN** l'utilisateur consulte Résultats
-- **THEN** l'accès existant aux groupes d'audios et à leur classement est mis en avant, et l'historique complet des exécutions reste accessible des plus récentes aux plus anciennes avec date, modèle, moteur, état, nombre d'audios et durée totale, y compris échecs et résultats sans empreinte valide
+- **WHEN** l'utilisateur ouvre Résultats
+- **THEN** les chiffres et contrôles de classement sont au premier plan ; un lien vers l'historique d'Exécutions et l'aide locale restent accessibles au second plan
+
+### Requirement: Liste principale utile sans ouvrir un résultat
+Résultats SHALL afficher un groupe par empreinte audio, nommé par le fichier et sa durée décodée commune. Chaque entrée montre modèle court, temps de transcription, RAM moteur, CPU moteur, moteur et date courte secondaire. Les groupes sont ordonnés par leur essai le plus récent ; le tri initial interne est la date décroissante. L'identifiant interne n'est pas le titre.
+
+#### Scenario: Résultats de plusieurs exécutions
+- **WHEN** plusieurs audios et essais sont enregistrés
+- **THEN** la liste conserve chaque essai et affiche ses mesures sans clic préalable ; l'utilisateur peut trier les essais dans chaque groupe par date, temps de transcription, RAM ou CPU, sans classement de rapidité entre audios différents
+
+#### Scenario: Même nom et configurations proches
+- **WHEN** deux résultats ont un nom de modèle ou de fichier identique mais des variantes, révisions ou empreintes différentes
+- **THEN** une désambiguïsation courte les distingue sans fusionner leurs données ; les détails donnent l'identité complète et aucune comparaison inter-empreintes n'est autorisée ; si des durées décodées consignées diffèrent dans un groupe, elles sont affichées sur les entrées concernées au lieu d'une durée commune trompeuse
+
+### Requirement: Densité maîtrisée des résultats
+Le premier niveau SHALL être composé de blocs courts et alignés, pas d'une phrase technique concaténant tous les champs. Les valeurs de ressources sont visuellement plus saillantes que leurs libellés et les informations secondaires. Les dates et variantes ne repoussent pas les mesures derrière des colonnes hors écran.
+
+#### Scenario: Recette du cas courant sur bureau
+- **WHEN** Résultats puis la sélection Comparaisons contiennent au moins quatre essais aux noms courts et sont observés à 1280 × 800
+- **THEN** au chargement initial, sous la navigation, au moins trois entrées du premier groupe et leurs valeurs principales sont lisibles sans défilement vertical, sans ouvrir de détail et sans défilement horizontal
+
+#### Scenario: Recette de la comparaison sélectionnée
+- **WHEN** deux transcriptions courantes sans alerte sont observées à 1280 × 800
+- **THEN** les deux modèles, leurs mesures principales et le début des deux textes sont visibles sans défilement vertical ; les mêmes valeurs restent accessibles à 360 px dans la première carte sans défilement horizontal

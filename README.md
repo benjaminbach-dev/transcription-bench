@@ -33,6 +33,8 @@ L'interface s'ouvre sur **Résultats** et propose six rubriques, dans cet ordre 
 
 - [Documentation technique](docs/technique.md) : état des validations, choix
   techniques, arrêt du serveur, limites, vérifications Windows et publication.
+- [Utiliser le programme en commande](docs/technique.md#utiliser-le-programme-en-commande-agents) : piloter l'outil sans
+  navigateur (agents) — modes exclusifs, sortie JSON, codes de sortie.
 - [Licences et provenances des modèles et des feuilles de style](docs/licences-modeles.md).
 
 ## Licence

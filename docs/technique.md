@@ -255,6 +255,107 @@ Les comportements `Ctrl+C` avec `uv run`, `SIGTERM` et l'arrêt sur PC Windows
 restent à éprouver sur les PC de test : les tests du serveur de développement
 ne valent pas validation Windows.
 
+## Utiliser le programme en commande (agents)
+
+Le programme a deux modes exclusifs : sans sous-commande (ou avec
+`serve [--port N]`), il lance le serveur web décrit dans ce document et dans le
+[guide utilisateur](guide-utilisateur.md) ; avec toute autre sous-commande, il
+exécute une commande unique puis rend la main. Cette section décrit ce second
+mode, pensé pour des agents et des scripts. Le guide utilisateur ne couvre que
+l'interface web : il ne documente pas les commandes.
+
+### Modes exclusifs
+
+Chaque commande prend le verrou d'instance (`data/instance.lock`) avant toute
+action, même en lecture seule. Si le serveur ou une autre commande tient le
+verrou, la commande est refusée avec le code `2` sans rien lancer ni modifier ;
+la réciproque vaut pour le serveur. Comme au démarrage du serveur, la
+récupération des exécutions abandonnées puis la préparation des dossiers ont
+lieu avant chaque commande : un état antérieur non traitable refuse la commande
+(code `2`). Un `--port` donné avant la sous-commande est refusé hors `serve`.
+
+### Commandes
+
+Les commandes reprennent les fonctions des pages web avec les mêmes services
+et les mêmes refus (moteur non prêt, audio illisible, réglage inapplicable,
+chemin sortant). `--help` — racine, groupe ou commande — décrit les options
+exactes sans lire ni écrire dans `data/`.
+
+| Commande | Rôle |
+|---|---|
+| `audios list` | audios du dossier d'entrée |
+| `data check` | état des dossiers de données |
+| `engines list`, `engines install ID`, `engines log ID [--limit N]` | moteurs : états, installation, journal d'installation |
+| `models list`, `models check/download REPO --engine E [--revision R] [--file F]`, `models delete ENGINE KEY` | modèles : inventaire, vérification, téléchargement, suppression |
+| `run options`, `run check/start --model REF --audio NAME... [--threads N] [--setting NOM=VALEUR]...` | exécutions : préparation, vérification à blanc, lancement |
+| `results list [--sort temps\|ram\|cpu\|recent]`, `results show ID`, `results history`, `results explain` | résultats en lecture seule |
+| `compare AUDIO_HASH SEL SEL...` | comparaison de 2 à 64 essais d'un même audio, dans l'ordre reçu |
+
+Aucune commande ne demande de confirmation interactive : l'action nommée sur la
+ligne de commande est sa propre confirmation (suppression d'un modèle,
+téléchargement).
+
+### Sortie JSON et codes de sortie
+
+Avec `--json` (toutes les commandes sauf `serve`), la sortie standard ne porte
+que du JSON en UTF-8 : un objet unique pour une commande à résultat, des lignes
+d'événements de journal (une ligne JSON complète par événement) suivies d'une
+dernière ligne de résultat pour une opération longue. Chaque objet porte
+`schema: 1`. Les diagnostics vont sur la sortie d'erreur. Sans `--json`, la
+sortie est un texte français concis.
+
+Codes de sortie des commandes : `0` succès ; `1` échec de l'opération
+(installation, téléchargement, exécution en erreur, dont une exécution terminée
+avec au moins un audio en erreur, et échec réseau ou accès refusé d'une
+vérification) ; `2` refus (argument invalide, verrou tenu, ressource non
+prête, dépôt incompatible, choix de fichier GGUF manquant, état antérieur non
+traitable) ; `3` interruption par signal. Le serveur garde ses codes propres
+(`0`, `1`, `2`).
+
+Les lignes finales permettent d'enchaîner les commandes : `run start` rend
+l'identifiant du résultat et l'état de chaque audio, `models download` la
+référence locale du modèle, `results list` l'empreinte de chaque groupe et la
+sélection `identifiant:ordre` de chaque essai (arguments de `results show` et
+de `compare`).
+
+### Arrêt, arrière-plan et récupération
+
+Il n'y a pas de commande d'arrêt : l'équivalent du bouton d'arrêt de la page
+web est un signal envoyé à la commande. `Ctrl+C` (Linux et Windows — à éprouver
+sous Windows, comme l'arrêt du serveur) et `SIGTERM` (Linux) terminent
+l'opération en cours comme un arrêt demandé par l'utilisateur : résultats déjà
+écrits conservés, exécution marquée interrompue, code `3`, verrou libéré à la
+fin de la clôture. Un second signal pendant la
+clôture est ignoré. Un téléchargement n'est pas annulable : la commande le
+signale et le verrou peut rester tenu jusqu'à la fin réelle du processus.
+
+Sous Linux, pour piloter une commande longue sans terminal interactif,
+lancez-la en arrière-plan puis envoyez `SIGTERM` au processus (c'est le signal
+par défaut de `kill PID`).
+
+Après une terminaison brutale (`SIGKILL`, délai d'agent dépassé), la commande
+ou le serveur suivant applique la même récupération que l'arrêt brutal du
+serveur (section « Arrêt du serveur ») : moteur survivant terminé après
+vérification de son identité, exécution clôturée en abandonnée, restes de
+`data/cache` nettoyés ; un état non traitable refuse le démarrage avec le code
+`2`.
+
+### Limites
+
+- Les commandes sont bloquantes et ne se détachent pas : une opération longue
+  occupe la commande jusqu'à sa fin ; en `--json`, le journal d'événements
+  permet de suivre le déroulement.
+- Sous Windows, `SIGTERM` n'existe pas et un agent sans console ne peut pas
+  envoyer `Ctrl+C` : le dépassement d'un délai d'agent se termine donc en
+  terminaison brutale, traitée par la récupération de la commande suivante. Ce
+  chemin et la terminaison de la descendance restent à éprouver sur un PC
+  réel.
+- L'accès réseau reste limité à `engines install`, `models check` et
+  `models download`, sur action explicite.
+- Ces comportements sont couverts par les tests automatisés du serveur de
+  développement avec le moteur factice ; aucune qualification sur PC de test
+  (Linux ou Windows) n'a encore eu lieu pour les commandes réelles.
+
 ## Organisation du code et choix techniques
 
 ```

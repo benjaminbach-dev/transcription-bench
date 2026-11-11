@@ -10,11 +10,15 @@ from pathlib import Path
 
 from tests.test_aide_resultats_web import texte_visible
 from tests.test_web import ADRESSE_LOCALE, PORT_TEST
+from transcription_bench.cli import COMMAND_SERVE
+from transcription_bench.command_session import CommandGroup
+from transcription_bench.commands import COMMANDS
 from transcription_bench.operations import CreneauOperations
 from transcription_bench.web import ConfigApplication, ServicesApplication, create_app
 
 RACINE = Path(__file__).resolve().parent.parent
 GUIDE = RACINE / "docs" / "guide-utilisateur.md"
+TECHNIQUE = RACINE / "docs" / "technique.md"
 README = RACINE / "README.md"
 DOSSIER_WEB = RACINE / "transcription_bench" / "web"
 #: Début de la note du guide sur le contexte de l'ordinateur (tâche 3.2).
@@ -36,11 +40,32 @@ TERMES_INTERDITS = (
 )
 MAX_LIGNES_README = 60
 TITRE_GLOSSAIRE = "## Glossaire"
+#: Début de la section d'usage en commande destinée aux agents (tâche 4.3
+#: d'`ajouter-cli-agent`) : son contenu est confronté aux commandes réelles.
+TITRE_SECTION_CLI = "## Utiliser le programme en commande (agents)"
+#: Ancre Markdown de cette section, cible du renvoi du README.
+ANCRE_SECTION_CLI = "utiliser-le-programme-en-commande-agents"
 LIEN_RELATIF = re.compile(r"\]\((?!https?:|mailto:|#)([^)#\s]+)")
 
 
 def lire(chemin: Path) -> str:
     return chemin.read_text(encoding="utf-8")
+
+
+def section_cli() -> str:
+    """Section « Utiliser le programme en commande (agents) » de la doc technique.
+
+    Bornée au titre suivant : les contrôles ne portent que sur cette section,
+    sans dépendre du reste du document.
+    """
+    texte = lire(TECHNIQUE)
+    debut = texte.find(TITRE_SECTION_CLI)
+    if debut < 0:
+        raise AssertionError(
+            f"section absente de {TECHNIQUE.relative_to(RACINE)} : {TITRE_SECTION_CLI!r}"
+        )
+    fin = texte.find("\n## ", debut + len(TITRE_SECTION_CLI))
+    return texte[debut:fin if fin >= 0 else len(texte)]
 
 
 def chaines_python(source: str) -> list[str]:
@@ -163,6 +188,65 @@ class DocumentationTest(unittest.TestCase):
 
     def test_guide_a_un_glossaire(self) -> None:
         self.assertIn(TITRE_GLOSSAIRE, lire(GUIDE))
+
+
+class DocumentationCLITest(unittest.TestCase):
+    """Section « agents » alignée sur la CLI réelle (tâche 4.3 d'`ajouter-cli-agent`).
+
+    Les contrôles existants (liens, termes interdits, README court) restent
+    intacts ; ceux-ci ajoutent : section présente, renvoi du README, chaque
+    commande enregistrée documentée, et les points du contrat que la spec
+    exige de la documentation (`--json`, `schema: 1`, codes, signaux).
+    """
+
+    def test_section_presente_avec_renvoi_readme(self) -> None:
+        self.assertIn(TITRE_SECTION_CLI, lire(TECHNIQUE))
+        self.assertTrue(section_cli().strip())
+        readme = lire(README)
+        self.assertIn("Utiliser le programme en commande", readme)
+        # Le renvoi pointe vers la section de la documentation technique, ancre
+        # comprise : la cible du lien est contrôlée par
+        # test_liens_relatifs_pointent_vers_des_fichiers.
+        self.assertIn(f"docs/technique.md#{ANCRE_SECTION_CLI}", readme)
+
+    def test_commandes_enregistrees_sont_documentees(self) -> None:
+        """Chaque commande enregistrée dans le code figure dans la section.
+
+        Le sens documenté -> enregistré n'est pas contrôlé : extraire les
+        commandes du tableau coûterait un analyseur dédié pour peu de gain.
+        """
+        section = section_cli()
+        self.assertIn(f"`{COMMAND_SERVE}", section)
+        for commande in COMMANDS:
+            if isinstance(commande, CommandGroup):
+                for leaf in commande.commands:
+                    self.assertIn(
+                        f"`{commande.name} {leaf.name}",
+                        section,
+                        f"commande enregistrée non documentée : "
+                        f"{commande.name} {leaf.name}",
+                    )
+            else:
+                self.assertIn(
+                    f"`{commande.name}",
+                    section,
+                    f"commande enregistrée non documentée : {commande.name}",
+                )
+
+    def test_contrat_de_sortie_et_de_signaux_documente(self) -> None:
+        section = section_cli()
+        for attendu in (
+            "--json",
+            "schema: 1",
+            "SIGTERM",
+            "SIGKILL",
+            "`0`",
+            "`1`",
+            "`2`",
+            "`3`",
+        ):
+            with self.subTest(attendu=attendu):
+                self.assertIn(attendu, section)
 
 
 class GuideContexteOrdinateurTest(unittest.TestCase):
