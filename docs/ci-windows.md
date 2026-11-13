@@ -14,13 +14,21 @@ conservées en artefacts pendant 14 jours et recopiées localement hors Git :
 | `41479081739` | `ab92616` | inférence transcribe.cpp GGUF Whisper : transcription non vide, timings natifs consignés, mmap, architecture et variante relues | succès |
 | `41480184141` | `930d900` | inférence Transformers Whisper : transcription non vide, CPU relu, 4 threads | succès |
 | `41480997693` | `3982ec0` | inférence Transformers Parakeet TDT : transcription non vide, sans langue forcée conformément au design | succès |
+| `43411758748` | `3b11338` | imports des trois moteurs puis les quatre inférences en un seul run (un modèle par job, téléchargements explicites puis options hors ligne) ; runner réel avec mesures système (psutil 7.2.2), CPU relu pour les quatre combinaisons, transcriptions non vides (165 caractères) | succès |
 
 Les rapports JSON nettoyés de chaque run (commit, image `20261026.347.1`,
 Python 3.12.10, uv 0.11.8, versions des moteurs, empreinte audio, ressources
 mesurées vCPU/RAM/disque) sont conservés en artefacts 14 jours et recopiés
 sous `data/ci/rapports/<run>/` localement, hors Git — y compris les contextes
 `ressources.json` du run de tests et les rapports d'installation du run
-d'imports. Roues retenues pour chaque moteur : arrêtées par `uv.lock` et
+d'imports. Le run `43411758748` (2026-11-13) a utilisé les images
+`20261101.353.1` et `20261112.366.7` selon les jobs ; ses 15 rapports sont
+recopiés sous `data/ci/rapports/43411758748/`. Aucun champ d'observation
+système ne figure dans les rapports (liste blanche fermée, décision 4.2 de
+`mesurer-charge-systeme`) : ces runs vérifient le fonctionnement du runner
+réel sur Windows, pas le contenu des champs système. Sous Windows, restent
+non vérifiés sur un poste réel : l'installeur de uv, le lancement en console
+et Ctrl+C. Roues retenues pour chaque moteur : arrêtées par `uv.lock` et
 `requirements/*.txt` versionnés dans le dépôt ; versions principales relues
 par l'adaptateur dans `installation-*.json` ; téléchargements observés dans le
 journal du run d'imports (extrait local `roues-journaux.txt`, journal complet

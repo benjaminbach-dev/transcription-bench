@@ -115,3 +115,59 @@ bouton du serveur après vérification de compatibilité.
   fenêtre ; aucune durée native ; pas de contrôle visuel humain ; Windows non
   couvert (aucun job CI Qwen3-ASR).
 - Preuves locales, hors Git : `data/feasibility/validation-qwen3-asr/`.
+
+## Parcours à froid du guide utilisateur — 2026-11-13
+
+PC de test Linux déclaré (Manjaro x86_64, noyau 6.18.55-1-MANJARO, T14s,
+Ryzen 7 PRO 6850U, 32 Gio de RAM), lot accepté par le propriétaire :
+transcribe.cpp, `handy-computer/whisper-large-v3-turbo-gguf` fichier
+`whisper-large-v3-turbo-Q5_K_M.gguf`, audio synthétique, copie vierge du
+dépôt (archive ZIP de 1,1 Mo téléchargée depuis GitHub, décompressée), dossier
+de données neuf. `uv` 0.11.8 déjà installé (son installation n'a pas été
+suivie). Suivi intégral de `docs/guide-utilisateur.md`, étapes 3 à 12 ;
+parties navigateur (étapes 6 à 11) suivies dans un navigateur réel.
+
+- Étape 5 : premier lancement (`uv run --locked transcription-bench`) —
+  environnement préparé (Python 3.12.13, 26 éléments, tous pris dans le cache
+  local de la machine, aucun téléchargement visible), ligne « Interface
+  disponible » affichée. Constat utile : le port 8765 était occupé par un
+  autre programme de la machine (Thunderbird) — le cas de dépannage du guide,
+  rencontré pour de vrai ; message réel « impossible d'écouter sur
+  http://127.0.0.1:8765 : [Errno 98] Address already in use. Vérifiez qu'aucun
+  autre programme n'utilise ce port… ». Solution du guide appliquée
+  (`--port 8080`), sans toucher à l'autre programme.
+- Étapes 6 à 11 dans le navigateur : `essai.wav` (10,7 s) listé après
+  **Actualiser** ; installation de transcribe.cpp par la page ≈ 1 s (éléments
+  en cache) ; vérification du dépôt ≈ 40 s, première réponse « Dépôt refusé
+  (fichier-gguf-non-choisi) » avec les cinq variantes — déroulement normal,
+  pas une erreur ; vérification de la variante ≈ 50 s ; téléchargement des
+  590,9 Mio en ≈ 6 s ; deux exécutions du même modèle sur le même audio
+  (5,841 s et 5,923 s, aucun second téléchargement) ; lecture du résultat
+  (texte ≈ 230 caractères, lisible) ; comparaison des deux essais.
+- Étape 12 : arrêt par le signal d'interruption de Ctrl+C — message
+  « Arrêt du serveur. » vérifié, port libéré.
+- Réseau réel observé : archive ZIP GitHub ≈ 1 Mo ; premier lancement et
+  installation du moteur sans téléchargement visible (cache de la machine) ;
+  lectures distantes pour la vérification du modèle (Hugging Face) ;
+  téléchargement de 590,9 Mio. Aucun audio ni transcription n'a quitté la
+  machine.
+
+Écarts relevés entre le guide et l'application, tous corrigés dans le guide :
+panneau **Ajouter un modèle** refermé après la vérification (résultat après
+**Actualiser**), attente des vérifications distantes, déroulement normal « Dépôt
+refusé (fichier-gguf-non-choisi) », emplacement de « Consulter le journal
+d'installation » (bloc « Versions installées »), bouton **Installer ce moteur**
+restant affiché sur un moteur prêt, libellé « Utiliser ce modèle pour préparer
+une exécution. », durées désormais mesurées, distinction « meilleur temps » sur
+valeurs exactes malgré un affichage arrondi identique, libellé réel « RTF
+(durée de transcription / durée décodée) » au lieu de « rapport de vitesse »,
+tri par défaut « Plus rapides » sur la page de comparaison, durée d'exécution
+lisible dans l'historique (« Début » sans « Fin » dans l'opération), décalage
+passager entre historique et section **Opération longue**.
+
+Limites : `uv` déjà installé (installation non suivie) ; décompression par
+l'explorateur non suivie ; clonage Git non suivi ; Windows hors de ce parcours ;
+durées propres à cette machine et à cette connexion ; qualités de transcription
+non évaluées. Éléments du journal d'installation : deux lignes Vulkan
+(`ggml_vulkan`, GPU AMD Radeon) signalées par la roue native — exécution CPU
+confirmée par les relevés du projet, conformément à `licences-modeles.md`.
