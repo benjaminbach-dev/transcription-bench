@@ -155,7 +155,8 @@ def construire_analyseur(
         epilog=(
             "Sans sous-commande, le serveur web est lancé comme avec « serve ».\n\n"
             + EXIT_CODES_HELP
-            + "\n\nLes commandes ont leurs propres codes de sortie : voir leur aide."
+            + "\n\nLes commandes ont leurs propres codes de sortie, dont 3 pour une "
+            "interruption par signal : voir l'aide de chaque commande."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         add_help=False,

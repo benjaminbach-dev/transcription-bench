@@ -23,12 +23,12 @@
 {%- endfor -%}
 {%- endmacro %}
 <h1>{{ results_help.title }}</h1>
-<part class="prose">{{ render_parts(results_help.intro) }}</part>
+<p class="prose">{{ render_parts(results_help.intro) }}</p>
 {% for section in results_help.sections %}
 <h2>{{ section.title }}</h2>
 {% for block in section.blocks %}
 {% if block.type == "paragraph" %}
-<part class="prose">{{ render_parts(block.parts) }}</part>
+<p class="prose">{{ render_parts(block.parts) }}</p>
 {% elif block.type == "definitions" %}
 <dl class="prose">
 {% for entry in block.entries %}

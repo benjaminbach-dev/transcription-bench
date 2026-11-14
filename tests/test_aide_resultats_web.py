@@ -40,6 +40,7 @@ from transcription_bench.resultats import (
     STATUT_NON_TRAITE,
     STATUT_OK,
 )
+from transcription_bench.web.results_help import RESULTS_HELP
 
 #: Éléments qui bornent un bloc de texte : une phrase ne traverse jamais une
 #: cellule, un paragraphe ou un titre, comme à l'écran.
@@ -174,6 +175,22 @@ class AideResultatsWebTest(SocleWebTest):
         self.assertIn("< 0,1 s", texte)
         self.assertIn("< 0,1 Mo", texte)
         self.assertIn("< 1 %", texte)
+
+    def test_paragraphs_render_as_p_not_part_elements(self) -> None:
+        corps = self.rendre_aide()
+
+        # Paragraphs must use standard HTML elements, not unknown <part> tags.
+        self.assertNotIn("<part", corps)
+        self.assertNotIn("</part>", corps)
+        paragraphs = re.findall(r'<p class="prose">(.*?)</p>', corps, re.S)
+        expected = 1 + sum(
+            1
+            for section in RESULTS_HELP["sections"]
+            for block in section["blocks"]
+            if block["type"] == "paragraph"
+        )
+        self.assertEqual(len(paragraphs), expected)
+        self.assertIn("Cette aide explique", html.unescape(paragraphs[0]))
 
     def test_petites_valeurs_positives_echappees_sans_markup(self) -> None:
         corps = self.rendre_aide()

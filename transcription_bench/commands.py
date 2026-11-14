@@ -27,6 +27,8 @@ réutilise les mêmes services sans dupliquer le métier :
 - `models list` appelle `inventaire` : modèles locaux prêts, relus depuis des
   manifestes cohérents uniquement ; un manifeste incohérent est ignoré par le
   service (aucun modèle n'est prêt), jamais signalé en échec, comme la page.
+  Un dossier des modèles qui sort de `data/` par lien symbolique est refusé
+  (code 2, sans trace ni sortie JSON), alors que la page affiche une liste vide.
 - `models check REPO --engine E [--revision R] [--file F]` (tâche 3.2) appelle
   `lancer_verification` dans le créneau unique, suivi par `OperationWatch` : le
   dépôt est vérifié sans aucun téléchargement. Le code vient du résultat du
@@ -54,17 +56,19 @@ réutilise les mêmes services sans dupliquer le métier :
   avec leurs valeurs par défaut. Une valeur nommée périmée est remplacée par
   le choix applicable et annoncée par le `notice` du service ; comme la page
   rend alors un statut 400, la commande rend le code 2 avec ce motif, sans
-  dupliquer la validation.
+  dupliquer la validation. `--model` ne se donne qu'une fois : un doublon est
+  refusé (code 2) par `refuser_champs_repetes` avant toute préparation.
 - `run check --model REF --audio NAME... [--threads N] [--setting NOM=VALEUR]...`
-  (tâche 3.5) applique la validation partagée avec la page (`validate_execution_fields`)
-  puis `verifier_lancable`, sans réserver ni lancer : la demande normalisée est
-  affichée, aucun résultat n'est écrit.
+  (tâche 3.5) applique la validation partagée avec la page (`validate_execution_fields`),
+  sans `verifier_lancable`, comme la route de vérification web, et sans réserver ni
+  lancer : la demande normalisée est affichée, aucun résultat n'est écrit. Un moteur
+  non prêt n'est donc refusé que par `run start`.
 - `run start` (même options, tâche 3.5) passe par `launch_execution`, comme la route
   `POST /executions/lancer` : réservation avant admission, puis `OperationWatch`
   suit l'exécution dans le créneau unique avec son journal en direct. Code 0 si
   l'exécution est terminée sans audio en erreur, 1 sinon, 2 pour un refus avant
-  admission, 3 après un signal. Les options répétées sont transmises telles quelles
-  aux services : `--model`, `--threads` et un même `--setting` donné deux fois sont
+  admission (dont un moteur non prêt), 3 après un signal. Les options répétées
+  sont transmises telles quelles aux services : `--model`, `--threads` et un même `--setting` donné deux fois sont
   refusés (code 2), `--audio` garde l'ordre reçu.
 - `results list [--sort temps|ram|cpu|recent]` appelle `groupes_par_empreinte`
   avec le critère reçu (`recent` par défaut, comme la page Résultats) : chaque
@@ -92,8 +96,10 @@ Les commandes s'exécutent dans une session de données (`run_session`) : verrou
 d'instance, récupération et préparation avant l'action, libération garantie
 après. Sortie : texte français concis par défaut ; avec `--json`, un unique
 objet `schema: 1` sur la sortie standard, les diagnostics sur la sortie d'erreur.
-Le drapeau de signal n'est pas consulté : ces lectures sont instantanées, la
-clôture de session reste celle de `run_session`.
+Les lectures n'interrogent pas le drapeau de signal pendant leur action (elles
+sont instantanées), mais `run_session` le consulte avant l'action et après la
+clôture : un signal reçu pendant une commande la fait rendre avec le code 3,
+même si l'action a réussi (voir `command_session`).
 """
 
 from __future__ import annotations
@@ -157,6 +163,7 @@ from transcription_bench.executions import (
     SEPARATEUR_REFERENCE_MODELE,
     VALEUR_FAUSSE,
     VALEUR_VRAIE,
+    refuser_champs_repetes,
 )
 from transcription_bench.gestion_modeles import (
     ModeleLocal,
@@ -625,7 +632,12 @@ def _run_models_list(
     préparation d'une exécution.
     """
     output = output_from_arguments(arguments)
-    models = services.models.inventaire()
+    try:
+        models = services.models.inventaire()
+    except ValeurRefusee as error:
+        # Confinement de `data/models` refusé par le service : diagnostic sans trace.
+        output.diagnostic(str(error))
+        return CODE_REFUS
     output.result(
         {"models": [serialize_local_model(model) for model in models]},
         model_text_lines(models),
@@ -1068,17 +1080,19 @@ MODELS = CommandGroup(
 def configure_run_options(parser: argparse.ArgumentParser) -> None:
     """Arguments de « run options » : référence de modèle et audios ordonnés.
 
-    Aucune validation ici : `--model` et `--audio` partent bruts vers
-    `preparer`, qui remplace une valeur périmée par le choix applicable et
-    l'annonce dans son `notice` (le même service que la page, design D7).
-    `--audio` est répétable et l'ordre reçu est conservé, comme les cases
-    cochées du lot de la page.
+    `--model` est répétable à l'analyse pour que les doublons soient vus et
+    refusés (champ unique, `_run_run_options`) au lieu d'écraser le premier.
+    Hors doublon, `--model` et `--audio` partent bruts vers `preparer`, qui
+    remplace une valeur périmée par le choix applicable et l'annonce dans son
+    `notice` (le même service que la page, design D7). `--audio` est répétable
+    et l'ordre reçu est conservé, comme les cases cochées du lot de la page.
     """
     parser.add_argument(
         "--model",
         metavar="REF",
+        action="append",
         default=None,
-        help="référence du modèle proposable (<moteur>/<clé>) ; "
+        help="référence du modèle proposable (<moteur>/<clé>), une seule fois ; "
         "par défaut le premier modèle exécutable",
     )
     parser.add_argument(
@@ -1107,8 +1121,15 @@ def _run_run_options(
     écrit pour montrer les choix applicables.
     """
     output = output_from_arguments(arguments)
+    try:
+        refuser_champs_repetes(
+            [(FORM_FIELD_MODEL, value) for value in arguments.model or ()]
+        )
+    except ValeurRefusee as error:
+        output.diagnostic(str(error))
+        return CODE_REFUS
     preparation = services.preparation.preparer(
-        modele=arguments.model,
+        modele=arguments.model[0] if arguments.model else None,
         audios=arguments.audio or (),
     )
     models = services.preparation.modeles_proposables()

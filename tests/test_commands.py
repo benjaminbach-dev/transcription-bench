@@ -899,6 +899,28 @@ class ModelsListTest(CommandTestCase):
         self.assertNotIn("fedcba", text)
         self.assert_unlocked()
 
+    def test_models_folder_linked_outside_data_is_refused_without_trace(self) -> None:
+        # Lien symbolique sortant : le service refuse (ValeurRefusee), la commande
+        # rend le code 2 avec son diagnostic, sans sortie JSON ni trace, et ne lit
+        # ni n'écrit hors de `data/`.
+        outside = self.base.parent / "hors-donnees"
+        outside.mkdir()
+        sentinel = outside / "sentinelle.txt"
+        sentinel.write_text("intact", encoding="utf-8")
+        self.base.mkdir(parents=True)
+        (self.base / paths.NOM_DOSSIER_MODELES).symlink_to(
+            outside, target_is_directory=True
+        )
+
+        code, stdout, stderr = self.run_command(["models", "list", "--json"])
+
+        self.assertEqual((code, stdout), (cli.CODE_REFUS, ""))
+        self.assertIn("dossier des modèles hors des données", stderr)
+        self.assertNotIn("Traceback", stderr)
+        self.assertEqual(sorted(p.name for p in outside.iterdir()), ["sentinelle.txt"])
+        self.assertEqual(sentinel.read_text(encoding="utf-8"), "intact")
+        self.assert_unlocked()
+
     def test_empty_inventory_lists_nothing(self) -> None:
         code, stdout, stderr = self.run_command(["models", "list", "--json"])
 
@@ -1635,6 +1657,39 @@ class RunOptionsTest(CommandTestCase):
         preparation = json.loads(lines[0])["preparation"]
         self.assertIn("introuvable, périmé ou non exécutable", preparation["notice"])
         self.assertEqual(preparation["reference"], f"{self.FW_ENGINE}/{fw_key}")
+        self.assert_unlocked()
+
+    def test_repeated_model_is_refused_before_any_preparation(self) -> None:
+        # `--model` est un champ unique : un doublon est refusé comme pour « run
+        # check » et « run start », avant toute préparation, sans garder le
+        # dernier et sans résultat. Un modèle unique reste accepté.
+        fw_key = self.write_local_model(
+            self.FW_ENGINE, "whisper", self.FW_REPO, self.FW_COMMIT
+        )
+        self.write_readable_audios("a.wav")
+        reference = f"{self.FW_ENGINE}/{fw_key}"
+
+        code, stdout, stderr = self.run_command(
+            ["run", "options", "--model", reference, "--json"]
+        )
+        self.assertEqual((code, stderr), (0, ""))
+        self.assertEqual(json.loads(stdout)["preparation"]["reference"], reference)
+
+        with mock.patch(
+            "transcription_bench.executions.ConfigurationExecutions.preparer",
+            side_effect=AssertionError("doublon refusé avant la préparation"),
+        ):
+            code, stdout, stderr = self.run_command(
+                [
+                    "run", "options",
+                    "--model", reference, "--model", reference, "--json",
+                ]
+            )
+
+        self.assertEqual((code, stdout), (cli.CODE_REFUS, ""))
+        self.assertIn("plusieurs fois : modele", stderr)
+        self.assertNotIn("Traceback", stderr)
+        self.assertEqual(list((self.base / paths.NOM_DOSSIER_RESULTATS).iterdir()), [])
         self.assert_unlocked()
 
     def test_non_executable_model_shows_reason_and_is_refused_when_selected(self) -> None:

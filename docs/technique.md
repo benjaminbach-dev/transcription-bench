@@ -312,6 +312,13 @@ prête, dépôt incompatible, choix de fichier GGUF manquant, état antérieur n
 traitable) ; `3` interruption par signal. Le serveur garde ses codes propres
 (`0`, `1`, `2`).
 
+Sur refus (`2`), la sortie standard reste vide en `--json` et le motif va sur la
+sortie d'erreur. Font exception les refus rendus après une lecture :
+`models check` et `models download` écrivent alors l'objet de vérification
+(dépôt incompatible, choix GGUF manquant, fragment), et `run options` écrit son
+objet de préparation quand une valeur demandée est périmée (champ `notice`). Un
+agent lit donc le code, puis la sortie standard si elle n'est pas vide.
+
 Les lignes finales permettent d'enchaîner les commandes : `run start` rend
 l'identifiant du résultat et l'état de chaque audio, `models download` la
 référence locale du modèle, `results list` l'empreinte de chaque groupe et la
@@ -328,6 +335,11 @@ l'opération en cours comme un arrêt demandé par l'utilisateur : résultats d�
 fin de la clôture. Un second signal pendant la
 clôture est ignoré. Un téléchargement n'est pas annulable : la commande le
 signale et le verrou peut rester tenu jusqu'à la fin réelle du processus.
+
+Le code `3` l'emporte sur l'état : un signal reçu après la fin du travail
+(exécution terminée, modèle prêt) peut encore faire rendre `3`. Un agent ne doit
+pas se fier au seul code : il lit l'état final de la dernière ligne `--json`
+(état de l'exécution et de chaque audio, état de l'opération, modèle prêt ou non).
 
 Sous Linux, pour piloter une commande longue sans terminal interactif,
 lancez-la en arrière-plan puis envoyez `SIGTERM` au processus (c'est le signal
@@ -352,9 +364,19 @@ vérification de son identité, exécution clôturée en abandonnée, restes de
   réel.
 - L'accès réseau reste limité à `engines install`, `models check` et
   `models download`, sur action explicite.
-- Ces comportements sont couverts par les tests automatisés du serveur de
-  développement avec le moteur factice ; aucune qualification sur PC de test
-  (Linux ou Windows) n'a encore eu lieu pour les commandes réelles.
+- Qualification Linux partielle (PC de test T14s, 2026-11-13) : seuls
+  le moteur `transcribe-cpp` et la famille whisper ont été exercés en commande réelle. Les
+  commandes `engines install` (roue moteur servie par le cache, sans téléchargement
+  réseau de la roue), `models check`, `models download`, `run check`, `run start`,
+  `models delete` et l'arrêt par `SIGTERM` (code `3` capturé, verrou libéré) ont
+  été éprouvés sur ce moteur. Les autres moteurs et familles ne sont pas qualifiés
+  en commande.
+- Windows : la CI (run `43411758748`, 2026-11-13) couvre les services et le runner
+  des moteurs, pas les sous-commandes CLI (analyse, sorties, codes) ni les signaux.
+  Le propriétaire a refusé d'étendre le workflow à ces commandes ; la tâche 4.5 de
+  l'OpenSpec reste ouverte.
+- Les autres comportements sont couverts par les tests automatisés du serveur de
+  développement avec le moteur factice.
 
 ## Organisation du code et choix techniques
 
