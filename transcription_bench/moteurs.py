@@ -522,7 +522,7 @@ class InstallationMoteurs:
                     lambda: ecrire_json_atomique(dossier / NOM_MARQUEUR, marqueur)
                 )
             except ServiceArrete:
-                journaliser("Marqueur prêt non publié : arrêt du serveur demandé.")
+                journaliser("Marqueur prêt non publié : arrêt demandé par signal.")
                 return
             journaliser("Moteur prêt : marqueur d'installation publié.")
         except (InstallationEchouee, InstallationIndisponible, ValeurRefusee, OSError) as erreur:

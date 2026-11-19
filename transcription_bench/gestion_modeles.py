@@ -514,7 +514,7 @@ class GestionModeles:
                 )
             except ServiceArrete:
                 travailleur.journaliser(
-                    "Modèle non marqué prêt : arrêt du serveur demandé."
+                    "Modèle non marqué prêt : arrêt demandé par signal."
                 )
                 return
             travailleur.journaliser("Téléchargement terminé : modèle prêt.")

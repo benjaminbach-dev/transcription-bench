@@ -13,21 +13,24 @@ une transcription médicalement correcte : aucun résultat produit ici ne doit
 
 | Élément | État |
 |---|---|
-| Serveur web local, interface HTML, moteur factice | développés et testés sur le serveur de développement Linux |
-| Moteurs réels (faster-whisper, transcribe.cpp, Transformers) | quatre parcours réels vérifiés sous Linux via les formulaires HTTP et les services du programme |
+| Serveur web local de consultation seule, interface HTML sans script, moteur factice | développés et testés sur le serveur de développement Linux |
+| Moteurs réels (faster-whisper, transcribe.cpp, Transformers) | quatre parcours réels vérifiés sous Linux par les services du programme, appelés alors par les formulaires HTTP d'une interface web d'action supprimée depuis ; qualification partielle des commandes le 2026-11-13 |
 | Modèles et poids | présents uniquement sous `data/` du PC Linux autorisé ; aucun poids distribué dans Git ou installé sur le serveur de développement |
 | Mesures, textes, RTF | simulés pour le moteur factice ; réels pour les moteurs réels, sans représentativité ni exactitude médicale garanties |
-| Validation Linux | exécutions, résultats, comparaison, refus de concurrence, arrêts et redémarrage vérifiés par HTTP local avec les moteurs existants ; aucune nouvelle installation vierge testée dans ce parcours |
-| Validation Windows | CI exécutée : suite de tests, installation des trois moteurs et inférences courtes des quatre combinaisons passées sous `windows-2022` ; console interactive et coupure réseau non couvertes |
+| Validation Linux | exécutions, résultats, comparaison, refus de concurrence, arrêts et redémarrage vérifiés avec les moteurs existants, par l'interface web d'alors (2026-11-02) ; les mêmes actions passent depuis par les commandes, partiellement qualifiées le 2026-11-13 ; aucune nouvelle installation vierge testée |
+| Validation Windows | CI exécutée : suite de tests, installation des trois moteurs et inférences courtes des quatre combinaisons passées sous `windows-2022` ; sous-commandes CLI, console interactive et coupure réseau non couvertes |
 
 Les familles exécutables sont Whisper pour les trois moteurs, Parakeet TDT
 pour Transformers et Qwen3-ASR (sans horodatage) pour transcribe.cpp ; Qwen3-ASR
 n'est qualifiée que sous Linux (aucun job CI). Les autres architectures GGUF restent non qualifiées dans
 cette version. Les timings natifs transcribe.cpp sont conservés et affichés par
 appel, avec leur unité, sans addition ni confusion avec les mesures du runner.
-Le parcours HTTP Linux a été vérifié avec les environnements déjà présents,
+Le parcours réel Linux a été vérifié avec les environnements déjà présents,
 resynchronisés hors ligne sans changement de paquet, et les modèles locaux
-revérifiés ; cela ne vaut pas essai d'installation vierge par le bouton web.
+revérifiés, par l'interface web d'action de l'époque (2026-11-02), supprimée
+depuis : les mêmes actions passent aujourd'hui par les commandes du programme,
+dont une qualification partielle a eu lieu le 2026-11-13 (section « Utiliser
+le programme en commande »). Cela ne vaut pas essai d'installation vierge.
 Un environnement ou modèle utilisé par les sondes ne devient pas
 systématiquement prêt dans l'application : les marqueurs et inventaires du
 programme restent nécessaires. Voir [le compte rendu de validation Linux](validation-linux.md)
@@ -108,7 +111,7 @@ uv run --locked transcription-bench --port 8080
 
 Cette commande est le **seul** lancement supporté. N'utilisez ni `flask run`,
 ni `app.run`, ni le mode debug, ni le reloader, ni plusieurs workers : la
-supervision d'arrêt, le verrou d'instance et le jeton anti-CSRF en dépendent.
+supervision d'arrêt et le verrou d'instance en dépendent.
 Aucun autre lanceur n'est fourni.
 
 ## Dossiers de données
@@ -124,35 +127,30 @@ le dossier courant. Elles sont exclues de Git.
 | `data/results` | résultats des exécutions, conservés sans écrasement |
 | `data/cache` | fichiers de travail décodés, créés à la demande et supprimés en fin d'exécution |
 
-`audio`, `models`, `engines` et `results` sont créés au démarrage ;
-`data/cache` ne l'est qu'au lancement d'une exécution. La section **Dossiers de
-données** de la page `Exécutions` affiche leur emplacement et leur présence.
+`audio`, `models`, `engines` et `results` sont créés au démarrage du serveur
+comme avant chaque commande ; `data/cache` ne l'est qu'au lancement d'une
+exécution. La commande `data check` affiche l'emplacement et la présence des quatre dossiers permanents ; `data/cache` n'y figure pas.
 
 ## Utilisation avec le moteur factice
 
 1. Copiez un audio d'essai (par exemple un WAV synthétique produit localement)
    dans `data/audio`, sous un nom simple, sans sous-dossier.
-2. Lancez la commande de lancement et ouvrez l'URL affichée.
-3. `Audios` liste les fichiers présents, le format et une durée indicative
-   lue dans l'en-tête.
-4. `Exécutions` propose le moteur factice avec un **modèle synthétique** :
-   aucun fichier, aucun poids, aucun téléchargement. Choisissez un audio dans
-   le contrôle simple (le lot reste facultatif et replié), le nombre de threads
-   demandé dans les réglages avancés si nécessaire, puis lancez.
-5. `Exécutions` réunit l'état de l'opération longue (une seule à la fois, sans
-   file d'attente), la préparation d'une demande, l'historique technique et les
-   dossiers de données ; `Résultats` liste les transcriptions groupées par
-   audio et renvoie au détail de chacune ; `Résultats > comparaison` regroupe
-   les transcriptions d'un **même fichier audio** repéré par son empreinte
-   SHA-256 et les affiche côte à côte. Le résumé d'opération se met à jour par
-   la route fixe `GET /executions/etat` (JSON borné, `no-store`, sans jeton ni
-   journal) : une requête toutes les 3 s tant que l'opération est active, une
-   seule à la fois, suspendue si l'onglet est masqué, arrêtée à l'état terminal.
-   Une génération d'opération distingue les admissions, même à date et cible
-   identiques : si elle change, le suivi demande une actualisation plutôt que
-   mélanger le nouvel état avec l'ancien journal. Après l'état terminal, l'arrêt
-   devient sans objet (`aria-disabled` et soumission empêchée), sans perdre le
-   focus du bouton. Le lien **Actualiser** reste le repli sans JavaScript.
+2. Vérifiez le fichier par la commande `audios list` : nom, format, taille et
+   durée indicative, avec le motif d'erreur d'un fichier illisible.
+3. `run options` propose le moteur factice avec un **modèle synthétique** :
+   aucun fichier, aucun poids, aucun téléchargement. Notez sa référence, les
+   audios proposables et les threads par défaut ; `run check` valide une
+   demande sans rien lancer ; `run start --model REF --audio NOM...` lance
+   l'exécution. Une seule opération longue à la fois, sans file d'attente :
+   le journal s'écrit au fil de l'eau dans le terminal de la commande (en
+   `--json`, une ligne JSON complète par événement de journal).
+4. Le web reste en consultation seule : `Résultats` liste les transcriptions
+   groupées par **même fichier audio** repéré par son empreinte SHA-256 et
+   renvoie au détail de chacune ; `Comparaisons` regroupe les essais d'un
+   même audio pour les sélectionner et les afficher côte à côte ;
+   `Historique` conserve toutes les exécutions. Les commandes
+   `results list`, `results show`, `results history` et `compare` donnent les
+   mêmes lectures dans le terminal.
 
 Les textes du moteur factice portent le marqueur `[FACTICE]`. Les mesures
 relevées par le serveur restent réelles (durée décodée, temps de décodage,
@@ -169,11 +167,13 @@ autorisé, les verrous `requirements/<moteur>.txt` et les adaptateurs sont prés
 Les dépendances du moteur restent séparées de celles du serveur. La procédure
 est explicite à chaque étape :
 
-- installation d'un moteur depuis la page `Moteurs` (environnement isolé créé
-  par `uv`, contrôle d'import, marqueur d'installation) ;
-- vérification puis téléchargement d'un modèle depuis la page `Modèles`, à
-  révision figée, avec inventaire local ; inférence strictement à partir des
-  fichiers locaux.
+- installation d'un moteur par la commande `engines install ID`
+  (environnement isolé créé par `uv`, contrôle d'import, marqueur
+  d'installation ; journal d'installation par `engines log ID`) ;
+- vérification puis téléchargement d'un modèle par `models check` puis
+  `models download REPO --engine E [--revision R] [--file F]`, à la révision
+  résolue, avec inventaire local (`models list`) ; inférence strictement à
+  partir des fichiers locaux.
 
 Rien de tout cela ne se déclenche au lancement du serveur.
 
@@ -197,9 +197,11 @@ modèles déjà présents. Cela ne prouve aucun comportement Windows ; les jobs 
 n'exerceront que les options hors ligne tant qu'aucune isolation dédiée n'est
 vérifiée.
 
-Le serveur, lui, n'accède au réseau que sur action explicite de l'utilisateur
-(installation d'un moteur, vérification ou téléchargement d'un modèle). Aucune
-donnée audio ni transcription n'est envoyée à un service externe.
+Le serveur web n'accède jamais au réseau : l'installation d'un moteur, la
+vérification et le téléchargement d'un modèle passent par les commandes
+(`engines install`, `models check`, `models download`), seules à utiliser le
+réseau, sur action explicite de l'utilisateur. Aucune donnée audio ni
+transcription n'est envoyée à un service externe.
 
 ## Arrêt du serveur
 
@@ -208,33 +210,20 @@ Arrêt normal : `Ctrl+C` sous Linux et Windows, `SIGTERM` sous Linux.
 - À la sortie de `waitress.serve`, la CLI affiche `Arrêt du serveur.` **avant**
   le nettoyage ; le service HTTP a rendu la main, donc l'interface n'est plus
   garantie disponible pendant l'arrêt.
-- Le nettoyage passe le créneau à l'état d'arrêt, termine le moteur d'exécution
-  et le sous-processus d'installation en cours, attend la clôture de l'opération
-  de façon bornée, puis libère le verrou d'instance.
-- Code de sortie : `0` si le nettoyage aboutit (opération close, verrou
-  libéré), `1` sinon, avec un message explicite (opération non close, verrou
-  conservé jusqu'à la fin du processus, échec de clôture).
-- Descendance du moteur : la terminaison est un « au mieux ». Sous Linux, le
-  groupe est signalé puis sa descendance relevée ; sous Windows, l'arborescence
-  de processus connue est parcourue. Un descendant non relevé, créé après ce
-  relevé ou détaché de l'arborescence peut survivre : il n'est alors ni suivi
-  ni arrêté, et il ne garde pas le créneau occupé.
-- Autre cas, distinct : si le **processus moteur principal** survit au signal de
-  forçage, le créneau reste occupé jusqu'à sa fin réelle, le verrou d'instance
-  est conservé et la commande se termine en code `1`.
+- Le serveur ne démarre aucune opération : il n'y a ni moteur à terminer, ni
+  installation à arrêter, ni opération à clore. Le nettoyage se réduit à la
+  libération du verrou d'instance, en dernier.
+- Code de sortie : `0` si le nettoyage aboutit (verrou libéré), `1` sinon,
+  avec un message explicite (verrou conservé jusqu'à la fin du processus,
+  échec de clôture).
 - Les signaux suivants sont **ignorés** : un second `Ctrl+C` n'interrompt pas la
   clôture en cours.
-- Les résultats déjà écrits restent consultables ; l'exécution est marquée
-  interrompue ; une installation ou un téléchargement interrompu reste non prêt.
-- Le verrou d'instance n'est libéré que lorsque le thread d'opération est
-  réellement terminé. Sinon il reste détenu jusqu'à la fin réelle du processus
-  (aucun thread n'est tué).
-
-Limite assumée : **aucun délai global de sortie n'est garanti pendant un
-téléchargement**, qui peut encore attendre ses entrées/sorties réseau.
+- Les résultats déjà écrits restent consultables ; aucune exécution n'a pu
+  être démarrée par l'interface.
 
 Arrêt brutal : tuer le processus, fermer la console ou utiliser un signal non
-prévu (par exemple `SIGKILL`). Au démarrage suivant, la récupération :
+prévu (par exemple `SIGKILL`). Au démarrage suivant — serveur ou commande — la
+récupération :
 
 - termine le moteur survivant seulement si son PID et son heure de création
   concordent avec ceux enregistrés ;
@@ -249,7 +238,9 @@ ou incohérent), le démarrage est **refusé** : message explicite, code de sort
 close. Traitez la situation, puis relancez la commande.
 
 Une exécution abandonnée se relance donc par une nouvelle exécution, avec un
-nouveau chargement de modèle et de nouvelles mesures.
+nouveau chargement de modèle et de nouvelles mesures. L'arrêt des opérations
+longues relève des commandes : signaux et limites sont décrits dans la section
+« Utiliser le programme en commande ».
 
 Les comportements `Ctrl+C` avec `uv run`, `SIGTERM` et l'arrêt sur PC Windows
 restent à éprouver sur les PC de test : les tests du serveur de développement
@@ -260,9 +251,11 @@ ne valent pas validation Windows.
 Le programme a deux modes exclusifs : sans sous-commande (ou avec
 `serve [--port N]`), il lance le serveur web décrit dans ce document et dans le
 [guide utilisateur](guide-utilisateur.md) ; avec toute autre sous-commande, il
-exécute une commande unique puis rend la main. Cette section décrit ce second
-mode, pensé pour des agents et des scripts. Le guide utilisateur ne couvre que
-l'interface web : il ne documente pas les commandes.
+exécute une commande unique puis rend la main. Les commandes sont la seule
+interface d'action : installer un moteur, vérifier, télécharger ou supprimer un
+modèle, lancer une exécution. Le guide utilisateur couvre les commandes d'usage
+courant ; cette section approfondit leur contrat (modes exclusifs, sortie JSON,
+codes, signaux) pour les agents et les scripts.
 
 ### Modes exclusifs
 
@@ -276,10 +269,11 @@ lieu avant chaque commande : un état antérieur non traitable refuse la command
 
 ### Commandes
 
-Les commandes reprennent les fonctions des pages web avec les mêmes services
-et les mêmes refus (moteur non prêt, audio illisible, réglage inapplicable,
-chemin sortant). `--help` — racine, groupe ou commande — décrit les options
-exactes sans lire ni écrire dans `data/`.
+Les commandes utilisent les mêmes services métier que la consultation web ;
+leurs refus (moteur non prêt, audio illisible, réglage inapplicable, chemin
+sortant) concernent les actions et les demandes, la consultation web n'offrant
+que des lectures. `--help` — racine, groupe ou commande — décrit les options exactes
+sans lire ni écrire dans `data/`.
 
 | Commande | Rôle |
 |---|---|
@@ -327,14 +321,14 @@ de `compare`).
 
 ### Arrêt, arrière-plan et récupération
 
-Il n'y a pas de commande d'arrêt : l'équivalent du bouton d'arrêt de la page
-web est un signal envoyé à la commande. `Ctrl+C` (Linux et Windows — à éprouver
+Il n'y a pas de commande d'arrêt : un signal envoyé à la commande est le seul
+moyen d'arrêter une opération en cours. `Ctrl+C` (Linux et Windows — à éprouver
 sous Windows, comme l'arrêt du serveur) et `SIGTERM` (Linux) terminent
 l'opération en cours comme un arrêt demandé par l'utilisateur : résultats déjà
 écrits conservés, exécution marquée interrompue, code `3`, verrou libéré à la
-fin de la clôture. Un second signal pendant la
-clôture est ignoré. Un téléchargement n'est pas annulable : la commande le
-signale et le verrou peut rester tenu jusqu'à la fin réelle du processus.
+fin de la clôture. Un second signal pendant la clôture est ignoré. Un
+téléchargement n'est pas annulable : la commande le signale et le verrou peut
+rester tenu jusqu'à la fin réelle du processus.
 
 Le code `3` l'emporte sur l'état : un signal reçu après la fin du travail
 (exécution terminée, modèle prêt) peut encore faire rendre `3`. Un agent ne doit
@@ -382,12 +376,20 @@ vérification de son identité, exécution clôturée en abandonnée, restes de
 
 ```
 transcription_bench/
-  cli.py                   point d'entrée, port, verrou d'instance, récupération, waitress.serve
+  cli.py                   point d'entrée, port, analyse des sous-commandes, waitress.serve
+  command_session.py       session des commandes : verrou, récupération, services, codes
+  commands.py              commandes enregistrées : audios, data, engines, models, run, results, compare
+  output.py                sorties texte et JSON des commandes (schéma 1, UTF-8)
+  operation_watch.py       suivi d'une opération longue par une commande : journal, arrêt, code
+  parity.py                table page de consultation → commande de lecture
+  composition.py           sessions du serveur et des commandes (verrou, récupération, services)
   supervision.py           signaux d'arrêt et nettoyage idempotent, hors de Flask
   instance.py              verrou système d'une seule instance
   recuperation.py          clôture des exécutions abandonnées au démarrage
-  web/app.py               fabrique create_app, routes minces, contrôles globaux, erreurs HTML
-  web/templates/           gabarit de base et pages .html (Jinja2, échappement automatique)
+  web/app.py               fabrique create_app, routes de consultation, contrôles globaux, erreurs HTML
+  web/results_help.py      source unique de l'aide des indicateurs (page et « results explain »)
+  web/vues_resultats.py    vues de consultation : groupes, tris, distinctions
+  web/templates/           gabarits des pages .html (Jinja2, échappement automatique)
   operations.py            créneau unique d'opération longue
   moteurs.py               installation des moteurs (états, marqueur, journal)
   verification_modeles.py  vérification distante et compatibilité
@@ -395,10 +397,12 @@ transcription_bench/
   gguf.py                  lecture partielle d'en-tête GGUF
   gestion_modeles.py       téléchargement explicite et inventaire local
   audios.py                liste des audios, décodage PyAV, empreinte SHA-256
-  executions.py            formulaire d'exécution et demande validée
+  executions.py            préparation et validation des demandes d'exécution
+  execution_launch.py      enchaînement de lancement : validation, contrôle, réservation, admission
   execution_moteur.py      lancement et supervision du processus moteur
   resultats.py             stockage atomique des résultats
   consultation_resultats.py lecture des résultats et comparaison
+  indicateurs_resultats.py indicateurs et mesures d'un essai
   stockage.py, paths.py, processus.py  écriture atomique, chemins contrôlés, processus
 engines/
   declarations.py          déclarations des quatre moteurs (familles, réglages, fichiers de dépendances attendus)
@@ -411,20 +415,23 @@ tests/                     tests unittest, sans réseau
 ```
 
 - **Flask + Jinja2 + Waitress** plutôt qu'un serveur et un rendu maison :
-  routage, lecture des formulaires, redirections, client de test et échappement
-  automatique sont fournis ; Waitress est en Python pur, compatible Windows et
-  Linux, et sert l'application en un seul processus, `127.0.0.1`, quatre
-  threads de requêtes, corps limité à 1 Mio.
+  routage, formulaires GET de tri et de sélection, redirections, client de test
+  et échappement automatique sont fournis ; Waitress est en Python pur,
+  compatible Windows et Linux, et sert l'application en un seul processus,
+  `127.0.0.1`, quatre threads de requêtes, corps limité à 1 Mio.
 - **Routes minces, métier hors Flask** : la fabrique `create_app` ne prend aucun
   verrou, ne démarre ni thread ni serveur et n'écrit aucun fichier ; les routes
   valident la demande puis appellent les services. Le créneau d'opération, les
   moteurs et le stockage ne dépendent pas de Flask.
 - **Contrôles globaux** avant tout effet de bord : `Host` local exact avec le
-  port, `Origin` local s'il est présent, formulaires urlencoded d'au plus
-  64 Kio, jeton anti-CSRF renouvelé à chaque démarrage, sans session ni cookie.
-- **HTML sans JavaScript**, habillé par deux feuilles de style locales
-  (`/sumi.css`, copie figée de Sumi.css, et `/app.css`) ; les actions passent par
-  des liens et des formulaires, les contenus affichés sont échappés.
+  port ; seules les méthodes GET et HEAD sont servies : toute autre méthode
+  parvenue à l'application est refusée sans qu'elle lise ni interprète le corps,
+  le serveur HTTP conservant sa propre limite de corps (un corps trop grand
+  peut être refusé avant l'application) ; sans session ni cookie.
+- **HTML sans script**, habillé par deux feuilles de style locales
+  (`/sumi.css`, copie figée de Sumi.css, et `/app.css`) ; la CSP interdit tout
+  script (`script-src 'none'`), tri et sélection passent par des liens et des
+  formulaires GET, les contenus affichés sont échappés.
 - **Tests `unittest`** via le client de test Flask et le moteur factice, sans
   réseau :
 
@@ -436,10 +443,12 @@ tests/                     tests unittest, sans réseau
 
 - Prototype non clinique, non destiné à un usage de soin.
 - CPU uniquement ; pas de GPU, de Vulkan ni de macOS.
-- Parcours HTTP réel vérifié sous Linux avec ressources existantes ; nouvelle
-  installation vierge non validée (l'installation CI Windows ne vaut pas essai
-  vierge interactif sur PC). Console Windows interactive et coupure réseau
-  réelle restent non couvertes. Les tests factices ne remplacent pas ces essais.
+- Parcours réels vérifiés sous Linux avec ressources existantes (2026-11-02,
+  par l'interface web d'alors) et qualification partielle des commandes
+  (2026-11-13) ; nouvelle installation vierge non validée (l'installation CI
+  Windows ne vaut pas essai vierge interactif sur PC). Console Windows
+  interactive, coupure réseau réelle et commandes sur PC Windows restent non
+  couvertes. Les tests factices ne remplacent pas ces essais.
 - Durées natives conservatrices : 47,7 s pour faster-whisper et pour transcribe.cpp
   avec Whisper, 300 s pour Transformers ; au-delà, fenêtres fixes de 30 s.
   Qwen3-ASR (transcribe.cpp) n'a aucune durée native prouvée : fenêtres fixes
@@ -451,7 +460,7 @@ tests/                     tests unittest, sans réseau
   seule opération longue à la fois.
 - Pas d'évaluation automatique de la qualité (score, texte de référence,
   diarisation, correction par LLM), pas de streaming.
-- Les contrôles de chemins et de formulaires sont des garde-fous, pas une
+- Les contrôles de chemins et d'identifiants sont des garde-fous, pas une
   isolation technique.
 
 ## Vérifications Windows et publication

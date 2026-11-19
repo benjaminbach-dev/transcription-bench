@@ -13,8 +13,8 @@
 
 ## 3. Documentation et vérifications
 
-- [ ] 3.1 Mettre à jour `README.md` et `docs/` (guide utilisateur et technique : actions par commandes, web en consultation seule) en coordination avec `rediger-documentation-utilisateur` ; adapter `tests/test_documentation.py` sans contourner ses contrôles.
+- [x] 3.1 Mettre à jour `README.md` et `docs/` (guide utilisateur et technique : actions par commandes, web en consultation seule) en coordination avec `rediger-documentation-utilisateur` ; adapter `tests/test_documentation.py` sans contourner ses contrôles.
 - [x] 3.2 Mettre à jour `AGENTS.md` (interface web de consultation seule, sans script) — validé avec le propriétaire lors de la rédaction des specs.
-- [ ] 3.3 `openspec validate alleger-interface-web --strict`, suite de tests complète avec moteur factice sur le serveur de développement ; relecture advisor ; consigner la décision en mémoire projet.
+- [x] 3.3 `openspec validate alleger-interface-web --strict`, suite de tests complète avec moteur factice sur le serveur de développement ; relecture advisor ; consigner la décision en mémoire projet.
 - [ ] 3.4 Contrôle visuel par le propriétaire des trois pages (Résultats, Comparaisons, Historique) dans un navigateur, clair et sombre, 1280 et 360 px.
 - [ ] 3.5 Archiver après `ajouter-cli-agent` (D5) ; actualiser à cette occasion le `Purpose` de `local-web-interface` (D1) et valider l'état fusionné des specs.

@@ -1421,7 +1421,7 @@ class ModelsDownloadTest(CommandTestCase):
         events, result = self.split_events(stdout)
         self.assertTrue(
             any(
-                "Modèle non marqué prêt : arrêt du serveur demandé." in event["line"]
+                "Modèle non marqué prêt : arrêt demandé par signal." in event["line"]
                 for event in events
                 if event["event"] == "log"
             )

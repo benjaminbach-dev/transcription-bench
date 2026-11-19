@@ -614,7 +614,7 @@ class VerificationModeles:
             travailleur.publier_pret(lambda: self._publier(resultat))
         except ServiceArrete:
             travailleur.journaliser(
-                "Résultat non publié : arrêt du serveur demandé."
+                "Résultat non publié : arrêt demandé par signal."
             )
             return
         travailleur.journaliser(_resume(resultat))

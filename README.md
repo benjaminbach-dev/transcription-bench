@@ -1,10 +1,10 @@
 # transcription-bench
 
 Outil local pour **comparer des modèles de transcription de la parole en français**.
-Vous déposez des enregistrements, vous lancez la transcription avec un ou plusieurs
-modèles, puis vous comparez les textes obtenus dans une page web ouverte sur votre
-propre ordinateur. Tout le travail se fait sur le processeur, sous Linux ou Windows
-(64 bits), sans carte graphique.
+Vous déposez des enregistrements, vous lancez la transcription d'un ou plusieurs
+modèles en tapant des commandes, puis vous lisez et comparez les textes obtenus
+dans une page web ouverte sur votre propre ordinateur. Tout le travail se fait
+sur le processeur, sous Linux ou Windows (64 bits), sans carte graphique.
 
 **Ce n'est pas un produit clinique validé.** Une transcription qui se lit bien peut
 être fausse : aucun résultat produit ici ne doit être présenté comme médicalement
@@ -26,8 +26,10 @@ uv run --locked transcription-bench
 ```
 
 Elle affiche une adresse (`http://127.0.0.1:8765`) à ouvrir dans votre navigateur.
-L'interface s'ouvre sur **Résultats** et propose six rubriques, dans cet ordre :
-**Résultats**, **Comparaisons**, **Exécutions**, **Modèles**, **Moteurs** et **Audios**.
+L'interface web sert uniquement à consulter : elle s'ouvre sur **Résultats** et
+propose trois rubriques, dans cet ordre : **Résultats**, **Comparaisons** et
+**Historique**. Installer un moteur, ajouter un modèle et lancer une transcription
+se font par des commandes, expliquées pas à pas dans le guide.
 
 ## Pour les développeurs
 

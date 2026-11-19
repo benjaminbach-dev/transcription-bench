@@ -5,7 +5,7 @@ L'interface web SHALL se limiter à la consultation : Résultats, détail d'un r
 
 #### Scenario: Requête POST
 - **WHEN** une requête dont l'en-tête `Host` est local utilise POST, PUT, PATCH, DELETE ou OPTIONS, sur une route existante ou supprimée
-- **THEN** elle est refusée avec le statut 405 ou 404, sans lire de corps de formulaire ni déclencher d'action ; une requête dont l'en-tête `Host` est étranger est refusée par le contrôle `Host` quelle que soit sa méthode
+- **THEN** l'application la refuse avec le statut 405 ou 404, sans lire de corps de formulaire ni déclencher d'action — la limite de corps du serveur HTTP reste la sienne ; une requête dont l'en-tête `Host` est étranger est refusée par le contrôle `Host` quelle que soit sa méthode
 
 #### Scenario: Ancienne page d'action
 - **WHEN** l'utilisateur ouvre `/audios`, `/modeles`, `/moteurs`, `/moteurs/<id>/journal`, `/operation` ou `/executions/etat`
@@ -29,7 +29,7 @@ Le lancement du serveur MUST NOT installer de moteur, télécharger de modèle n
 - **THEN** l'interface est utilisable, Résultats présente un état vide court qui renvoie aux commandes du programme, et rien n'est téléchargé
 
 ### Requirement: Requêtes locales vérifiées
-Le serveur MUST refuser toute requête dont l'en-tête `Host` ne correspond pas à une adresse de bouclage locale avec le port d'écoute. Il MUST refuser toute méthode autre que GET et HEAD sans lire de corps de requête ; aucune route ne modifie l'état du programme.
+Le serveur MUST refuser toute requête dont l'en-tête `Host` ne correspond pas à une adresse de bouclage locale avec le port d'écoute. Toute requête parvenue à l'application avec une méthode autre que GET et HEAD MUST être refusée sans que l'application lise ni interprète son corps — la limite de corps du serveur HTTP reste la sienne ; aucune route ne modifie l'état du programme.
 
 #### Scenario: Host étranger
 - **WHEN** une requête arrive avec un en-tête `Host` qui ne correspond pas à l'adresse locale et au port d'écoute
@@ -37,7 +37,11 @@ Le serveur MUST refuser toute requête dont l'en-tête `Host` ne correspond pas 
 
 #### Scenario: Méthode modificatrice
 - **WHEN** une requête locale utilise une méthode autre que GET ou HEAD
-- **THEN** le serveur la refuse et aucun fichier n'est lu ni écrit pour elle
+- **THEN** l'application la refuse sans lire ni interpréter son corps, et aucun fichier n'est lu ni écrit pour elle
+
+#### Scenario: POST sans jeton ou origine distante
+- **WHEN** une requête POST locale arrive, avec ou sans en-tête `Origin`, ou portant les champs de l'ancien jeton anti-CSRF
+- **THEN** l'application la refuse en 405 ou 404 sans lire ni interpréter son corps, aucune action n'étant plus possible par l'interface web
 
 ### Requirement: Interface locale avec amélioration progressive
 Les pages SHALL être rendues en HTML avec les feuilles locales `/sumi.css` et `/app.css`, sans aucun script : lecture, tri et sélection de comparaison restent utilisables par liens et formulaires GET. Aucune ressource distante, aucun script, élément `style`, attribut `style` ou gestionnaire `on…` SHALL être chargé.
@@ -49,6 +53,10 @@ Les pages SHALL être rendues en HTML avec les feuilles locales `/sumi.css` et `
 #### Scenario: Navigation sans script
 - **WHEN** l'utilisateur consulte, trie et compare des résultats
 - **THEN** toutes ces fonctions passent par des liens et formulaires GET, sans script
+
+#### Scenario: JavaScript indisponible
+- **WHEN** JavaScript est désactivé ou indisponible dans le navigateur
+- **THEN** l'utilisateur consulte les résultats, trie, compare et consulte l'historique par des liens et formulaires GET explicites : aucune page ne charge ni n'exige de script
 
 #### Scenario: Page d'erreur
 - **WHEN** une requête parvenue à l'application vise une route inexistante, utilise une méthode non autorisée ou provoque une erreur interne
@@ -87,12 +95,20 @@ Erreurs, états partiels, marques de simulation, alertes utiles et indicateurs p
 - **WHEN** les détails techniques sont fermés
 - **THEN** les chiffres clés, alertes et textes du détail et de la comparaison sélectionnée restent accessibles sans les ouvrir
 
+#### Scenario: Journal d'une opération en cours
+- **WHEN** l'utilisateur cherche l'état ou le journal d'une opération pendant qu'il consulte une page
+- **THEN** aucune page n'affiche ni ne masque de journal d'opération : le suivi relève du journal en flux des commandes, et les contenus de consultation restent visibles
+
 ### Requirement: Entrée directe et compatibilité des liens
 L'URL `/` SHALL rediriger vers Résultats. Les liens internes ne visent que des pages de consultation existantes. Les pages d'action supprimées répondent 404.
 
-#### Scenario: Premier démarrage
-- **WHEN** l'utilisateur ouvre `/`
-- **THEN** il rejoint `/resultats` par redirection GET locale ; sans résultats, un état vide court renvoie aux commandes du programme
+#### Scenario: Ancien lien ou premier démarrage
+- **WHEN** l'utilisateur ouvre `/` ou un ancien lien d'une page d'action supprimée
+- **THEN** il rejoint `/resultats` par redirection GET locale, ou reçoit 404 pour la page supprimée ; sans résultats, un état vide court renvoie aux commandes du programme
+
+#### Scenario: Vérification des dossiers
+- **WHEN** l'utilisateur cherche les chemins locaux des dossiers de données ou leur vérification
+- **THEN** la commande `data check` présente leur emplacement et leur état ; l'interface web n'offre plus cette vérification, les actions relevant des commandes
 
 #### Scenario: Ancien lien d'opération
 - **WHEN** l'utilisateur ouvre un ancien lien `/operation`

@@ -23,40 +23,11 @@ DOSSIER_WEB = RACINE / "transcription_bench" / "web"
 #: Début de la note du guide sur le contexte de l'ordinateur (tâche 3.2).
 NOTE_CONTEXTE = "*Contexte de l'ordinateur.*"
 
-# Gras du guide qui ne sont plus des libellés d'interface : pages d'action
-# retirées du web (tâche 1.1 du change `alleger-interface-web`). La refonte
-# du guide reste à la tâche 3.1 ; ce contrôle ne couvre que ces libellés.
-LIBELLES_HORS_INTERFACE: frozenset[str] = frozenset(
-    {
-    'Ajouter un modèle',
-    'Appliquer les choix',
-    "Arrêter l'exécution",
-    'Aucun audio lisible',
-    'Aucun modèle exécutable',
-    "Consulter le journal d'installation",
-    'Exécutions',
-    'Identifiant Hugging Face',
-    'Installer ce moteur',
-    "Lancer l'exécution",
-    'Modèles',
-    'Modèles locaux prêts',
-    'Moteur installé',
-    'Moteurs',
-    'Opération longue',
-    'Plusieurs audios, dans cet ordre (facultatif)',
-    'Préparation appliquée',
-    "Préparation d'une exécution",
-    'Réglages avancés (facultatif)',
-    'Révision facultative',
-    'Supprimer ce modèle local',
-    'Taille à télécharger',
-    'Télécharger ce modèle à la révision vérifiée',
-    'Utiliser',
-    'Vérifier la compatibilité sans télécharger',
-    'Vérifier la demande (aucun lancement)',
-    'Vérifier un dépôt',
-    }
-)
+# Gras du guide qui n'existent pas dans l'interface : liste vide par construction
+# (tâche 3.1 du change `alleger-interface-web` : le guide ne met en gras que des
+# libellés réels). Tout gras ajouté au guide doit exister dans l'interface, sinon
+# ce contrôle fait échouer la suite ; ne l'y inscrivez pas pour l'en dispenser.
+LIBELLES_HORS_INTERFACE: frozenset[str] = frozenset()
 
 TERMES_INTERDITS = (
     "CSRF",

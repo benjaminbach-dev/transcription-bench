@@ -41,9 +41,7 @@ remplie comme médicalement correctes.
 - Interface web rendue par Jinja/Flask. Cible (change `alleger-interface-web`) :
   consultation seule (résultats, comparaisons, historique ; extractions après
   `ajouter-bench-extraction`), GET/HEAD uniquement, aucun script, CSP
-  `script-src 'none'` ; la CLI est la seule interface d'action. Tant que ce change
-  n'est pas appliqué : POST existants protégés par Host/Origin/CSRF, aucune action
-  par GET, seul script local `/app.js`, sans script inline, `on…`, `eval` ni `unsafe-*`.
+  `script-src 'none'` ; la CLI est la seule interface d'action.
 - Feuilles de style locales uniquement : Sumi.css figé et `app.css` applicative
   (composants, tailles, espacements et grille), palette Flexoki et contrastes
   clair/sombre conservés ; aucune seconde bibliothèque CSS ni CDN.

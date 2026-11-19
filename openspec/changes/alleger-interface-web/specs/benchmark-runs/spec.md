@@ -8,7 +8,7 @@ Le programme SHALL lister les fichiers audio wav, mp3, m4a, ogg, opus et flac pr
 - **THEN** les fichiers lisibles apparaissent avec leur durée indicative, et les fichiers illisibles avec un message d'erreur
 
 ### Requirement: Configuration d'une exécution
-Une exécution SHALL associer un modèle prêt, un moteur compatible, un ou plusieurs audios ordonnés, les threads demandés et les seuls réglages pris en charge. `run options` présente les modèles exécutables, les audios, les threads par défaut et les réglages applicables avec leurs valeurs par défaut.
+Une exécution SHALL associer un modèle prêt, un moteur compatible, un ou plusieurs audios ordonnés, les threads demandés et les seuls réglages pris en charge. `run options` présente les modèles exécutables ou non avec leur motif, les audios proposables, les threads par défaut et les réglages applicables avec leurs valeurs par défaut.
 
 #### Scenario: Réglages proposés
 - **WHEN** l'utilisateur exécute `run options` pour un modèle
@@ -22,11 +22,15 @@ Dans une exécution, les audios SHALL être traités un par un, avec un seul cha
 - **THEN** le modèle est chargé une fois, les audios sont transcrits successivement et chaque résultat est enregistré dès qu'il est produit
 
 ### Requirement: Sélections compatibles et stables
-Le choix de modèle SHALL identifier une ressource locale précise, variante et révision comprises. Seules les combinaisons réellement prêtes et compatibles sont proposées par `run options`. Une vérification ou une préparation n'installe, ne convertit, ne télécharge ni ne lance rien.
+Le choix de modèle SHALL identifier une ressource locale précise, variante et révision comprises. `run options` présente les modèles exécutables ou non avec leur motif ; seules les combinaisons réellement prêtes et compatibles sont proposées comme exécution, et le remplacement d'une référence périmée suppose qu'un choix applicable existe. Une vérification ou une préparation n'installe, ne convertit, ne télécharge ni ne lance rien.
 
 #### Scenario: Un seul moteur applicable
 - **WHEN** le modèle choisi n'est utilisable qu'avec un moteur prêt
 - **THEN** ce moteur est retenu sans suggérer que les autres moteurs peuvent exploiter les mêmes fichiers
+
+#### Scenario: Changement de modèle
+- **WHEN** l'utilisateur relance `run options --model REF` avec un autre modèle ou une autre variante
+- **THEN** la préparation affichée suit le nouveau choix, une référence périmée étant remplacée par le choix applicable avec une annonce courte lorsqu'un choix applicable existe ; un réglage inapplicable au nouveau modèle est refusé par `run check` et `run start` avec le code 2 en le nommant
 
 #### Scenario: Combinaison forgée ou périmée
 - **WHEN** une commande reçoit un moteur incompatible, une référence périmée, un doublon de champ unique ou des réglages étrangers à la famille
