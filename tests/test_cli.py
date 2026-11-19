@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import inspect
 import io
 import json
@@ -22,7 +23,7 @@ from flask import Flask
 from waitress import serve as serve_waitress
 
 from transcription_bench import cli, composition, paths, web
-from transcription_bench.execution_moteur import ExecutionMoteur
+from transcription_bench.consultation_resultats import ConsultationResultats
 from transcription_bench.instance import InstanceDejaActive, VerrouInstance
 from transcription_bench.operations import CreneauOperations
 from transcription_bench.recuperation import EtatAnterieurNonTraitable
@@ -166,7 +167,7 @@ class CliTest(unittest.TestCase):
                             self.assertEqual(os.listdir(dossier), [])
                     self.assertFalse(base.exists())
 
-    def test_cree_et_injecte_un_creneau_partage_sans_thread(self) -> None:
+    def test_serveur_ne_cree_aucun_creneau(self) -> None:
         instances: list[CreneauOperations] = []
 
         class CreneauEspion(CreneauOperations):
@@ -182,15 +183,13 @@ class CliTest(unittest.TestCase):
                         with contextlib.redirect_stdout(io.StringIO()):
                             self.assertEqual(cli.main([]), 0)
 
-        self.assertEqual(len(instances), 1)
-        self.assertIsNone(instances[0].thread_travailleur)
-        instances[0].arreter()
+        # Le serveur ne démarre aucune opération : aucun créneau n'est construit (D4).
+        self.assertEqual(instances, [])
         application = servir.call_args.args[0]
         page = application.test_client().get(
             "/executions", base_url="http://127.0.0.1:8765"
         )
         self.assertEqual(page.status_code, 200)
-        self.assertIn("Arrêt du serveur demandé", page.get_data(as_text=True))
         self.assertNotIn("Set-Cookie", page.headers)
 
     def test_import_du_cli_ne_charge_aucun_paquet_moteur(self) -> None:
@@ -299,7 +298,7 @@ class SubcommandsTest(unittest.TestCase):
                 erreur = io.StringIO()
                 with (
                     mock.patch.object(cli, "serve") as serve_mock,
-                    mock.patch.object(cli, "open_data_session") as open_session,
+                    mock.patch.object(cli, "open_serve_session") as open_session,
                     contextlib.redirect_stderr(erreur),
                     contextlib.redirect_stdout(io.StringIO()),
                 ):
@@ -324,7 +323,7 @@ class SubcommandsTest(unittest.TestCase):
             with self.subTest(argv=argv):
                 stdout = io.StringIO()
                 with (
-                    mock.patch.object(cli, "open_data_session") as open_session,
+                    mock.patch.object(cli, "open_serve_session") as open_session,
                     mock.patch.object(cli, "serve") as serve_mock,
                     contextlib.redirect_stdout(stdout),
                 ):
@@ -427,7 +426,7 @@ class DemarrageOrdonneTest(unittest.TestCase):
             ordre.append("application")
             self.assertEqual(config.port, 9124)
             self.assertEqual(Path(config.dossier_data), self.base)
-            self.assertIsInstance(services.creneau, CreneauOperations)
+            self.assertIsInstance(services.resultats, ConsultationResultats)
             return mock.sentinel.application
 
         def servir(application, **options) -> None:
@@ -599,7 +598,7 @@ class DemarrageOrdonneTest(unittest.TestCase):
         self.assertFalse(verrou.detenu)
         VerrouInstance(self.base).acquerir().liberer()
 
-    def test_service_d_execution_partage_injecte_dans_l_application(self) -> None:
+    def test_application_ne_recoit_que_la_consultation(self) -> None:
         with mock.patch.object(paths, "DOSSIER_DATA", self.base):
             with mock.patch.object(cli, "create_app") as creer:
                 creer.return_value = mock.sentinel.application
@@ -608,9 +607,9 @@ class DemarrageOrdonneTest(unittest.TestCase):
                         self.assertEqual(cli.main([]), 0)
 
         services = creer.call_args.args[1]
-        # La supervision doit pouvoir terminer le moteur de l'exécution réelle.
-        self.assertIsInstance(services.execution, ExecutionMoteur)
-        self.assertIsInstance(services.creneau, CreneauOperations)
+        # Le serveur ne relie que la consultation : ni créneau, ni supervision (D4).
+        self.assertEqual([champ.name for champ in dataclasses.fields(services)], ["resultats"])
+        self.assertIsInstance(services.resultats, ConsultationResultats)
         VerrouInstance(self.base).acquerir().liberer()
 
     def test_ctrl_c_pendant_serve_execute_le_nettoyage_et_libere_le_verrou(self) -> None:
@@ -644,7 +643,7 @@ class DemarrageOrdonneTest(unittest.TestCase):
         self.assertEqual(len(GestionnaireObserve.instances), 1)
         self.assertTrue(GestionnaireObserve.instances[0].recu)
         self.assertIs(signal.getsignal(signal.SIGINT), signal.SIG_IGN)
-        self.assertTrue(creer.services.creneau.instantane().arrete)
+        self.assertIsInstance(creer.services.resultats, ConsultationResultats)
         VerrouInstance(self.base).acquerir().liberer()
 
     @unittest.skipIf(os.name == "nt", "SIGTERM n'est pas un signal d'arrêt Windows")

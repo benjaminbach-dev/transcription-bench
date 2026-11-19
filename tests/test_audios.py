@@ -10,7 +10,6 @@ que si le système de fichiers l'accepte.
 from __future__ import annotations
 
 import hashlib
-import html
 import os
 import tempfile
 import unittest
@@ -21,23 +20,15 @@ from unittest import mock
 import numpy as np
 
 import transcription_bench.audios as audios_module
-from tests.outils_html import assert_html_seul
 from transcription_bench.audios import (
     AudioEnErreur,
     AudioIllisible,
-    AudioListe,
     DureeDecodeeNulle,
     ERREUR_NOM_REFUSE,
     decoder_audio,
     lister_audios,
 )
-from transcription_bench.operations import CreneauOperations
 from transcription_bench.paths import ValeurRefusee
-from transcription_bench.web import (
-    ConfigApplication,
-    ServicesApplication,
-    create_app,
-)
 
 FREQUENCE_TEST = 44100
 CANAUX_TEST = 2
@@ -341,106 +332,6 @@ class DecodageAudioTest(SocleAudiosTest):
 
         with self.assertRaises(ValeurRefusee):
             decoder_audio("sortant.wav", self.donnees)
-
-
-class PageAudiosTest(SocleAudiosTest):
-    """Page HTML minimale : liste lue, erreurs affichées, échappement, hors ligne."""
-
-    def setUp(self) -> None:
-        super().setUp()
-        _, self.client = self.construire_client()
-
-    def construire_client(self, **options):
-        """Application de test et client pointant sur le dossier temporaire."""
-        application = create_app(
-            ConfigApplication(port=PORT_TEST, dossier_data=self.donnees),
-            ServicesApplication(creneau=CreneauOperations(), **options),
-        )
-        return application, application.test_client()
-
-    def verifier_html_seul(self, corps: str) -> None:
-        assert_html_seul(self, corps)
-
-    def texte(self, chemin: str, client=None) -> str:
-        reponse = (client or self.client).get(chemin, base_url=BASE_URL)
-        self.assertEqual(reponse.status_code, 200, chemin)
-        return html.unescape(reponse.get_data(as_text=True))
-
-    def test_page_reelle_liste_les_audios_et_signale_les_erreurs(self) -> None:
-        ecrire_wav(self.chemin("ok.wav"))
-        ecrire_wav_sans_echantillon(self.chemin("zero.wav"))
-        self.chemin("illisible.wav").write_bytes(b"pas de l'audio du tout" * 8)
-
-        corps = self.texte("/audios")
-
-        self.assertNotIn("Fonctionnalité non disponible", corps)
-        self.assertIn("ok.wav", corps)
-        # Durée avec le formateur commun de premier niveau : virgule décimale
-        # française, jamais trois décimales (tâche 5.3).
-        self.assertIn("0,5 s", corps)
-        self.assertNotIn("0.50 s", corps)
-        self.assertIn("zero.wav", corps)
-        self.assertIn("illisible.wav", corps)
-        self.assertIn("lecture impossible", corps)
-        self.assertIn("durée réellement décodée", corps)
-        self.verifier_html_seul(corps)
-
-    def test_page_vide_sans_audio(self) -> None:
-        corps = self.texte("/audios")
-
-        self.assertIn("Aucun fichier audio", corps)
-        self.assertIn('href="/resultats"', corps, "navigation commune présente")
-        self.verifier_html_seul(corps)
-
-    def test_page_signale_un_nom_refuse_sans_le_proposer(self) -> None:
-        try:
-            self.chemin("a:b.wav").write_bytes(b"contenu factice")
-        except OSError:
-            self.skipTest("ce système de fichiers refuse le nom 'a:b.wav'")
-
-        corps = self.texte("/audios")
-
-        self.assertIn("a:b.wav", corps)
-        self.assertIn(ERREUR_NOM_REFUSE, corps)
-        self.verifier_html_seul(corps)
-
-    def test_page_dossier_inaccessible_message_fixe(self) -> None:
-        def lister_inaccessible(donnees) -> tuple[AudioListe, ...]:
-            raise PermissionError("accès refusé")
-
-        _, client = self.construire_client(lister_audios=lister_inaccessible)
-
-        corps = self.texte("/audios", client=client)
-
-        self.assertIn("n'a pas pu être lu", corps)
-        self.assertNotIn("Aucun fichier audio", corps)
-        self.assertNotIn("accès refusé", corps)
-        self.verifier_html_seul(corps)
-
-    def test_contenus_externes_echappes(self) -> None:
-        nom = '<script>alert("x")</script>.wav'
-        liste = (
-            AudioListe(nom=nom, format="wav", taille_octets=1, duree_indicative=None),
-        )
-        _, client = self.construire_client(lister_audios=lambda donnees: liste)
-
-        corps = self.texte("/audios", client=client)
-        brut = client.get("/audios", base_url=BASE_URL).get_data(as_text=True)
-
-        self.assertIn(nom, corps)
-        # Le nom brut n'apparaît jamais : il est échappé. Le squelette charge
-        # par ailleurs son unique script local, d'où le contrôle sur le nom.
-        self.assertNotIn(nom, brut)
-        self.assertIn("&lt;script&gt;", brut)
-        self.verifier_html_seul(brut)
-
-    def test_page_audios_sans_effet_de_bord(self) -> None:
-        self.texte("/audios")
-
-        self.assertTrue(self.dossier.is_dir())
-        for nom in ("results", "models", "engines"):
-            self.assertFalse((self.donnees / nom).exists(), nom)
-        self.assertEqual(list(self.dossier.iterdir()), [])
 
 
 if __name__ == "__main__":

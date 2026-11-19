@@ -45,6 +45,6 @@
 </section>
 {% endfor %}
 {% elif not erreur_dossier %}
-<p class="callout prose">Aucune transcription comparable pour l'instant : un groupe apparaît dès qu'une exécution a produit un résultat dont le fichier audio source porte une empreinte SHA-256 valide.</p>
+<p class="callout prose">Aucune transcription comparable pour l'instant : un groupe apparaît dès qu'une exécution a produit un résultat dont le fichier audio porte une empreinte SHA-256 valide. Lancez une exécution avec la commande « run start » ; la commande « compare » compare ensuite des essais d'un même audio.</p>
 {% endif %}
 {% endblock %}

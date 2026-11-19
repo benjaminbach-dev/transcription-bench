@@ -1,16 +1,21 @@
-"""Composition des services et session d'un dossier de données (tâche 1.1).
+"""Composition des services et sessions d'un dossier de données (tâches 1.1 et 1.5).
 
 Ce module est le seul endroit où les services du prototype sont reliés entre
-eux à partir du dossier de données. La CLI (`serve`, puis les commandes) et la
-fabrique web, lorsqu'aucun service n'est injecté, passent par lui : les deux
-points d'entrée construisent ainsi exactement les mêmes services.
+eux à partir du dossier de données. Deux sessions l'utilisent :
 
-Ordre d'ouverture d'une session, inchangé par rapport à l'ancienne CLI :
-verrou d'instance, récupération des exécutions antérieures, préparation de
-`data/`, puis construction des services. La clôture (`DataSession.close`) passe
-par `NettoyageArret` : arrêt du créneau, du moteur et de l'installation, puis
-libération du verrou en dernier. Aucune bibliothèque de moteur n'est importée
-ici ; aucune construction de service ne lit ni n'écrit de fichier.
+- les commandes de la CLI ouvrent `open_data_session`, qui relie tous les
+  services, y compris le créneau d'opération et la supervision de moteur ;
+- le serveur ouvre `open_serve_session`, qui ne relie que la consultation des
+  résultats : il ne construit ni créneau ni supervision (change
+  `alleger-interface-web`, D4).
+
+Ordre d'ouverture commun, inchangé : verrou d'instance, récupération des
+exécutions antérieures, préparation de `data/`. Les sessions de commande
+construisent ensuite les services. La clôture de `DataSession` passe par
+`NettoyageArret` : arrêt du créneau, du moteur et de l'installation, puis
+libération du verrou en dernier ; celle de `ServeSession` libère seulement le
+verrou. Aucune bibliothèque de moteur n'est importée ici ; aucune construction
+de service ne lit ni n'écrit de fichier.
 """
 
 from __future__ import annotations
@@ -132,6 +137,23 @@ class SessionRefused(RuntimeError):
         self.diagnostics = diagnostics
 
 
+class ServeSession:
+    """Session du serveur : verrou tenu, récupération faite, consultation seule.
+
+    Le serveur ne démarre aucune opération : sa clôture libère le verrou
+    d'instance, sans moteur ni créneau à arrêter. L'appelant doit appeler `close`
+    une seule fois, dans un `finally`, après l'usage de `results`.
+    """
+
+    def __init__(self, results: ConsultationResultats, cleanup: NettoyageArret) -> None:
+        self.results = results
+        self._cleanup = cleanup
+
+    def close(self) -> bool:
+        """Libère le verrou ; `False` si la libération a échoué."""
+        return self._cleanup.executer()
+
+
 class DataSession:
     """Session ouverte : verrou tenu, récupération faite, services prêts.
 
@@ -159,12 +181,10 @@ class DataSession:
         return self._cleanup.executer()
 
 
-def open_data_session(
-    data_dir: Path,
-    *,
-    recover: Callable[[Path], None] | None = None,
-) -> DataSession:
-    """Prend le verrou, récupère, prépare `data/` et construit les services.
+def _prendre_verrou_et_recuperer(
+    data_dir: Path, recover: Callable[[Path], None] | None
+) -> VerrouInstance:
+    """Prend le verrou d'instance, récupère et prépare `data/`.
 
     Lève `SessionRefused` si une autre instance tient le verrou, si le verrou
     est indisponible ou si un état antérieur n'est pas traitable. Toute autre
@@ -184,14 +204,33 @@ def open_data_session(
     try:
         recovery(data_dir)
         paths.preparer_dossiers_data(data_dir)
-        operations = CreneauOperations()
-        services = assemble_services(data_dir, operations=operations)
     except EtatAnterieurNonTraitable as erreur:
         diagnostics: list[str] = []
         release_ok = NettoyageArret(verrou=lock, journal=diagnostics.append).executer()
         raise SessionRefused(
             str(erreur), lock_released=release_ok, diagnostics=tuple(diagnostics)
         ) from None
+    except BaseException:
+        NettoyageArret(verrou=lock).executer()
+        raise
+    return lock
+
+
+def open_data_session(
+    data_dir: Path,
+    *,
+    recover: Callable[[Path], None] | None = None,
+) -> DataSession:
+    """Prend le verrou, récupère, prépare `data/` et construit les services.
+
+    Mêmes refus que `_prendre_verrou_et_recuperer`. Toute autre exception libère
+    le verrou puis se propage. Ce sont les seules sessions qui construisent le
+    créneau d'opération et la supervision de moteur, pour les commandes.
+    """
+    lock = _prendre_verrou_et_recuperer(data_dir, recover)
+    try:
+        operations = CreneauOperations()
+        services = assemble_services(data_dir, operations=operations)
     except BaseException:
         NettoyageArret(verrou=lock).executer()
         raise
@@ -203,3 +242,18 @@ def open_data_session(
         installation=services.engines,
     )
     return DataSession(services, cleanup)
+
+
+def open_serve_session(
+    data_dir: Path,
+    *,
+    recover: Callable[[Path], None] | None = None,
+) -> ServeSession:
+    """Prend le verrou, récupère, prépare `data/` et relie la seule consultation.
+
+    Mêmes refus et même récupération que `open_data_session`, donc avant toute
+    consultation. Aucun créneau d'opération ni supervision de moteur n'est
+    construit : le serveur n'en a pas besoin.
+    """
+    lock = _prendre_verrou_et_recuperer(data_dir, recover)
+    return ServeSession(ConsultationResultats(data_dir), NettoyageArret(verrou=lock))

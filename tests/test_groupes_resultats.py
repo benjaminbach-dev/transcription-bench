@@ -434,7 +434,7 @@ class PageResultatsTest(SocleWebTest):
 
         self.assertIn("Dossier des résultats", historique)
         self.assertLess(
-            historique.index("Historique complet"),
+            historique.index('<h1 id="historique">'),
             historique.index("Dossier des résultats"),
         )
         self.assertNotIn("Dossier des résultats", corps)
@@ -456,7 +456,7 @@ class PageResultatsTest(SocleWebTest):
         # L'historique complet, y compris l'entrée illisible et l'identité
         # complète d'un modèle supprimé, reste tenu par Exécutions sans perte.
         historique = self.historique()
-        historique = historique[historique.index("Historique complet des exécutions") :]
+        historique = historique[historique.index('<h1 id="historique">') :]
         self.assertIn("organisation/modele-supprime", historique)
         self.assertIn(ID_AUTRE, historique)
         self.assertIn("non interprétable", historique)

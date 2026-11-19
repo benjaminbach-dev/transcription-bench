@@ -13,7 +13,6 @@ import unittest
 from pathlib import Path
 
 from tests.outils_html import assert_html_seul
-from transcription_bench.operations import CreneauOperations
 from transcription_bench.web import (
     ConfigApplication,
     ServicesApplication,
@@ -383,7 +382,7 @@ class SocleFeuillesTest(unittest.TestCase):
         self.dossier_data = Path(temporaire.name) / "data"
         self.app = create_app(
             ConfigApplication(port=PORT_TEST, dossier_data=self.dossier_data),
-            ServicesApplication(creneau=CreneauOperations()),
+            ServicesApplication(),
         )
         self.client = self.app.test_client()
 
@@ -486,9 +485,9 @@ class RoutesFeuillesTest(SocleFeuillesTest):
                     headers={"Content-Type": "application/x-www-form-urlencoded"},
                 )
 
-                # Le contrôle Host puis jeton s'applique avant la méthode : le
-                # refus est toujours 403, jamais une réponse 405 ni une feuille.
-                self.assertEqual(reponse.status_code, 403)
+                # Le contrôle Host puis la méthode s'appliquent avant toute lecture
+                # de corps : POST est refusé en 405, jamais une feuille (tâche 1.1).
+                self.assertEqual(reponse.status_code, 405)
                 self.assertIn("text/html", reponse.headers["Content-Type"])
                 self.assertNotEqual(reponse.headers["Content-Type"], TYPE_FEUILLE)
 

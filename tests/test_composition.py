@@ -8,11 +8,12 @@ from pathlib import Path
 from unittest import mock
 
 from engines.registre import creer_registre_fourni
-from transcription_bench import paths
+from transcription_bench import composition, paths
 from transcription_bench.composition import (
     SessionRefused,
     assemble_services,
     open_data_session,
+    open_serve_session,
 )
 from transcription_bench.consultation_resultats import ConsultationResultats
 from transcription_bench.execution_moteur import ExecutionMoteur
@@ -131,6 +132,69 @@ class DataSessionTest(unittest.TestCase):
         self.assertTrue(session.close())
         self.assertTrue(session.close(), "une seconde clôture renvoie l'issue mémorisée")
         VerrouInstance(self.base).acquerir().liberer()
+
+
+class ServeSessionTest(unittest.TestCase):
+    """Session du serveur : même verrou et récupération, sans créneau ni moteur (D4)."""
+
+    def setUp(self) -> None:
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.base = Path(temporary.name) / "data-projet"
+
+    def test_relie_la_consultation_sans_construire_d_action(self) -> None:
+        with (
+            mock.patch.object(
+                composition, "CreneauOperations", side_effect=AssertionError("créneau")
+            ),
+            mock.patch.object(
+                composition, "assemble_services", side_effect=AssertionError("services")
+            ),
+        ):
+            session = open_serve_session(self.base, recover=_no_recovery)
+
+        self.assertIsInstance(session.results, ConsultationResultats)
+        with self.assertRaises(InstanceDejaActive):
+            VerrouInstance(self.base).acquerir()
+        self.assertTrue(session.close())
+        VerrouInstance(self.base).acquerir().liberer()
+
+    def test_recuperation_appliquee_sous_le_verrou_avant_la_consultation(self) -> None:
+        observations: list[str] = []
+
+        def recover(data_dir: Path) -> None:
+            with self.assertRaises(InstanceDejaActive):
+                VerrouInstance(self.base).acquerir()
+            observations.append(str(data_dir))
+
+        session = open_serve_session(self.base, recover=recover)
+
+        self.assertEqual(observations, [str(self.base)])
+        self.assertTrue((self.base / "results").is_dir(), "dossiers préparés")
+        self.assertTrue(session.close())
+        VerrouInstance(self.base).acquerir().liberer()
+
+    def test_refus_de_recuperation_libere_le_verrou(self) -> None:
+        def recover(data_dir: Path) -> None:
+            raise EtatAnterieurNonTraitable("résultat antérieur non traitable (simulé)")
+
+        with self.assertRaises(SessionRefused) as refusal:
+            open_serve_session(self.base, recover=recover)
+
+        self.assertTrue(refusal.exception.lock_released)
+        self.assertIn("non traitable", str(refusal.exception))
+        VerrouInstance(self.base).acquerir().liberer()
+
+    def test_verrou_tenu_refuse_sans_recuperation(self) -> None:
+        lock = VerrouInstance(self.base).acquerir()
+        self.addCleanup(lock.liberer)
+        appels: list[Path] = []
+
+        with self.assertRaises(SessionRefused) as refusal:
+            open_serve_session(self.base, recover=appels.append)
+
+        self.assertEqual(appels, [])
+        self.assertIn("autre instance", str(refusal.exception))
 
 
 if __name__ == "__main__":

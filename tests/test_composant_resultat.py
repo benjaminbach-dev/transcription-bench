@@ -17,7 +17,6 @@ from pathlib import Path
 
 from tests.outils_html import assert_html_seul
 from transcription_bench.consultation_resultats import IndicateursAudio
-from transcription_bench.operations import CreneauOperations
 from transcription_bench.web import (
     ConfigApplication,
     ServicesApplication,
@@ -94,7 +93,7 @@ class ComposantResultatTest(unittest.TestCase):
         self.addCleanup(temporaire.cleanup)
         self.app = create_app(
             ConfigApplication(port=8765, dossier_data=Path(temporaire.name) / "data"),
-            ServicesApplication(creneau=CreneauOperations()),
+            ServicesApplication(),
         )
 
     def rendre(self, resultat: object, groupe: dict | None = None) -> str:

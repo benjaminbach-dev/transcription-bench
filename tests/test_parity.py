@@ -1,4 +1,9 @@
-"""Parité web/CLI : la table du code couvre exactement les routes réelles."""
+"""Parité web/CLI (design D3) : la table couvre exactement les routes réelles.
+
+Le sens est inversé : chaque page de consultation a une commande de lecture ; une
+commande sans page est admise. Seuls l'accueil et les ressources fixes peuvent
+être exclus.
+"""
 
 from __future__ import annotations
 
@@ -9,20 +14,11 @@ import unittest
 from pathlib import Path
 
 from transcription_bench import cli
-from transcription_bench.command_session import CommandGroup
 from transcription_bench.commands import COMMANDS
-from transcription_bench.operations import CreneauOperations
-from transcription_bench.parity import WEB_CLI_PARITY
+from transcription_bench.parity import ROUTES_EXCLUES_AUTORISEES, WEB_CLI_PARITY
 from transcription_bench.web import ConfigApplication, ServicesApplication, create_app
 
 PORT_TEST = 8765
-
-#: Commandes enregistrées sans équivalent web, admises uniquement par cette
-#: exclusion documentée. Vide : `serve` n'est pas concerné, `cli` l'ajoute
-#: hors de `COMMANDS` et la table décrit les routes du serveur, pas son
-#: lancement ; une future commande sans équivalent devra s'y ajouter avec sa
-#: raison.
-COMMAND_EXCLUSIONS: frozenset[tuple[str, ...]] = frozenset()
 
 
 class PariteWebCliTest(unittest.TestCase):
@@ -32,10 +28,9 @@ class PariteWebCliTest(unittest.TestCase):
         temporaire = tempfile.TemporaryDirectory()
         self.addCleanup(temporaire.cleanup)
         self.dossier_data = Path(temporaire.name) / "data"
-        self.creneau = CreneauOperations()
         self.app = create_app(
             ConfigApplication(port=PORT_TEST, dossier_data=self.dossier_data),
-            ServicesApplication(creneau=self.creneau),
+            ServicesApplication(),
         )
         self.analyseur = cli.construire_analyseur(COMMANDS)
 
@@ -100,27 +95,18 @@ class PariteWebCliTest(unittest.TestCase):
                         "une exclusion doit documenter sa raison",
                     )
 
-    def test_every_registered_leaf_is_covered_or_excluded(self) -> None:
-        """Sens inverse : chaque commande feuille est couverte par la table.
-
-        Sans ce sens, une commande enregistrée sans aucune entrée de parité
-        passerait inaperçue : elle existerait dans l'analyseur sans équivalent
-        web documenté.
-        """
-        couvertes: set[tuple[str, ...]] = set()
+    def test_seuls_l_accueil_et_les_ressources_sont_exclus(self) -> None:
+        """Une nouvelle page sans commande de lecture fait échouer la suite."""
         for entree in WEB_CLI_PARITY:
-            couvertes.update(entree.commands)
-        enregistrees: set[tuple[str, ...]] = set()
-        for command in COMMANDS:
-            if isinstance(command, CommandGroup):
-                for leaf in command.commands:
-                    enregistrees.add((command.name, leaf.name))
-            else:
-                enregistrees.add((command.name,))
-        sans_couverture = enregistrees - couvertes - COMMAND_EXCLUSIONS
-        self.assertEqual(
-            sans_couverture,
-            set(),
-            "commandes enregistrées sans entrée de parité ni exclusion documentée : "
-            + repr(sorted(" ".join(chemin) for chemin in sans_couverture)),
-        )
+            if entree.commands:
+                continue
+            with self.subTest(route=f"{entree.method} {entree.rule}"):
+                self.assertIn(
+                    entree.rule,
+                    ROUTES_EXCLUES_AUTORISEES,
+                    "une page de consultation doit avoir une commande de lecture",
+                )
+
+
+if __name__ == "__main__":
+    unittest.main()

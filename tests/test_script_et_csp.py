@@ -1,44 +1,28 @@
-"""Tests de la route fixe `/app.js` et de la CSP des réponses HTML (tâche 1.2).
+"""Tests de l'absence de script et de la CSP des réponses HTML (tâche 1.3, design D2).
 
-Design D6 : un seul script local `/app.js`, servi comme les feuilles (type
-explicite, `nosniff`, `no-cache`, contrôle `Host`), et une politique de sécurité
-des contenus stricte sur les réponses HTML, pages d'erreur réelles comprises.
-Les 404 statiques restent des refus : aucun fichier choisi par la requête n'est
-lu. Aucun accès réseau, aucune donnée réelle.
+Le script local `/app.js` et son fichier sont supprimés : la route répond 404, aucune
+page ne porte de balise `script` et la politique de sécurité des contenus interdit
+tout script (`script-src 'none'`). Les 404 statiques restent des refus : aucun
+fichier choisi par la requête n'est lu. Aucun accès réseau, aucune donnée réelle.
 """
 
 from __future__ import annotations
 
 import unittest
 
-from tests.outils_html import (
-    ATTRIBUTS_SCRIPT,
-    SCRIPT_ATTENDU,
-    analyser,
-    assert_html_seul,
-    assert_sans_script_ni_style,
-)
+from tests.outils_html import analyser, assert_html_seul, assert_sans_script_ni_style
 from tests.test_web import SocleWebTest
-from transcription_bench.web.app import (
-    DOSSIER_FEUILLES,
-    NOM_SCRIPT_APP,
-    POLITIQUE_CONTENU,
-    TYPE_SCRIPT,
-)
+from transcription_bench.web.app import DOSSIER_FEUILLES, POLITIQUE_CONTENU
 
-# Valeur exacte attendue du design D6, recopiée ici pour qu'une dérive de la
-# constante du serveur fasse échouer les tests au lieu de les suivre.
+# Valeur exacte attendue (design D2) : D6 sans script, les autres directives inchangées.
+# Recopiée ici pour qu'une dérive de la constante du serveur fasse échouer les tests.
 CSP_ATTENDUE = (
-    "default-src 'self'; script-src 'self'; style-src 'self'; "
+    "default-src 'self'; script-src 'none'; style-src 'self'; "
     "connect-src 'self'; img-src 'self'; object-src 'none'; "
     "form-action 'self'; frame-ancestors 'none'; base-uri 'none'"
 )
 
 CHEMIN_SCRIPT = "/app.js"
-CHEMIN_SCRIPT_SUR_DISQUE = DOSSIER_FEUILLES / NOM_SCRIPT_APP
-# Chaîne propre au fichier servi : elle ne doit jamais apparaître dans une 404.
-MARQUEUR_SCRIPT = '"use strict"'
-HOTES_REFUSES = ("evil.example:8765", "127.0.0.1:8766", "127.0.0.1")
 CHEMINS_STATIQUES_ABSENTS = (
     "/static/app.js",
     "/ressources/app.js",
@@ -61,193 +45,56 @@ def page(scripts: str = "", corps: str = "") -> str:
     )
 
 
-class RouteScriptTest(SocleWebTest):
-    """`/app.js` : fichier unique, en-têtes fixes, mêmes contrôles que les feuilles."""
+class RouteScriptSupprimeeTest(SocleWebTest):
+    """`/app.js` n'existe plus : 404 HTML, aucun fichier de script dans le paquet."""
 
-    def test_script_servi_avec_entetes_fixes(self) -> None:
+    def test_app_js_repond_404_avec_le_squelette(self) -> None:
         reponse = self.client.get(CHEMIN_SCRIPT, base_url=self.base_url())
 
-        self.assertEqual(reponse.status_code, 200)
-        self.assertEqual(TYPE_SCRIPT, "text/javascript; charset=utf-8")
-        self.assertEqual(reponse.headers["Content-Type"], TYPE_SCRIPT)
-        self.assertEqual(reponse.headers["X-Content-Type-Options"], "nosniff")
-        self.assertEqual(reponse.headers["Cache-Control"], "no-cache")
-        self.assertNotIn("Set-Cookie", reponse.headers)
-        self.assertTrue(reponse.get_data())
+        self.verifier_page_erreur(reponse, 404)
+        self.assertIn("text/html", reponse.headers["Content-Type"])
+        self.assertNotIn("javascript", reponse.headers["Content-Type"])
 
-    def test_script_servi_est_le_fichier_du_paquet_decode_en_utf8(self) -> None:
-        corps = self.client.get(CHEMIN_SCRIPT, base_url=self.base_url()).get_data()
+    def test_fichier_script_absent_du_paquet(self) -> None:
+        self.assertFalse((DOSSIER_FEUILLES / "app.js").exists())
 
-        self.assertEqual(corps, CHEMIN_SCRIPT_SUR_DISQUE.read_bytes())
-        self.assertTrue(corps.decode("utf-8"))
-
-    def test_script_sans_evaluation_dynamique_ni_ressource_distante(self) -> None:
-        source = CHEMIN_SCRIPT_SUR_DISQUE.read_text(encoding="utf-8")
-
-        for interdit in ("eval(", "new Function", "http://", "https://", "<script"):
-            with self.subTest(interdit=interdit):
-                self.assertNotIn(interdit, source)
-
-    def test_host_non_local_refuse_pour_le_script(self) -> None:
-        for hote in HOTES_REFUSES:
-            with self.subTest(hote=hote):
-                reponse = self.client.get(
-                    CHEMIN_SCRIPT,
-                    base_url=self.base_url(),
-                    headers={"Host": hote},
-                )
-
-                self.assertEqual(reponse.status_code, 403)
-                self.assertIn("text/html", reponse.headers["Content-Type"])
-                self.assertNotEqual(reponse.headers["Content-Type"], TYPE_SCRIPT)
-                self.assertNotIn(MARQUEUR_SCRIPT, reponse.get_data(as_text=True))
-
-    def test_adresse_locale_et_localhost_acceptees(self) -> None:
-        for base in (self.base_url(), "http://localhost:8765"):
-            with self.subTest(base=base):
-                reponse = self.client.get(CHEMIN_SCRIPT, base_url=base)
-
-                self.assertEqual(reponse.status_code, 200)
-                self.assertEqual(reponse.headers["Content-Type"], TYPE_SCRIPT)
-
-    def test_aucun_service_de_fichiers_arbitraires_pour_le_script(self) -> None:
+    def test_aucun_service_de_fichiers_arbitraires(self) -> None:
         for chemin in CHEMINS_STATIQUES_ABSENTS:
             with self.subTest(chemin=chemin):
                 reponse = self.client.get(chemin, base_url=self.base_url())
 
                 self.assertEqual(reponse.status_code, 404)
                 self.assertIn("text/html", reponse.headers["Content-Type"])
-                self.assertNotIn(MARQUEUR_SCRIPT, reponse.get_data(as_text=True))
-
-    def test_methode_non_autorisee_sur_le_script(self) -> None:
-        reponse = self.client.post(
-            CHEMIN_SCRIPT,
-            data={},
-            base_url=self.base_url(),
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
-        )
-
-        # Le contrôle Host puis jeton s'applique avant la méthode : refus 403
-        # HTML, jamais un 405 ni le script lui-même.
-        self.assertEqual(reponse.status_code, 403)
-        self.assertNotEqual(reponse.headers["Content-Type"], TYPE_SCRIPT)
 
 
-class SqueletteScriptTest(SocleWebTest):
-    """Le squelette commun charge exactement le script local, en `defer`."""
+class AucuneBaliseScriptTest(SocleWebTest):
+    """Aucune page rendue ne contient de balise `script`, pas même une balise vide."""
 
-    def scripts_de(self, chemin: str) -> list[dict[str, str | None]]:
-        reponse = self.client.get(chemin, base_url=self.base_url())
-        self.assertIn(reponse.status_code, (200, 404), chemin)
-        corps = reponse.get_data(as_text=True)
-        pages = assert_html_seul(self, corps)
-        return [dict(attributs) for _, _, attributs in pages.balises_de("script")]
-
-    def test_script_unique_en_defer_sur_les_pages(self) -> None:
-        for chemin in ("/resultats", "/executions", "/modeles", "/route-inexistante"):
+    def test_aucune_page_ne_contient_de_script(self) -> None:
+        for chemin in (
+            "/resultats",
+            "/resultats/aide",
+            "/resultats/comparaison",
+            "/executions",
+            "/route-inexistante",
+        ):
             with self.subTest(chemin=chemin):
-                self.assertEqual(self.scripts_de(chemin), [dict(ATTRIBUTS_SCRIPT)])
+                reponse = self.client.get(chemin, base_url=self.base_url())
+                self.assertIn(reponse.status_code, (200, 404))
 
-    def test_script_annonce_par_le_verificateur(self) -> None:
-        self.assertEqual(ATTRIBUTS_SCRIPT, {"src": SCRIPT_ATTENDU, "defer": None})
-
-
-class VerificateurScriptTest(unittest.TestCase):
-    """Le vérificateur n'accepte que le script local `defer`, sans contenu."""
-
-    def test_script_local_en_defer_accepte(self) -> None:
-        pages = assert_html_seul(self, page('<script src="/app.js" defer></script>'))
-
-        self.assertEqual(pages.scripts_contenus, [""])
-        self.assertEqual(pages.scripts_non_fermes, 0)
-        self.assertEqual(
-            [dict(attributs) for _, _, attributs in pages.balises_de("script")],
-            [dict(ATTRIBUTS_SCRIPT)],
-        )
-
-    def test_analyse_expose_les_doublons_et_scripts_non_fermes(self) -> None:
-        # Contrat du vérificateur : l'analyse ne perd ni doublon d'attribut ni
-        # script sans balise de fermeture, sinon un contrôle par `dict` ou par
-        # contenu vide accepterait un script hostile.
-        double = analyser(
-            page(
-                '<script src="/app.js" src="https://cdn.example/app.js" defer></script>'
-            )
-        )
-        scripts = '<script src="/app.js" defer>alert(1)'
-        ouvert = analyser(page(scripts))
-
-        self.assertEqual(
-            [valeur for _, nom, valeur in double.attributs if nom == "src"],
-            ["/app.js", "https://cdn.example/app.js"],
-        )
-        # Le script resté ouvert est compté comme tel et rejeté ; le texte final
-        # qui le suit n'est pas exigé ici : selon la version de la bibliothèque
-        # standard, `html.parser` ne transmet pas à `handle_data` les données
-        # d'un contenu CDATA non terminé (texte laissé dans `rawdata`). Le rejet
-        # ne dépend donc pas de ce tampon, mais de `scripts_non_fermes`.
-        self.assertEqual(ouvert.scripts_non_fermes, 1)
-        self.assertEqual(len(ouvert.scripts_contenus), 1)
-        with self.assertRaises(AssertionError):
-            assert_html_seul(self, page(scripts))
-
-    def test_page_sans_script_acceptee(self) -> None:
-        self.assertEqual(assert_html_seul(self, page()).balises_de("script"), [])
-
-    def test_scripts_refuses(self) -> None:
-        refuses = {
-            "incorporé": '<script src="/app.js" defer>alert(1)</script>',
-            "sans defer": '<script src="/app.js"></script>',
-            "fichier arbitraire": '<script src="/static/app.js" defer></script>',
-            "fichier distant": (
-                '<script src="https://cdn.example/app.js" defer></script>'
-            ),
-            "deux scripts": (
-                '<script src="/app.js" defer></script>'
-                '<script src="/app.js" defer></script>'
-            ),
-            "attribut supplémentaire": (
-                '<script src="/app.js" defer async></script>'
-            ),
-            # `dict(attributs)` masquerait ces deux cas : les attributs sont lus
-            # dans l'ordre du document, doublons compris.
-            "src répété": (
-                '<script src="/app.js" src="https://cdn.example/app.js" defer></script>'
-            ),
-            "defer répété": '<script src="/app.js" defer defer></script>',
-            # Un script non fermé avale le reste du document comme contenu.
-            "non fermé avec code": '<script src="/app.js" defer>alert(1)',
-            "non fermé vide": '<script src="/app.js" defer>',
-            # HTML ne connaît pas de script auto-fermant : la balise reste ouverte.
-            "auto-fermant": '<script src="/app.js" defer />',
-            "src vide": '<script src="" defer></script>',
-        }
-        for cas, scripts in refuses.items():
-            with self.subTest(cas=cas):
-                with self.assertRaises(AssertionError):
-                    assert_html_seul(self, page(scripts))
-
-    def test_gestionnaire_on_refuse(self) -> None:
-        with self.assertRaises(AssertionError):
-            assert_html_seul(self, page('<script src="/app.js" defer></script>',
-                                        '<button onclick="alert(1)">x</button>'))
-
-    def test_corps_hors_page_refuse_meme_le_script_local(self) -> None:
-        # Corps de redirection : aucun script, pas même le fichier local.
-        with self.assertRaises(AssertionError):
-            assert_sans_script_ni_style(
-                self, page('<script src="/app.js" defer></script>')
-            )
+                pages = assert_html_seul(self, reponse.get_data(as_text=True))
+                self.assertEqual(pages.balises_de("script"), [])
 
 
 class PolitiqueContenuTest(SocleWebTest):
-    """CSP exacte de D6 sur les réponses HTML, y compris les erreurs réelles."""
+    """CSP exacte de D2 sur les réponses HTML, y compris les erreurs réelles."""
 
     def verifier_csp(self, reponse) -> None:
         self.assertEqual(reponse.headers["Content-Security-Policy"], CSP_ATTENDUE)
 
-    def test_politique_exacte_sans_echappatoire(self) -> None:
+    def test_politique_exacte_sans_script_ni_echappatoire(self) -> None:
         self.assertEqual(POLITIQUE_CONTENU, CSP_ATTENDUE)
+        self.assertIn("script-src 'none'", POLITIQUE_CONTENU)
         self.assertNotIn("unsafe-inline", CSP_ATTENDUE)
         self.assertNotIn("unsafe-eval", CSP_ATTENDUE)
 
@@ -256,9 +103,6 @@ class PolitiqueContenuTest(SocleWebTest):
             "/resultats",
             "/resultats/comparaison",
             "/executions",
-            "/modeles",
-            "/moteurs",
-            "/audios",
         ):
             with self.subTest(chemin=chemin):
                 reponse = self.client.get(chemin, base_url=self.base_url())
@@ -272,8 +116,14 @@ class PolitiqueContenuTest(SocleWebTest):
         self.verifier_page_erreur(reponse, 404)
         self.verifier_csp(reponse)
 
+    def test_csp_sur_404_script_supprime(self) -> None:
+        reponse = self.client.get(CHEMIN_SCRIPT, base_url=self.base_url())
+
+        self.verifier_page_erreur(reponse, 404)
+        self.verifier_csp(reponse)
+
     def test_csp_sur_405(self) -> None:
-        reponse = self.client.get("/dossiers/verifier", base_url=self.base_url())
+        reponse = self.client.post("/resultats", data={}, base_url=self.base_url())
 
         self.verifier_page_erreur(reponse, 405)
         self.verifier_csp(reponse)
@@ -301,14 +151,70 @@ class PolitiqueContenuTest(SocleWebTest):
         self.verifier_csp(reponse)
         self.assertNotIn("échec interne simulé", corps)
 
-    def test_csp_absente_des_ressources(self) -> None:
+    def test_csp_absente_des_feuilles(self) -> None:
         # La CSP décrit ce que le document charge, pas le type de la ressource.
-        for chemin in ("/sumi.css", "/app.css", CHEMIN_SCRIPT):
+        for chemin in ("/sumi.css", "/app.css"):
             with self.subTest(chemin=chemin):
                 reponse = self.client.get(chemin, base_url=self.base_url())
 
                 self.assertEqual(reponse.status_code, 200)
                 self.assertNotIn("Content-Security-Policy", reponse.headers)
+
+
+class VerificateurAucunScriptTest(unittest.TestCase):
+    """Le vérificateur refuse toute balise script, même locale ou sans contenu."""
+
+    def test_page_sans_script_acceptee(self) -> None:
+        self.assertEqual(assert_html_seul(self, page()).balises_de("script"), [])
+
+    def test_tout_script_refuse(self) -> None:
+        refuses = {
+            "local en defer": '<script src="/app.js" defer></script>',
+            "incorporé": '<script src="/app.js" defer>alert(1)</script>',
+            "sans defer": '<script src="/app.js"></script>',
+            "fichier arbitraire": '<script src="/static/app.js" defer></script>',
+            "fichier distant": (
+                '<script src="https://cdn.example/app.js" defer></script>'
+            ),
+            "deux scripts": (
+                '<script src="/app.js" defer></script>'
+                '<script src="/app.js" defer></script>'
+            ),
+            "src répété": (
+                '<script src="/app.js" src="https://cdn.example/app.js" defer></script>'
+            ),
+            "defer répété": '<script src="/app.js" defer defer></script>',
+            # Un script non fermé avale le reste du document comme contenu.
+            "non fermé avec code": '<script src="/app.js" defer>alert(1)',
+            "non fermé vide": '<script src="/app.js" defer>',
+            # HTML ne connaît pas de script auto-fermant : la balise reste ouverte.
+            "auto-fermant": '<script src="/app.js" defer />',
+            "src vide": '<script src="" defer></script>',
+        }
+        for cas, scripts in refuses.items():
+            with self.subTest(cas=cas):
+                with self.assertRaises(AssertionError):
+                    assert_html_seul(self, page(scripts))
+
+    def test_analyse_expose_les_scripts_non_fermes(self) -> None:
+        # Contrat de l'analyseur : un script resté ouvert est compté comme tel.
+        ouvert = analyser(page('<script src="/app.js" defer>alert(1)'))
+
+        self.assertEqual(ouvert.scripts_non_fermes, 1)
+        self.assertEqual(len(ouvert.scripts_contenus), 1)
+
+    def test_gestionnaire_on_refuse(self) -> None:
+        with self.assertRaises(AssertionError):
+            assert_html_seul(
+                self, page(corps='<button onclick="alert(1)">x</button>')
+            )
+
+    def test_corps_hors_page_refuse_tout_script(self) -> None:
+        # Corps de redirection : aucun script, pas même un fichier local.
+        with self.assertRaises(AssertionError):
+            assert_sans_script_ni_style(
+                self, page('<script src="/app.js" defer></script>')
+            )
 
 
 if __name__ == "__main__":

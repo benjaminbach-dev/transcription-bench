@@ -12,16 +12,13 @@ analyse des pages réellement rendues avec `tests/outils_html.py` (fondée sur
 from __future__ import annotations
 
 import re
-import threading
 import unittest
-from html import unescape
 from html.parser import HTMLParser
 from pathlib import Path
 
 from tests.outils_html import ELEMENTS_INTERDITS, assert_html_seul
 from tests.test_comparaison_resultats import EMPREINTE_A, resultat_empreinte
 from tests.test_feuilles import lire_feuille, regles
-from tests.test_modeles_web import FausseGestion
 from tests.test_consultation_resultats import (
     IDENTIFIANT,
     IDENTIFIANT_ANCIEN,
@@ -30,10 +27,6 @@ from tests.test_consultation_resultats import (
     run_json,
 )
 from tests.test_web import SocleWebTest
-from transcription_bench.compatibilite_modeles import RAISON_FICHIER_GGUF_NON_CHOISI
-from transcription_bench.gestion_modeles import ModeleLocal
-from transcription_bench.moteurs import ETAT_PRET, EtatMoteur
-from transcription_bench.verification_modeles import FichierVerifie, ResultatVerification
 from transcription_bench.web.app import NOM_FEUILLE_APP
 
 DOSSIER_GABARITS = (
@@ -100,45 +93,25 @@ CLASSES_COMPOSANT_RESULTAT = frozenset(
 )
 MOTIF_SELECTEUR_CLASSE = re.compile(r"\.([A-Za-z][\w-]*)")
 
-# Liens de la navigation commune, dans l'ordre exigé par le design D1 : six
-# rubriques, sans Accueil ni Opération (redirigées depuis la tâche 3.1).
+# Liens de la navigation commune à l'état post-1.1 : les pages d'action ont
+# disparu, Historique désigne `/executions`.
 LIENS_NAVIGATION = (
     ("/resultats", "Résultats"),
     ("/resultats/comparaison", "Comparaisons"),
-    ("/executions", "Exécutions"),
-    ("/modeles", "Modèles"),
-    ("/moteurs", "Moteurs"),
-    ("/audios", "Audios"),
+    ("/executions", "Historique"),
 )
 CHEMIN_NAVIGATION = ("html", "body", "header", "nav")
 CHEMIN_HEADER = ("html", "body", "header")
 
-# Boutons destructeurs : seuls ceux-là portent la classe `danger`.
-BOUTONS_DESTRUCTEURS = {
-    "modeles.html": "Supprimer ce modèle local",
-    "executions.html": "Arrêter l'exécution",
-}
+# Boutons destructeurs : aucun dans l'interface web après la tâche 1.1.
+BOUTONS_DESTRUCTEURS: dict[str, str] = {}
 
 # Design D7 : un seul `h1` (titre de la page dans `main`), sous-titres sans
 # saut de niveau ; le nom du programme n'est pas un titre.
 NIVEAUX_TITRES = ("h1", "h2", "h3", "h4", "h5", "h6")
 
-# Design D7 : boutons de simple contrôle (classe `secondary`) et actions
-# principales (style primaire de Sumi, jamais `secondary`).
-BOUTONS_SECONDAIRES = {
-    "executions.html": (
-        "Appliquer les choix",
-        "Vérifier la demande (aucun lancement)",
-    ),
-    "modeles.html": (
-        "Vérifier la compatibilité sans télécharger",
-        "Vérifier avec {{ candidat }}",
-    ),
-}
+# Design D7 : actions principales (style primaire de Sumi, jamais `secondary`).
 BOUTONS_PRIMAIRES = {
-    "executions.html": ("Lancer l'exécution",),
-    "modeles.html": ("Télécharger ce modèle à la révision vérifiée",),
-    "moteurs.html": ("Installer ce moteur",),
     "comparaisons.html": ("Comparer les transcriptions sélectionnées",),
 }
 
@@ -153,25 +126,7 @@ MOTIF_BLOC_COURANTE = re.compile(
     r"{%-?\s*block page_courante\s*-?%}\s*([^{}%]*?)\s*{%-?\s*endblock"
 )
 
-DELAI = 5.0
 IDENTIFIANT_DETAIL = "20240103-000000-0000dead"
-#: Moteur réel prêt simulé : seul un tel moteur ouvre le formulaire d'ajout.
-MOTEUR_PRET = "moteur-de-test"
-#: Modèle local fabriqué : rend l'inventaire de /modeles non vide pour que le
-#: contrôle D8 voie aussi le détail fermé « Révision, fichiers et suppression ».
-MODELE_LOCAL = ModeleLocal(
-    moteur="moteur-de-test",
-    cle="c" * 64,
-    identifiant="org/modele-synthetique",
-    id_resolu="org/modele-synthetique",
-    commit="0123456789abcdef0123456789abcdef01234567",
-    famille="whisper",
-    fichier_gguf=None,
-    fichiers=(FichierVerifie("model.bin", 3),),
-    taille_disque=3,
-    date="2026-10-25",
-)
-
 # Design D8 : contenus qui restent visibles sans ouvrir d'accordéon.
 CONTENU_TOUJOURS_VISIBLE = frozenset({"pre", "button"})
 CLASSES_TOUJOURS_VISIBLES = frozenset({"danger", "warning"})
@@ -265,6 +220,11 @@ def analyser_details(corps: str) -> AnalyseDetails:
     return analyse
 
 
+#: Nombre de messages d'état `role="status"` dans les gabarits restants : chacun
+#: reste dans un encart `callout` (contrôle ci-dessous).
+NOMBRE_ROLE_STATUS = 7
+
+
 class GabaritsTest(unittest.TestCase):
     """Analyse statique des gabarits : classes, balises écrites, encarts."""
 
@@ -274,14 +234,10 @@ class GabaritsTest(unittest.TestCase):
     def test_tous_les_gabarits_de_page_sont_analyses(self) -> None:
         attendus = {
             "base.html",
-            "audios.html",
             "comparaison.html",
             "comparaisons.html",
             "erreur.html",
             "executions.html",
-            "journal.html",
-            "modeles.html",
-            "moteurs.html",
             "resultat.html",
             "resultats.html",
         }
@@ -313,10 +269,8 @@ class GabaritsTest(unittest.TestCase):
         self.assertLessEqual(CLASSES_COMPOSANT_RESULTAT, definies)
 
     def test_aucun_element_ni_attribut_interdit(self) -> None:
-        # `<script` n'est plus interdit en bloc : le squelette commun charge
-        # l'unique script local `/app.js` en `defer` (design D6). Tout autre
-        # script, incorporé ou non, reste refusé par le contrôle ci-dessous.
-        interdits = ("<style", "<iframe", "<object", "<img", "<dialog")
+        # Aucun script dans les gabarits : l'interface n'en charge plus (design D2).
+        interdits = ("<script", "<style", "<iframe", "<object", "<img", "<dialog")
         for nom, source in self.sources.items():
             with self.subTest(gabarit=nom):
                 for interdit in interdits:
@@ -331,20 +285,6 @@ class GabaritsTest(unittest.TestCase):
                         MOTIF_GESTIONNAIRE.search(ligne),
                         f"attribut de gestionnaire d'événement dans {nom} : {ligne}",
                     )
-
-        # Un seul gabarit écrit un script, une seule fois, avec le fichier local
-        # en `defer` : ni script incorporé, ni fichier arbitraire ou distant.
-        self.assertEqual(
-            {
-                nom: source.count("<script")
-                for nom, source in self.sources.items()
-                if "<script" in source
-            },
-            {"base.html": 1},
-        )
-        self.assertIn(
-            '<script src="/app.js" defer></script>', self.sources["base.html"]
-        )
 
     def test_deux_feuilles_locales_dans_l_ordre(self) -> None:
         base = self.sources["base.html"]
@@ -392,11 +332,8 @@ class GabaritsTest(unittest.TestCase):
                 if 'role="status"' in ligne:
                     trouves += 1
                     with self.subTest(gabarit=nom, ligne=ligne.strip()):
-                        if 'data-champ="etat"' in ligne:
-                            self.assertEqual(nom, "executions.html")
-                        else:
-                            self.assertIn("callout", ligne)
-        self.assertEqual(trouves, 10)
+                        self.assertIn("callout", ligne)
+        self.assertEqual(trouves, NOMBRE_ROLE_STATUS)
 
     def test_classes_d_encart_seulement_sur_des_callouts(self) -> None:
         # D3 : `danger`, `warning` et `success` ne prennent effet que sur un
@@ -437,9 +374,6 @@ class GabaritsTest(unittest.TestCase):
 
     def test_bloc_page_courante_des_pages_de_premier_niveau(self) -> None:
         attendus = {
-            "audios.html": "audios",
-            "moteurs.html": "moteurs",
-            "modeles.html": "modeles",
             "executions.html": "executions",
             "resultats.html": "resultats",
             "comparaisons.html": "comparaisons",
@@ -454,7 +388,6 @@ class GabaritsTest(unittest.TestCase):
         attendus = {
             "resultat.html": "parent:resultats",
             "comparaison.html": "parent:comparaisons",
-            "journal.html": "parent:moteurs",
         }
         for nom, cle in attendus.items():
             with self.subTest(gabarit=nom):
@@ -502,17 +435,6 @@ class GabaritsTest(unittest.TestCase):
             if "<button" in ligne and libelle in ligne
         ]
 
-    def test_boutons_de_controle_secondaires(self) -> None:
-        trouves = 0
-        for nom, libelles in BOUTONS_SECONDAIRES.items():
-            for libelle in libelles:
-                with self.subTest(gabarit=nom, libelle=libelle):
-                    lignes = self.lignes_de_bouton(nom, libelle)
-                    self.assertEqual(len(lignes), 1, lignes)
-                    self.assertIn("secondary", classes_de_balise(lignes[0]))
-                    trouves += 1
-        self.assertEqual(trouves, 4, "quatre boutons de contrôle")
-
     def test_actions_principales_sans_secondary(self) -> None:
         for nom, libelles in BOUTONS_PRIMAIRES.items():
             for libelle in libelles:
@@ -543,13 +465,6 @@ class GabaritsTest(unittest.TestCase):
 
     def test_grille_utilisee_hors_de_main_et_des_tableaux(self) -> None:
         # Design D8 : les cartes se répartissent avec `.grid` et `.cols-N`.
-        attendus = {
-            "moteurs.html": "grid cols-2",
-            "modeles.html": "grid cols-2",
-        }
-        for nom, classes in attendus.items():
-            with self.subTest(gabarit=nom):
-                self.assertIn(f'class="{classes}"', self.sources[nom])
         for nom, source in self.sources.items():
             for ligne in source.splitlines():
                 if "class=\"grid" not in ligne:
@@ -612,9 +527,7 @@ class HabillagePageTest(SocleWebTest):
             f"/resultats/{IDENTIFIANT_DETAIL}"
         )
         pages[self.chemin_comparaison()] = self.page(self.chemin_comparaison())
-        pages["/moteurs/faster-whisper/journal"] = self.page(
-            "/moteurs/faster-whisper/journal"
-        )
+        pages["/resultats/aide"] = self.page("/resultats/aide")
         return pages
 
     def test_squelette_commun_des_pages(self) -> None:
@@ -656,7 +569,9 @@ class HabillagePageTest(SocleWebTest):
                 self.assertTrue(page.texte_titre.endswith("transcription-bench"))
 
     def test_navigation_commune(self) -> None:
-        for chemin, page in self.pages_de_premier_niveau().items():
+        # Les trois rubriques, dans cet ordre, sur toutes les pages : premier
+        # niveau, sous-pages et page d'erreur.
+        for chemin, page in self.pages_a_controler().items():
             with self.subTest(chemin=chemin):
                 self.assertEqual(
                     [ancetres for ancetres, _, _ in page.balises_de("nav")],
@@ -781,7 +696,7 @@ class HabillagePageTest(SocleWebTest):
                         chemin,
                     )
 
-    def test_aria_current_sur_les_six_pages(self) -> None:
+    def test_aria_current_sur_les_pages_de_premier_niveau(self) -> None:
         for chemin, libelle in LIENS_NAVIGATION:
             with self.subTest(chemin=chemin):
                 courants = self.page(chemin).courants()
@@ -795,8 +710,8 @@ class HabillagePageTest(SocleWebTest):
         self.ecrire_resultats_comparables()
         sous_pages = {
             f"/resultats/{IDENTIFIANT}": "/resultats",
+            "/resultats/aide": "/resultats",
             self.chemin_comparaison(): "/resultats/comparaison",
-            "/moteurs/faster-whisper/journal": "/moteurs",
         }
         for chemin, parent in sous_pages.items():
             with self.subTest(chemin=chemin):
@@ -808,6 +723,39 @@ class HabillagePageTest(SocleWebTest):
                     (cible, libelle) for cible, libelle in LIENS_NAVIGATION
                 )[parent])
                 self.assertEqual(courants[0]["aria-current"], "true")
+
+    def test_etat_vide_renvoie_aux_commandes_sans_action(self) -> None:
+        # Tâche 1.4 : sans aucun résultat, chaque page de consultation présente
+        # un état vide court qui nomme les commandes réelles, sans formulaire,
+        # bouton ni champ. Le dossier de données n'est pas créé pour autant.
+        attendus = {
+            "/resultats": ("Aucune transcription à regrouper", ("« run start »",)),
+            "/resultats/comparaison": (
+                "Aucune transcription comparable",
+                ("« run start »", "« compare »"),
+            ),
+            "/executions": ("Aucune exécution enregistrée", ("« run start »",)),
+        }
+        for chemin, (debut, commandes) in attendus.items():
+            with self.subTest(chemin=chemin):
+                page = self.page(chemin)
+                etats = [
+                    texte
+                    for texte in re.findall(
+                        r'<p class="callout prose">([^<]*)</p>', page.corps
+                    )
+                    if texte.startswith(debut)
+                ]
+                self.assertEqual(len(etats), 1, "un seul état vide")
+                (etat,) = etats
+                for commande in commandes:
+                    self.assertIn(commande, etat)
+                self.assertLessEqual(etat.count("."), 2, "deux phrases au plus")
+                self.assertFalse(
+                    {"form", "button", "input", "select", "textarea"}
+                    & set(page.elements)
+                )
+        self.assertFalse(self.dossier_data.exists())
 
     def test_aria_current_absent_sur_la_page_erreur(self) -> None:
         page = self.page_erreur()
@@ -867,48 +815,10 @@ class HabillagePageTest(SocleWebTest):
         # boutons d'action ne sont jamais enfermés dans un accordéon fermé (un
         # `details` qui contient une erreur porte `open`).
         for chemin, page in self.pages_a_controler().items():
-            corps = page.corps
-            if chemin == "/modeles":
-                # La page par défaut a un inventaire vide : rendre au moins un
-                # modèle local pour que le contrôle voie aussi son détail
-                # fermé « Révision, fichiers et suppression » et son bouton.
-                corps = self.page_modeles_avec_resultat(
-                    inventaire=(MODELE_LOCAL,)
-                ).corps
             with self.subTest(chemin=chemin):
                 self.assertEqual(
-                    self.violations_details_fermes(chemin, corps), [], chemin
+                    self.violations_details_fermes(chemin, page.corps), [], chemin
                 )
-
-    def exception_details_fermes(self, chemin: str, resume: str, tag: str) -> bool:
-        """Exceptions étroites et commentées à la règle D8, bloc par bloc."""
-        # Diagnostic volontairement secondaire (D1), pas une action de
-        # lancement ou d'arrêt à garder au premier plan.
-        if (chemin == "/executions" and
-                resume == "Emplacement des dossiers" and
-                tag == "button"):
-            return True
-        # Formulaire d'ajout replié (tâche 5.2) : la règle D8 protège les
-        # actions principales (lancement, arrêt) et les erreurs, pas les
-        # contrôles d'un formulaire secondaire. L'exception reste étroite :
-        # seulement les `button` du bloc « Ajouter un modèle » de /modeles,
-        # jamais un `pre`, ni une classe danger/warning, ni un autre bloc ni
-        # une autre page.
-        if (
-            chemin == "/modeles"
-            and resume == "Ajouter un modèle"
-            and tag == "button"
-        ):
-            return True
-        # Suppression locale dans le détail d'un modèle (tâches 5.1/5.2) : la
-        # spec place révision, fichiers et suppression « en détail » ; le
-        # bouton de suppression — sa classe danger comprise — est le seul
-        # contenu toléré de ce bloc, jamais un encart ni un `pre`.
-        return (
-            chemin == "/modeles"
-            and resume == "Révision, fichiers et suppression"
-            and tag == "button"
-        )
 
     def violations_details_fermes(self, chemin: str, corps: str) -> list[str]:
         """Contenus à garder visibles trouvés dans un `details` fermé."""
@@ -918,8 +828,6 @@ class HabillagePageTest(SocleWebTest):
                 continue
             for tag, attributs in bloc.balises:
                 emplacement = f"{chemin}/{bloc.resume}: <{tag}>"
-                if self.exception_details_fermes(chemin, bloc.resume, tag):
-                    continue
                 classes = set((attributs.get("class") or "").split())
                 if tag in CONTENU_TOUJOURS_VISIBLE:
                     violations.append(emplacement)
@@ -928,193 +836,6 @@ class HabillagePageTest(SocleWebTest):
                 elif attributs.get("role") == "status":
                     violations.append(f"{emplacement} role=status")
         return violations
-
-    def test_exception_du_formulaire_d_ajout_limitee_aux_boutons(self) -> None:
-        # L'exception de la tâche 5.2 ne couvre que les boutons du bloc
-        # d'ajout de /modeles : un `pre`, un encart danger ou un autre bloc
-        # restent signalés.
-        bloc = '<details><summary>Ajouter un modèle</summary>{}</details>'
-        bouton = bloc.format("<button>V</button>")
-        self.assertEqual(
-            self.violations_details_fermes("/modeles", bouton), [],
-        )
-        for contenu in (
-            "<pre>journal</pre>",
-            '<p class="callout danger">refus</p>',
-            '<p class="callout warning">alerte</p>',
-            '<p role="status">état</p>',
-        ):
-            with self.subTest(contenu=contenu):
-                self.assertEqual(
-                    len(
-                        self.violations_details_fermes(
-                            "/modeles", bloc.format(contenu)
-                        )
-                    ),
-                    1,
-                )
-        # Une autre page ne bénéficie d'aucune exception pour ce même bloc.
-        self.assertEqual(
-            len(self.violations_details_fermes("/executions", bouton)), 1
-        )
-
-    def test_exception_de_la_suppression_limitee_au_bouton(self) -> None:
-        # L'exception du détail « Révision, fichiers et suppression » couvre le
-        # seul bouton de suppression (classe danger comprise) : un encart, un
-        # `pre` ou un autre bloc restent signalés.
-        bloc = (
-            '<details><summary>Révision, fichiers et suppression</summary>{}</details>'
-        )
-        bouton = bloc.format('<button class="danger">Supprimer</button>')
-        self.assertEqual(self.violations_details_fermes("/modeles", bouton), [])
-        for contenu in (
-            "<pre>journal</pre>",
-            '<p class="callout danger">refus</p>',
-            '<p role="status">état</p>',
-        ):
-            with self.subTest(contenu=contenu):
-                self.assertEqual(
-                    len(
-                        self.violations_details_fermes(
-                            "/modeles", bloc.format(contenu)
-                        )
-                    ),
-                    1,
-                )
-        # Une autre page ne bénéficie d'aucune exception pour ce même bloc.
-        self.assertEqual(
-            len(self.violations_details_fermes("/executions", bouton)), 1
-        )
-
-    def test_diagnostics_secondaires_fermes_avec_verification_accessible(self) -> None:
-        page = self.pages_a_controler()["/executions"]
-        bloc = next(
-            bloc for bloc in analyser_details(page.corps).blocs
-            if bloc.resume == "Emplacement des dossiers"
-        )
-        self.assertFalse(bloc.ouvert)
-        self.assertIn("button", [tag for tag, _ in bloc.balises])
-        self.assertIn('action="/dossiers/verifier"', page.corps)
-
-    def page_modeles_avec_resultat(self, resultat=None, inventaire=()):
-        """Page Modèles rendue avec un moteur prêt et un résultat éventuel.
-
-        Le service factice de `tests.test_modeles_web` lève une erreur à la
-        moindre vérification, suppression ou téléchargement : rendre la page
-        prouve qu'un GET ne sollicite aucun dépôt.
-        """
-        app = self.construire_app(
-            self.services(
-                modeles=FausseGestion(
-                    resultat=resultat,
-                    inventaire=inventaire,
-                    moteurs=(EtatMoteur(MOTEUR_PRET, "Moteur de test", ETAT_PRET),),
-                )
-            )
-        )
-        reponse = app.test_client().get("/modeles", base_url=self.base_url())
-        self.assertEqual(reponse.status_code, 200)
-        return assert_html_seul(self, reponse.get_data(as_text=True))
-
-    def bloc_ajout(self, page):
-        """Bloc `details` de l'espace d'ajout de la page Modèles."""
-        blocs = analyser_details(page.corps).blocs
-        trouves = [bloc for bloc in blocs if bloc.resume == "Ajouter un modèle"]
-        self.assertEqual(len(trouves), 1, [bloc.resume for bloc in blocs])
-        return trouves[0]
-
-    def test_ajout_replie_sans_verification(self) -> None:
-        # Tâche 5.2 : l'ajout est un accordéon fermé par défaut ; seuls les
-        # contrôles de son propre formulaire y restent, jamais un encart.
-        page = self.page_modeles_avec_resultat()
-        bloc = self.bloc_ajout(page)
-
-        self.assertFalse(bloc.ouvert)
-        self.assertIn("button", [tag for tag, _ in bloc.balises])
-        self.assertNotIn("pre", [tag for tag, _ in bloc.balises])
-        classes = {
-            classe
-            for _, attributs in bloc.balises
-            for classe in (attributs.get("class") or "").split()
-        }
-        self.assertFalse(classes & CLASSES_TOUJOURS_VISIBLES, sorted(classes))
-        # Le bloc fermé ne contient que des contrôles de formulaire : la règle
-        # D8 n'y est satisfaite que par l'exception étroite ci-dessus.
-        self.assertEqual(
-            self.violations_details_fermes("/modeles", page.corps), [], page.corps
-        )
-        self.assertIn("Ajouter un modèle", page.corps)
-
-    def test_ajout_ouvert_apres_un_refus_avec_motif_et_choix_visibles(self) -> None:
-        # Tâche 5.2 : le refus et les choix GGUF restent visibles parce que
-        # l'accordéon d'ajout est ouvert dès qu'une vérification a un résultat.
-        refus = ResultatVerification(
-            accepte=False,
-            identifiant="org/modele",
-            moteur=MOTEUR_PRET,
-            famille=None,
-            commit=None,
-            raison=RAISON_FICHIER_GGUF_NON_CHOISI,
-            message="plusieurs fichiers GGUF autonomes",
-            gguf_candidats=("modele-a.gguf", "modele-b.gguf"),
-        )
-        page = self.page_modeles_avec_resultat(refus)
-        bloc = self.bloc_ajout(page)
-
-        self.assertTrue(bloc.ouvert, "refus enfermé dans un panneau fermé")
-        classes = {
-            classe
-            for _, attributs in bloc.balises
-            for classe in (attributs.get("class") or "").split()
-        }
-        self.assertIn("danger", classes)
-        self.assertIn("Vérifier avec modele-a.gguf", page.corps)
-        self.assertIn("Vérifier avec modele-b.gguf", page.corps)
-
-    def test_journal_replie_pendant_une_operation(self) -> None:
-        # Design D5 : le résumé et l'arrêt restent visibles, le journal
-        # technique peut rester replié même pendant une opération en cours.
-        fin = threading.Event()
-        self.addCleanup(fin.set)
-        self.creneau.demarrer(
-            "execution", lambda travailleur: fin.wait(DELAI), cible="a.wav"
-        )
-
-        page = self.page("/executions")
-        blocs = analyser_details(page.corps).blocs
-        journaux = [bloc for bloc in blocs if bloc.resume.startswith("Journal")]
-
-        self.assertEqual(len(journaux), 1, [bloc.resume for bloc in blocs])
-        self.assertFalse(
-            journaux[0].ouvert, "journal ouvert alors qu'il doit rester replié"
-        )
-        self.assertIn("État : en cours", page.corps)
-        self.assertIn("Cible : a.wav", page.corps)
-        self.assertIn("Arrêter l'exécution", page.corps)
-
-    def test_arret_execution_en_danger(self) -> None:
-        fin = threading.Event()
-        self.addCleanup(fin.set)
-        self.creneau.demarrer(
-            "execution", lambda travailleur: fin.wait(DELAI), cible="a.wav"
-        )
-
-        page = self.page("/executions")
-        boutons = [balise for balise in page.avec_classe("danger")]
-
-        self.assertEqual(len(boutons), 1, boutons)
-        self.assertEqual(boutons[0][1], "button")
-        self.assertEqual(boutons[0][2].get("class"), "danger")
-        self.assertIn(
-            "Arrêter l'exécution",
-            re.sub(r"\s+", " ", unescape(page.corps)),
-        )
-
-    def test_page_modeles_sans_danger_sans_modele_local(self) -> None:
-        page = self.page("/modeles")
-
-        self.assertEqual(page.avec_classe("danger"), [])
-
 
 if __name__ == "__main__":
     unittest.main()

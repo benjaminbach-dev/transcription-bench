@@ -37,7 +37,6 @@ import http.client
 import io
 import json
 import os
-import re
 import signal
 import socket
 import subprocess
@@ -46,7 +45,6 @@ import tempfile
 import threading
 import time
 import unittest
-import urllib.parse
 from pathlib import Path
 
 import psutil
@@ -65,6 +63,13 @@ from tests.test_moteurs import (
     ENVIRON_UV,
     ExecuteurBloqueSynchronisation,
     declaration_test,
+)
+from tests.test_recuperation import (
+    MACHINE,
+    MOTEUR as MOTEUR_FACTICE,
+    PROGRAMME,
+    audio_transcrit,
+    demande,
 )
 from tests.test_verification_modeles import COMMIT, declaration_synthetique
 from transcription_bench import paths
@@ -99,6 +104,7 @@ from transcription_bench.operations import (
     CreneauOperations,
     OperationEchouee,
 )
+from transcription_bench.resultats import ConsignateurExecution
 from transcription_bench.supervision import (
     CODE_ARRET_SIGTERM,
     GestionnaireSignaux,
@@ -189,37 +195,6 @@ sys.argv = ["runner.py", chemin_job]
 runpy.run_path(chemin_runner, run_name="__main__")
 """
 
-#: Processus serveur réel : même code que `uv run transcription-bench`, avec un
-#: dossier de données temporaire et le moteur factice enveloppé par les paliers.
-CODE_SERVEUR_SUPERVISE = """
-import sys
-from pathlib import Path
-
-from engines.hors_ligne import commande_runner
-from transcription_bench import cli, composition, paths
-from transcription_bench.execution_moteur import ExecutionMoteur
-
-CODE = {code!r}
-
-
-def construire_commande(interpreteur, chemin_job):
-    commande = commande_runner(interpreteur, chemin_job)
-    return [commande[0], "-c", CODE, commande[2], commande[1]]
-
-
-class ServiceEnveloppe(ExecutionMoteur):
-    def __init__(self, *arguments, **options):
-        options["construire_commande"] = construire_commande
-        options.setdefault("delai_arret", 2.0)
-        super().__init__(*arguments, **options)
-
-
-composition.ExecutionMoteur = ServiceEnveloppe
-paths.DOSSIER_DATA = Path(sys.argv[1])
-raise SystemExit(cli.main(["--port", sys.argv[2]]))
-"""
-
-
 # -- petits utilitaires -------------------------------------------------------
 
 
@@ -274,6 +249,19 @@ def attendre_disparition(pid: int, heure_creation: float | None, delai: float = 
     attendre_condition(disparu, f"le processus {pid} est encore vivant", delai)
 
 
+#: Processus serveur réel : même `cli.main` que `uv run transcription-bench`, avec
+#: un dossier de données temporaire. Le serveur ne lance aucune opération (D4).
+CODE_SERVEUR = """
+import sys
+from pathlib import Path
+
+from transcription_bench import cli, paths
+
+paths.DOSSIER_DATA = Path(sys.argv[1])
+raise SystemExit(cli.main(["--port", sys.argv[2]]))
+"""
+
+
 def port_libre() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as prise:
         prise.bind(("127.0.0.1", 0))
@@ -286,23 +274,6 @@ def requete_get(port: int, chemin: str) -> tuple[int, str]:
         connexion.request("GET", chemin)
         reponse = connexion.getresponse()
         return reponse.status, reponse.read().decode("utf-8", "replace")
-    finally:
-        connexion.close()
-
-
-def requete_post(port: int, chemin: str, champs: dict[str, object]) -> int:
-    corps = urllib.parse.urlencode(champs, doseq=True).encode("utf-8")
-    connexion = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
-    try:
-        connexion.request(
-            "POST",
-            chemin,
-            body=corps,
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
-        )
-        reponse = connexion.getresponse()
-        reponse.read()
-        return reponse.status
     finally:
         connexion.close()
 
@@ -950,31 +921,39 @@ class MoteurReelArreteTest(ResultatsTemporairesTest):
 
 @unittest.skipIf(os.name == "nt", "SIGINT/SIGTERM réels non vérifiés sous Windows")
 class ServeurReelArreteTest(ResultatsTemporairesTest):
-    """Serveur Waitress réel : SIGINT puis SIGTERM, sans survivant, verrou libre.
+    """Serveur Waitress réel : démarrage, interface, arrêt, verrou libre, redémarrage.
 
-    Le processus lancé exécute le même `cli.main` que `uv run transcription-bench`
-    avec l'interpréteur du serveur et un dossier de données temporaire ; aucun
-    moteur réel, aucun poids, aucun réseau. Ce test ne remplace ni la sonde 1.7
-    (Ctrl+C via `uv run`, double Ctrl+C, port occupé) ni le rejeu Windows.
+    Le serveur ne lance aucune opération (change `alleger-interface-web`, D4) : le
+    cycle n'a donc aucun moteur à terminer, et aucun moteur factice n'est lancé.
+    Une exécution abandonnée, écrite sur disque avant le démarrage, doit être
+    clôturée par la récupération puis rester consultable. Ce test ne remplace ni
+    la sonde 1.7 (Ctrl+C via `uv run`, port occupé) ni le rejeu Windows.
     """
 
     def setUp(self) -> None:
         super().setUp()
         self.port = port_libre()
-        self.dossier_audio = self.donnees / "audio"
-        self.dossier_audio.mkdir(parents=True)
-        ecrire_wav(self.dossier_audio / "a.wav", duree=0.2)
-        self.paliers = self.racine / "paliers"
-        self.paliers.mkdir()
+        # Exécution consignée par le vrai écrivain, laissée `running` : aucun
+        # processus moteur n'est enregistré, la récupération la clôt en `abandoned`.
+        consignateur = ConsignateurExecution(
+            self.donnees,
+            demande(("a.wav",)),
+            MOTEUR_FACTICE,
+            debut=time.perf_counter(),
+            machine=MACHINE,
+            programme=PROGRAMME,
+            base="20260101-120000",
+            court_id="aaaaaaaa",
+        )
+        self.assertTrue(consignateur.ouvrir(), consignateur.erreur)
+        self.addCleanup(consignateur.fermer)
+        self.assertTrue(consignateur.enregistrer_audio(audio_transcrit(0, "a.wav")))
+        self.identifiant = Path(consignateur.dossier).name
+        self.run_json = Path(consignateur.dossier) / "run.json"
 
     def _lancer(self) -> subprocess.Popen[str]:
-        code = CODE_SERVEUR_SUPERVISE.format(
-            code=CODE_MOTEUR_PALIER_DESCENDANT.format(
-                dossier=str(self.paliers), descendant=CODE_DESCENDANT
-            )
-        )
         processus = subprocess.Popen(
-            [sys.executable, "-c", code, str(self.donnees), str(self.port)],
+            [sys.executable, "-c", CODE_SERVEUR, str(self.donnees), str(self.port)],
             cwd=paths.RACINE_PROJET,
             env={**os.environ, "PYTHONIOENCODING": "utf-8"},
             stdout=subprocess.PIPE,
@@ -987,103 +966,48 @@ class ServeurReelArreteTest(ResultatsTemporairesTest):
         return processus
 
     def _arreter(self, processus: subprocess.Popen[str]) -> None:
-        """Nettoyage de secours : serveur, moteur et descendant, même en échec.
-
-        Les PID sont relus dans les fichiers de palier : le test peut échouer
-        avant de les avoir consommés, et un moteur ou un descendant survivant
-        resterait sinon actif jusqu'à sa limite interne.
-        """
+        """Nettoyage de secours : le serveur est tué s'il survit à un échec."""
         if processus.poll() is None:
             processus.kill()
             processus.wait(timeout=DELAI)
-        for nom in ("moteur.pid", "descendant.pid"):
-            try:
-                pid = int((self.paliers / nom).read_text(encoding="utf-8").strip())
-            except (OSError, ValueError):
-                continue
-            try:
-                psutil.Process(pid).kill()
-            except psutil.Error:
-                continue
         for flux in (processus.stdout, processus.stderr):
             if flux is not None:
                 flux.close()
 
-    def _lancer_execution(self) -> tuple[int, int]:
-        """Lance une exécution par HTTP et renvoie (pid moteur, pid descendant)."""
-        statut, page = requete_get(self.port, "/executions")
-        self.assertEqual(statut, 200, page)
-        jeton = re.search(r'name="jeton_csrf" value="([^"]+)"', page)
-        self.assertIsNotNone(jeton, "jeton anti-CSRF absent de la page")
-        statut = requete_post(
-            self.port,
-            "/executions/lancer",
-            {
-                "modele": f"factice/{CLE_MODELE_FACTICE}",
-                "audios": "a.wav",
-                "threads": "2",
-                "jeton_csrf": jeton.group(1),
-            },
-        )
-        self.assertEqual(statut, 303)
-        attendre_fichier(self.paliers / "palier-1")
-        pid_moteur = lire_pid(self.paliers / "moteur.pid")
-        pid_descendant = lire_pid(self.paliers / "descendant.pid")
-        return pid_moteur, pid_descendant
-
-    def _scenario_arret(self, numero: int, sortie_attendue: int) -> None:
-        processus = self._lancer()
-        pid_moteur, pid_descendant = self._lancer_execution()
-        heure_moteur, heure_descendant = identite(pid_moteur), identite(pid_descendant)
-        self.assertIsNotNone(heure_moteur)
-        self.assertIsNotNone(heure_descendant)
-
+    def _arreter_par_signal(
+        self, processus: subprocess.Popen[str], numero: int
+    ) -> str:
         os.kill(processus.pid, numero)
-        sortie, erreur = processus.communicate(timeout=DELAI)
-
-        self.assertEqual(processus.returncode, sortie_attendue, erreur)
-        self.assertNotIn("Traceback", erreur)
-        self.assertIn("Interface disponible", sortie)
-        self.assertIn("Arrêt du serveur.", sortie)
-        attendre_disparition(pid_moteur, heure_moteur)
-        attendre_disparition(pid_descendant, heure_descendant)
-        self.assertVerrouLibre()
-
-        runs = sorted((self.donnees / "results").glob("*/run.json"))
-        self.assertEqual(len(runs), 1)
-        contenu = json.loads(runs[0].read_text(encoding="utf-8"))
-        self.assertEqual(contenu["etat"], "interrupted")
-        self.assertIsNotNone(contenu["fin"])
-
-    def test_sigint_arrete_le_serveur_le_moteur_et_son_descendant(self) -> None:
-        self._scenario_arret(signal.SIGINT, 0)
-
-    def test_sigterm_arrete_le_serveur_le_moteur_et_son_descendant(self) -> None:
-        self._scenario_arret(signal.SIGTERM, 0)
-
-    def test_second_signal_pendant_le_nettoyage_est_ignore(self) -> None:
-        """SIGINT puis SIGTERM : le second signal n'interrompt pas la clôture."""
-        processus = self._lancer()
-        pid_moteur, pid_descendant = self._lancer_execution()
-        heure_moteur, heure_descendant = identite(pid_moteur), identite(pid_descendant)
-        self.assertIsNotNone(heure_moteur)
-        self.assertIsNotNone(heure_descendant)
-
-        os.kill(processus.pid, signal.SIGINT)
-        # Le moteur est terminé par le nettoyage : le second signal arrive donc
-        # pendant la clôture. S'il venait après la sortie, il n'aurait plus de
-        # destinataire et le test resterait valable.
-        attendre_disparition(pid_moteur, heure_moteur, delai=10.0)
-        try:
-            os.kill(processus.pid, signal.SIGTERM)
-        except ProcessLookupError:
-            pass
-
         sortie, erreur = processus.communicate(timeout=DELAI)
         self.assertEqual(processus.returncode, 0, erreur)
         self.assertNotIn("Traceback", erreur)
         self.assertIn("Arrêt du serveur.", sortie)
-        attendre_disparition(pid_descendant, heure_descendant)
+        return sortie
+
+    def test_cycle_demarrage_arret_verrou_puis_redemarrage(self) -> None:
+        processus = self._lancer()
+
+        statut, page = requete_get(self.port, "/resultats")
+        self.assertEqual(statut, 200, page)
+        statut, page = requete_get(self.port, f"/resultats/{self.identifiant}")
+        self.assertEqual(statut, 200, page)
+        self.assertIn(self.identifiant, page)
+        # Récupération appliquée avant la consultation : l'exécution est clôturée.
+        contenu = json.loads(self.run_json.read_text(encoding="utf-8"))
+        self.assertEqual(contenu["etat"], "abandoned")
+        self.assertIsNotNone(contenu["fin"])
+        # Serveur et commandes mutuellement exclusifs : le verrou est tenu.
+        self.assertVerrouTenant()
+
+        sortie = self._arreter_par_signal(processus, signal.SIGINT)
+        self.assertIn("Interface disponible", sortie)
+        self.assertVerrouLibre()
+
+        # Redémarrage sans intervention sur le même dossier de données.
+        processus = self._lancer()
+        statut, _ = requete_get(self.port, "/resultats")
+        self.assertEqual(statut, 200)
+        self._arreter_par_signal(processus, signal.SIGTERM)
         self.assertVerrouLibre()
 
 

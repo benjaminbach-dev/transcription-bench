@@ -13,7 +13,6 @@ from tests.test_web import ADRESSE_LOCALE, PORT_TEST
 from transcription_bench.cli import COMMAND_SERVE
 from transcription_bench.command_session import CommandGroup
 from transcription_bench.commands import COMMANDS
-from transcription_bench.operations import CreneauOperations
 from transcription_bench.web import ConfigApplication, ServicesApplication, create_app
 
 RACINE = Path(__file__).resolve().parent.parent
@@ -24,8 +23,40 @@ DOSSIER_WEB = RACINE / "transcription_bench" / "web"
 #: Début de la note du guide sur le contexte de l'ordinateur (tâche 3.2).
 NOTE_CONTEXTE = "*Contexte de l'ordinateur.*"
 
-# Gras du guide qui n'est pas un libellé d'interface : aucune pour l'instant.
-LIBELLES_HORS_INTERFACE: frozenset[str] = frozenset()
+# Gras du guide qui ne sont plus des libellés d'interface : pages d'action
+# retirées du web (tâche 1.1 du change `alleger-interface-web`). La refonte
+# du guide reste à la tâche 3.1 ; ce contrôle ne couvre que ces libellés.
+LIBELLES_HORS_INTERFACE: frozenset[str] = frozenset(
+    {
+    'Ajouter un modèle',
+    'Appliquer les choix',
+    "Arrêter l'exécution",
+    'Aucun audio lisible',
+    'Aucun modèle exécutable',
+    "Consulter le journal d'installation",
+    'Exécutions',
+    'Identifiant Hugging Face',
+    'Installer ce moteur',
+    "Lancer l'exécution",
+    'Modèles',
+    'Modèles locaux prêts',
+    'Moteur installé',
+    'Moteurs',
+    'Opération longue',
+    'Plusieurs audios, dans cet ordre (facultatif)',
+    'Préparation appliquée',
+    "Préparation d'une exécution",
+    'Réglages avancés (facultatif)',
+    'Révision facultative',
+    'Supprimer ce modèle local',
+    'Taille à télécharger',
+    'Télécharger ce modèle à la révision vérifiée',
+    'Utiliser',
+    'Vérifier la compatibilité sans télécharger',
+    'Vérifier la demande (aucun lancement)',
+    'Vérifier un dépôt',
+    }
+)
 
 TERMES_INTERDITS = (
     "CSRF",
@@ -140,7 +171,7 @@ def help_text() -> str:
     with tempfile.TemporaryDirectory() as temporary:
         application = create_app(
             ConfigApplication(port=PORT_TEST, dossier_data=Path(temporary) / "data"),
-            ServicesApplication(creneau=CreneauOperations()),
+            ServicesApplication(),
         )
         response = application.test_client().get(
             "/resultats/aide", base_url=f"http://{ADRESSE_LOCALE}:{PORT_TEST}"

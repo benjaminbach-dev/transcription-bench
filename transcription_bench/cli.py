@@ -7,8 +7,10 @@ de travail, refus explicite si un état douteux subsiste), préparation des
 dossiers, création de l'application, puis service HTTP par la seule API publique
 `waitress.serve`.
 Les commandes (`audios list`, `data check`, …) partagent cette même session :
-verrou, récupération, préparation, services injectés (design D2/D3) ; le `--port`
-donné à la racine n'est accepté que pour `serve` et refusé sinon.
+verrou, récupération, préparation, services injectés (design D2/D3). Le serveur
+prend le même verrou et la même récupération, mais ne construit ni créneau
+d'opération ni supervision de moteur (change `alleger-interface-web`, D4). Le
+`--port` donné à la racine n'est accepté que pour `serve` et refusé sinon.
 Une seconde instance est donc refusée avant toute récupération et sans toucher
 aux données existantes. Un port occupé produit un message clair, un code de
 sortie non nul, sans trace, et le verrou est libéré.
@@ -18,17 +20,18 @@ reçoit `SIGINT` sur les deux OS et `SIGTERM` sous Linux ; dès le premier signa
 il ignore ces signaux puis lève `KeyboardInterrupt` ou `SystemExit`. Ces deux
 exceptions sont interceptées autour de l'appel public `waitress.serve` : le
 message « Arrêt du serveur. » est affiché et le code de sortie vient du
-nettoyage, pas de l'exception. Le nettoyage idempotent y passe le créneau à
-l'arrêt, termine et collecte le groupe du moteur d'exécution et le sous-processus
-d'installation, attend le thread d'opération, puis libère le verrou d'instance en
-dernier — seulement si ce thread est réellement terminé. Sinon, le journal
-signale « opération non close » et le verrou reste détenu jusqu'à la fin réelle
-du processus ; aucun thread Python n'est tué. Les gestionnaires de signaux ne
-sont rétablis qu'après ce nettoyage, et un signal reçu laisse `SIG_IGN` en place
-jusqu'à la sortie. Aucun nettoyage n'a lieu dans un `teardown_appcontext` ni dans
-un handler HTTP.
+nettoyage, pas de l'exception. Le serveur ne démarrant aucune opération, son
+nettoyage se réduit à la libération du verrou d'instance : il n'y a ni créneau,
+ni moteur, ni installation à arrêter (change `alleger-interface-web`, D4). Les
+commandes gardent leur nettoyage complet : arrêt du créneau, du moteur et de
+l'installation, puis libération du verrou d'instance en dernier, seulement si le
+thread d'opération est réellement terminé. Sinon, le journal signale « opération
+non close » et le verrou reste détenu jusqu'à la fin réelle du processus ; aucun
+thread Python n'est tué. Les gestionnaires de signaux ne sont rétablis qu'après
+ce nettoyage, et un signal reçu laisse `SIG_IGN` en place jusqu'à la sortie.
+Aucun nettoyage n'a lieu dans un `teardown_appcontext` ni dans un handler HTTP.
 
-Limites assumées : un téléchargement exécuté dans le processus serveur peut
+Limites assumées : un téléchargement exécuté dans une commande peut
 encore attendre ses E/S (aucun délai global de sortie garanti) ; les Ctrl+C
 suivants sont ignorés ; tuer le processus ou fermer la console relève de la
 récupération après arrêt brutal (tâche 6.5). Aucune relance du serveur dans le
@@ -55,7 +58,7 @@ from transcription_bench.command_session import (
     run_session,
 )
 from transcription_bench.commands import COMMANDS
-from transcription_bench.composition import SessionRefused, open_data_session
+from transcription_bench.composition import SessionRefused, open_serve_session
 from transcription_bench.output import add_json_option, configure_utf8_streams
 from transcription_bench.supervision import GestionnaireSignaux
 from transcription_bench.web import ConfigApplication, ServicesApplication, create_app
@@ -291,7 +294,7 @@ def main(
             recover=recuperer,
         )
     try:
-        session = open_data_session(dossier_data, recover=recuperer)
+        session = open_serve_session(dossier_data, recover=recuperer)
     except SessionRefused as erreur:
         _signaler(str(erreur))
         for diagnostic in erreur.diagnostics:
@@ -301,17 +304,9 @@ def main(
     gestionnaire: GestionnaireSignaux | None = None
     code = 0
     try:
-        services = session.services
         application = create_app(
             ConfigApplication(port=arguments.port, dossier_data=dossier_data),
-            ServicesApplication(
-                creneau=services.operations,
-                moteurs=services.engines,
-                modeles=services.models,
-                executions=services.preparation,
-                execution=services.execution,
-                resultats=services.results,
-            ),
+            ServicesApplication(resultats=session.results),
         )
         print(
             f"Interface disponible : http://{ADRESSE_ECOUTE}:{arguments.port}",

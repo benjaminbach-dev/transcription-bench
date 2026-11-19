@@ -1180,7 +1180,7 @@ class ClassementGroupesWebTest(SocleWebTest):
             [f"{IDENTIFIANT_QUATRIEME}:1", f"{IDENTIFIANT_TIERS}:1"],
         )
 
-    def test_tri_duplique_ou_inconnu_refuse_sans_operation(self) -> None:
+    def test_tri_duplique_ou_inconnu_refuse_sans_modification(self) -> None:
         self.ecrire_essai(IDENTIFIANT, mesures={"duree_transcription_s": 2.0})
         self.ecrire_essai(IDENTIFIANT_ANCIEN, mesures={"duree_transcription_s": 1.0})
         racine = self.dossier_data / "results"
@@ -1213,9 +1213,6 @@ class ClassementGroupesWebTest(SocleWebTest):
             },
             avant,
         )
-        instantane = self.creneau.instantane()
-        self.assertIsNone(instantane.type_operation)
-        self.assertEqual(instantane.journal, ())
 
     def test_boutons_de_tri_get_dans_le_formulaire_du_groupe(self) -> None:
         self.ecrire_essai(IDENTIFIANT, mesures={"duree_transcription_s": 2.0})
@@ -1606,7 +1603,7 @@ class ListeParResultatWebTest(SocleWebTest):
             IDENTIFIANT_QUATRIEME,
         ):
             self.assertIn(f'href="/resultats/{identifiant}"', historique)
-        historique = historique[historique.index("Historique complet") :]
+        historique = historique[historique.index('<h1 id="historique">') :]
         self.assertLess(
             historique.index(IDENTIFIANT_QUATRIEME), historique.index(IDENTIFIANT_TIERS)
         )

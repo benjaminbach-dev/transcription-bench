@@ -21,7 +21,6 @@ from __future__ import annotations
 import json
 import os
 import sys
-import html
 import tempfile
 import threading
 import time
@@ -59,8 +58,7 @@ from engines.runner import (
     VERSION_JOB as VERSION_JOB_RUNNER,
 )
 from tests.test_audios import ecrire_wav
-from tests.test_executions import declaration_avec_reglages, modele_prete
-from transcription_bench.audios import decoder_audio, lister_audios
+from transcription_bench.audios import decoder_audio
 from transcription_bench import execution_moteur as module_execution_moteur
 from transcription_bench.consultation_resultats import (
     CLE_OBSERVATION_AUDIO,
@@ -70,7 +68,6 @@ from transcription_bench.consultation_resultats import (
 from transcription_bench.execution_moteur import (
     ARRET_AUCUN,
     ARRET_DEMANDE,
-    ARRET_SURVIVANT,
     ETAT_ECHOUEE,
     ETAT_INTERROMPUE,
     ETAT_TERMINEE,
@@ -86,16 +83,14 @@ from transcription_bench.executions import (
     CLE_MODELE_FACTICE,
     FENETRE_FIXE_SECONDES,
     LIBELLE_MODELE_FACTICE,
-    ConfigurationExecutions,
     DemandeExecution,
 )
 from transcription_bench.moteurs import InstallationMoteurs
-from transcription_bench.paths import ValeurRefusee
+from transcription_bench.paths import NOM_DOSSIER_RESULTATS, ValeurRefusee
 from transcription_bench.operations import (
     ETAT_ECHOUEE as ETAT_CRENEAU_ECHOUEE,
     ETAT_EN_COURS,
     ETAT_INTERROMPUE as ETAT_CRENEAU_INTERROMPUE,
-    ETAT_LIBRE,
     TYPE_EXECUTION,
     TYPE_INSTALLATION,
     TYPE_TELECHARGEMENT,
@@ -105,7 +100,6 @@ from transcription_bench.operations import (
     ServiceArrete,
 )
 from transcription_bench.web import (
-    NOM_CHAMP_JETON,
     ConfigApplication,
     ServicesApplication,
     create_app,
@@ -2397,238 +2391,40 @@ class EvaluerIssueTest(unittest.TestCase):
 
 
 class RoutesExecutionTest(SocleExecutionTest):
-    """Routes de lancement et d'arrêt : jeton, 303 vers Exécutions, refus 4xx."""
+    """Routes d'exécution retirées de l'interface web : 404 ou 405, aucune action.
+
+    Le lancement et l'arrêt relèvent de la CLI (change `alleger-interface-web`,
+    tâche 1.1) : l'application web ne démarre ni n'arrête aucune exécution.
+    """
 
     def setUp(self) -> None:
         super().setUp()
-        self.ecrire_audio("a.wav")
-        self.audio_noms = tuple(audio.nom for audio in lister_audios(self.dossier_data))
-        self.demandes = ConfigurationExecutions(
-            self.dossier_data,
-            self.registre,
-            lambda: (),
-            lister=lister_audios,
-            compter_threads=lambda: 2,
-        )
         self.app = create_app(
             ConfigApplication(port=8765, dossier_data=self.dossier_data),
-            ServicesApplication(
-                creneau=self.creneau,
-                moteurs=self.moteurs,
-                executions=self.demandes,
-                execution=self.service,
-            ),
+            ServicesApplication(),
         )
         self.client = self.app.test_client()
-
-    def formulaire(self, **options: Any) -> dict[str, Any]:
-        donnees = {
-            "modele": f"factice/{CLE_MODELE_FACTICE}",
-            "audios": list(self.audio_noms),
-            "threads": "2",
-        }
-        donnees.update(options)
-        return donnees
 
     def base_url(self) -> str:
         return "http://127.0.0.1:8765"
 
-    def jeton(self) -> str:
-        return self.app.extensions[NOM_CHAMP_JETON]
+    def test_lancement_et_arret_par_post_repondent_404_sans_action(self) -> None:
+        for chemin in ("/executions/lancer", "/executions/arreter", "/executions/verifier"):
+            with self.subTest(chemin=chemin):
+                reponse = self.client.post(
+                    chemin,
+                    data={"modele": f"factice/{CLE_MODELE_FACTICE}", "audios": "a.wav"},
+                    base_url=self.base_url(),
+                )
 
-    def poster(self, chemin: str, **options: Any):
-        donnees = self.formulaire() if chemin.endswith("/lancer") else {}
-        donnees.update(options)
-        donnees["jeton_csrf"] = self.jeton()
-        return self.client.post(chemin, data=donnees, base_url=self.base_url())
+                self.assertEqual(reponse.status_code, 404)
+                self.assertFalse((self.dossier_data / NOM_DOSSIER_RESULTATS).exists())
 
-    def recreer_client(self) -> None:
-        """Recrée l'application avec le service courant, sans changer de créneau."""
-        self.app = create_app(
-            ConfigApplication(port=8765, dossier_data=self.dossier_data),
-            ServicesApplication(
-                creneau=self.creneau,
-                moteurs=self.moteurs,
-                executions=self.demandes,
-                execution=self.service,
-            ),
-        )
-        self.client = self.app.test_client()
+    def test_post_sur_l_historique_repond_405(self) -> None:
+        reponse = self.client.post("/executions", data={}, base_url=self.base_url())
 
-    def test_lancement_par_post_redirige_vers_executions(self) -> None:
-        page = self.client.get("/executions", base_url=self.base_url())
-        corps = page.get_data(as_text=True)
-        self.assertEqual(page.status_code, 200)
-        self.assertIn('action="/executions/lancer"', corps)
-        self.assertIn('formaction="/executions/verifier"', corps)
-        self.assertIn("Lancer l'exécution", corps)
-        self.assertIn("dossier de travail de l'exécution", corps)
-
-        reponse = self.poster("/executions/lancer")
-
-        self.assertEqual(reponse.status_code, 303)
-        self.assertEqual(reponse.headers["Location"], "/executions#operation")
-        self.assertNotIn("Set-Cookie", reponse.headers)
-        fil = self.creneau.thread_travailleur
-        self.assertIsNotNone(fil)
-        fil.join(DELAI)
-        self.assertFalse(fil.is_alive())
-        resultat = self.service.derniere_execution()
-        self.assertTerminee(resultat)
-        self.assertEqual(resultat.audios[0].nom, "a.wav")
-        page = self.client.get("/executions", base_url=self.base_url())
-        self.assertEqual(page.status_code, 200)
-        self.assertIn("Exécution terminée", page.get_data(as_text=True))
-        self.assertCacheNettoye()
-
-    def test_seconde_operation_refusee_pendant_l_execution(self) -> None:
-        self.service, paliers = self.service_a_paliers()
-        self.recreer_client()
-
-        self.assertEqual(self.poster("/executions/lancer").status_code, 303)
-        try:
-            attendre_fichier(paliers / "palier-1")
-            generation = self.creneau.instantane().generation
-            refusee = self.poster("/executions/lancer", threads="3")
-            self.assertEqual(refusee.status_code, 409)
-            corps = refusee.get_data(as_text=True)
-            self.assertIn('name="threads" value="3"', corps)
-            self.assertIn('data-preparation-lancement', corps)
-            self.assertEqual(self.creneau.instantane().generation, generation)
-            self.assertEqual(self.poster("/dossiers/verifier").status_code, 409)
-        finally:
-            self.liberer_paliers(paliers, 1)
-        self.creneau.thread_travailleur.join(DELAI)
-        self.assertEqual(self.service.derniere_execution().etat, ETAT_TERMINEE)
-        self.assertCacheNettoye()
-
-    def test_lancement_refuse_apres_passage_a_l_arret(self) -> None:
-        self.creneau.arreter(1.0)
-
-        reponse = self.poster("/executions/lancer")
-
-        self.assertEqual(reponse.status_code, 503)
-        self.assertIsNone(self.service.derniere_execution())
-        # La réservation refusée n'a laissé aucun état actif.
-        self.assertFalse(self.service.en_cours())
-
-    def test_lancement_revalide_la_demande(self) -> None:
-        reponse = self.poster(
-            "/executions/lancer", modele=f"factice/{'f' * 64}"
-        )
-
-        self.assertEqual(reponse.status_code, 400)
-        self.assertIsNone(self.creneau.thread_travailleur)
-        self.assertIsNone(self.service.derniere_execution())
-        self.assertFalse(self.service.en_cours())
-
-    def test_lancement_refuse_moteur_non_pret(self) -> None:
-        registre = creer_registre_fourni()
-        registre.enregistrer(declaration_avec_reglages())
-        moteurs = InstallationMoteurs(self.dossier_data, registre, self.creneau)
-        demandes = ConfigurationExecutions(
-            self.dossier_data,
-            registre,
-            lambda: (modele_prete(),),
-            lister=lister_audios,
-            compter_threads=lambda: 2,
-        )
-        service = ExecutionMoteur(
-            self.dossier_data,
-            registre,
-            moteurs,
-            interpreteur_serveur=sys.executable,
-        )
-        self.service = service
-        self.moteurs = moteurs
-        self.demandes = demandes
-        self.recreer_client()
-
-        reponse = self.client.post(
-            "/executions/lancer",
-            data={
-                "modele": f"moteur-de-test/{'a' * 64}",
-                "audios": list(self.audio_noms),
-                "threads": "2",
-                "jeton_csrf": self.jeton(),
-            },
-            base_url=self.base_url(),
-        )
-
-        self.assertEqual(reponse.status_code, 403)
-        corps = html.unescape(reponse.get_data(as_text=True))
-        # Message propre au moteur non prêt, pas la phrase du jeton ou de l'adresse.
-        self.assertIn("moteur demandé n'est pas prêt", corps)
-        self.assertNotIn("jeton invalide", corps.lower())
-        # Le jeton caché du formulaire restitué est légitime : les choix sont
-        # conservés malgré ce refus métier, sans le confondre avec un refus CSRF.
-        self.assertIn('data-preparation-lancement', corps)
-        self.assertIsNone(self.creneau.thread_travailleur)
-        self.assertIsNone(service.derniere_execution())
-        self.assertFalse(service.en_cours())
-
-    def test_arret_par_post_protege_termine_l_execution(self) -> None:
-        self.service, paliers = self.service_a_paliers()
-        self.recreer_client()
-
-        self.assertEqual(self.poster("/executions/lancer").status_code, 303)
-        try:
-            attendre_fichier(paliers / "palier-1")
-            page = self.client.get("/executions", base_url=self.base_url())
-            corps_operation = page.get_data(as_text=True)
-            self.assertIn('action="/executions/arreter"', corps_operation)
-            self.assertIn("Arrêter l'exécution", corps_operation)
-            sans_jeton = self.client.post(
-                "/executions/arreter",
-                data={"jeton_csrf": "jeton-invalide"},
-                base_url=self.base_url(),
-            )
-            self.assertEqual(sans_jeton.status_code, 403)
-            reponse = self.poster("/executions/arreter")
-            self.assertEqual(reponse.status_code, 303)
-            self.assertIn("action=arret-demande", reponse.headers["Location"])
-        finally:
-            self.liberer_paliers(paliers, 1)
-        self.creneau.thread_travailleur.join(DELAI)
-        resultat = self.service.derniere_execution()
-        self.assertEqual(resultat.etat, ETAT_INTERROMPUE)
-        self.assertEqual(self.creneau.instantane().etat, ETAT_CRENEAU_INTERROMPUE)
-        page = self.client.get(
-            "/executions?action=arret-demande", base_url=self.base_url()
-        )
-        corps = html.unescape(page.get_data(as_text=True))
-        self.assertIn("Arrêt de l'exécution demandé", corps)
-        # Seul le script local du squelette est présent : ni script incorporé
-        # ni fichier arbitraire.
-        self.assertEqual(corps.count("<script"), 1)
-        self.assertIn('<script src="/app.js" defer></script>', corps)
-        self.assertNotIn("<style", corps)
-        self.assertCacheNettoye()
-
-    def test_arret_non_abouti_signale_par_la_route(self) -> None:
-        """Un processus qui survit à `kill` ne doit pas être annoncé comme arrêté."""
-        with mock.patch.object(
-            self.service, "arreter_execution", return_value=ARRET_SURVIVANT
-        ):
-            reponse = self.poster("/executions/arreter")
-
-        self.assertEqual(reponse.status_code, 303)
-        self.assertIn("action=arret-incomplet", reponse.headers["Location"])
-        page = self.client.get(
-            "/executions?action=arret-incomplet", base_url=self.base_url()
-        )
-        corps = html.unescape(page.get_data(as_text=True))
-        self.assertIn("n'a pas pu être terminé", corps)
-
-    def test_aucune_operation_a_arreter(self) -> None:
-        reponse = self.poster("/executions/arreter")
-
-        self.assertEqual(reponse.status_code, 303)
-        self.assertEqual(reponse.headers["Location"], "/executions#operation")
-        self.assertEqual(self.creneau.instantane().etat, ETAT_LIBRE)
-        page = self.client.get("/executions", base_url=self.base_url())
-        corps = html.unescape(page.get_data(as_text=True))
-        self.assertNotIn("Arrêt de l'exécution demandé", corps)
+        self.assertEqual(reponse.status_code, 405)
+        self.assertFalse((self.dossier_data / NOM_DOSSIER_RESULTATS).exists())
 
 
 if __name__ == "__main__":

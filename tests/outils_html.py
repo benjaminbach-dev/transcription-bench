@@ -5,9 +5,9 @@ les pages sont réellement analysées (balises, attributs, `link`, script, ancre
 au lieu d'être fouillées par recherche de sous-chaînes, qui confondrait un texte
 affiché avec du balisage. Les pages ne portent aucun style et aucun autre `link`
 que les deux feuilles locales servies par l'application ; leur seul script
-admissible est le fichier local `/app.js`, chargé `defer` et sans contenu
-incorporé (design D6). Un script incorporé, un fichier arbitraire, une ressource
-distante ou un gestionnaire `on…` restent refusés.
+admissible : aucun script, pas même local (design D2 du change
+`alleger-interface-web`). Un script, un fichier arbitraire, une ressource
+distante ou un gestionnaire `on…` sont refusés.
 """
 
 from __future__ import annotations
@@ -16,10 +16,6 @@ from html.parser import HTMLParser
 
 ELEMENTS_INTERDITS = frozenset({"style", "iframe", "object", "img"})
 FEUILLES_ATTENDUES = ("/sumi.css", "/app.css")
-SCRIPT_ATTENDU = "/app.js"
-# Attributs exacts du seul script admis : fichier local connu, exécuté après
-# analyse (`defer`), sans autre option ni chargement conditionnel.
-ATTRIBUTS_SCRIPT = {"src": SCRIPT_ATTENDU, "defer": None}
 ATTRIBUTS_DE_LIEN = frozenset({"href", "src", "action", "formaction"})
 # Éléments sans contenu ni balise de fermeture : ils ne sont jamais empilés.
 ELEMENTS_VIDES = frozenset(
@@ -62,8 +58,7 @@ class PageHtml(HTMLParser):
         self.ancres: list[dict[str, object]] = []
         self.classes: set[str] = set()
         self.textes: dict[str, list[str]] = {tag: [] for tag in ELEMENTS_A_TEXTE}
-        # Un contenu par `<script>` : vide pour un script externe admissible,
-        # non vide dès qu'un script incorporé tente d'exécuter du code.
+        # Un contenu par `<script>` rencontré ; aucune page n'en admet.
         self.scripts_contenus: list[str] = []
         # Nombre de `<script>` ouverts sans balise de fermeture rencontrée.
         self.scripts_non_fermes = 0
@@ -221,47 +216,19 @@ def _page_sans_style(cas, corps: str) -> PageHtml:
     return page
 
 
-def assert_script_local(cas, page: PageHtml) -> None:
-    """Vérifie que le seul script éventuel est le fichier local `/app.js` en `defer`.
+def assert_aucun_script(cas, page: PageHtml) -> None:
+    """Vérifie qu'aucune balise `script` ne figure dans la page.
 
-    Refusés : script incorporé (contenu non vide), script resté ouvert (compté
-    par `scripts_non_fermes`, même si son texte final n'est pas capturé), fichier
-    arbitraire ou distant, attribut répété ou inattendu, script sans `defer`,
-    script auto-fermant et second script. La page peut n'avoir aucun script :
-    l'interface reste complète sans lui.
+    Une balise non fermée est comptée comme une balise : elle est refusée aussi.
     """
-    scripts = page.balises_de("script")
-    cas.assertLessEqual(len(scripts), 1, f"un seul script admis : {len(scripts)}")
-    if not scripts:
-        return
-    # Attributs lus dans l'ordre du document, doublons compris : un `dict`
-    # masquerait une seconde valeur (par exemple un `src` distant ajouté après
-    # le `src` local).
-    paires = [
-        (nom, valeur) for element, nom, valeur in page.attributs if element == "script"
-    ]
-    cas.assertEqual(
-        paires,
-        list(ATTRIBUTS_SCRIPT.items()),
-        "attributs exacts du seul script : /app.js local, chargé defer",
-    )
-    cas.assertEqual(
-        len(page.scripts_contenus),
-        len(scripts),
-        "script avec balise de fermeture explicite",
-    )
-    cas.assertEqual(page.scripts_non_fermes, 0, "aucun script laissé ouvert")
-    cas.assertTrue(
-        all(not contenu for contenu in page.scripts_contenus),
-        "script sans contenu incorporé",
-    )
+    cas.assertEqual(page.balises_de("script"), [], "aucun script admis")
 
 
 def assert_html_seul(cas, corps: str) -> PageHtml:
-    """Vérifie qu'une page est du HTML local, sans style et hors ligne.
+    """Vérifie qu'une page est du HTML local, sans style, sans script et hors ligne.
 
-    Autorisés : les deux feuilles locales `/sumi.css` puis `/app.css`, dans cet
-    ordre, le script local `/app.js` en `defer` et aucune autre ressource.
+    Autorisées : les deux feuilles locales `/sumi.css` puis `/app.css`, dans cet
+    ordre, et aucune autre ressource ni aucun script.
     """
     page = _page_sans_style(cas, corps)
 
@@ -270,5 +237,5 @@ def assert_html_seul(cas, corps: str) -> PageHtml:
         [("stylesheet", FEUILLES_ATTENDUES[0]), ("stylesheet", FEUILLES_ATTENDUES[1])],
         "les seuls éléments link doivent être /sumi.css puis /app.css",
     )
-    assert_script_local(cas, page)
+    assert_aucun_script(cas, page)
     return page

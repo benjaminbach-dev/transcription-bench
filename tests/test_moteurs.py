@@ -11,7 +11,6 @@ sont celles réellement lues ou restent absentes.
 from __future__ import annotations
 
 import hashlib
-import html
 import json
 import os
 import subprocess
@@ -37,7 +36,6 @@ from transcription_bench.moteurs import (
     InstallationIndisponible,
     InstallationMoteurs,
     ResultatCommande,
-    empreinte_fichier,
 )
 from transcription_bench.operations import (
     ETAT_ECHOUEE,
@@ -48,12 +46,6 @@ from transcription_bench.operations import (
 )
 from transcription_bench.paths import ValeurRefusee
 from transcription_bench.stockage import JsonInvalide, ecrire_json_atomique, lire_json
-from transcription_bench.web import (
-    NOM_CHAMP_JETON,
-    ConfigApplication,
-    ServicesApplication,
-    create_app,
-)
 
 PORT_TEST = 8765
 BASE_URL = f"http://127.0.0.1:{PORT_TEST}"
@@ -691,199 +683,6 @@ class ArretEtCheminsTest(SocleMoteurs):
             commande[-1],
             str((self.racine / "requirements" / "engine-test.txt").resolve()),
         )
-
-
-class PageMoteursWebTest(SocleMoteurs):
-    """Page des moteurs, journal et demandes d'installation via Flask."""
-
-    def application(self, service: InstallationMoteurs | None = None):
-        app = create_app(
-            ConfigApplication(port=PORT_TEST, dossier_data=self.donnees),
-            ServicesApplication(
-                creneau=self.creneau, moteurs=service or self.service()
-            ),
-        )
-        client = app.test_client()
-        jeton = app.extensions[NOM_CHAMP_JETON]
-
-        def get(chemin: str):
-            return client.get(chemin, base_url=BASE_URL)
-
-        def post(chemin: str, jeton_envoye: str | None = None):
-            return client.post(
-                chemin,
-                data={NOM_CHAMP_JETON: jeton if jeton_envoye is None else jeton_envoye},
-                base_url=BASE_URL,
-            )
-
-        return get, post
-
-    def test_page_moteurs_affiche_les_quatre_etats_et_le_formulaire(self) -> None:
-        factice = creer_registre_fourni().obtenir("factice")
-        self.registre = self.registre_avec(
-            declaration_test("engine-pret"),
-            declaration_test("engine-echec"),
-            declaration_test("engine-non-installe"),
-            declaration_test("engine-en-installation"),
-        )
-        self.registre.enregistrer(factice)
-        self.ecrire_marqueur("engine-pret")
-        self.dossier_moteur("engine-echec").mkdir(parents=True)
-
-        liberation = threading.Event()
-        self.addCleanup(liberation.set)
-        self.creneau.demarrer(
-            TYPE_INSTALLATION, lambda travailleur: liberation.wait(DELAI),
-            cible="engine-en-installation",
-        )
-
-        get, _ = self.application()
-        reponse = get("/moteurs")
-        corps = html.unescape(reponse.get_data(as_text=True))
-
-        self.assertEqual(reponse.status_code, 200)
-        for libelle in ("non installé", "installation en cours", "prêt", "échec"):
-            self.assertIn(libelle, corps)
-        self.assertIn("FACTICE", corps)
-        self.assertIn("sys (version non disponible)", corps)
-        self.assertIn(
-            f'name="{NOM_CHAMP_JETON}"', get("/moteurs").get_data(as_text=True)
-        )
-        self.assertIn('action="/moteurs/engine-non-installe/installer"', corps)
-        self.assertIn('action="/moteurs/engine-echec/installer"', corps)
-        self.assertNotIn('action="/moteurs/factice/installer"', corps)
-        self.assertIn('href="/moteurs/engine-pret/journal"', corps)
-        # Le squelette charge son unique script local ; aucun autre n'est écrit.
-        self.assertEqual(corps.count("<script"), 1)
-        self.assertIn('<script src="/app.js" defer></script>', corps)
-
-        self.creneau.arreter(0.05)
-        thread = self.creneau.thread_travailleur
-        liberation.set()
-        if thread is not None:
-            thread.join(DELAI)
-
-    def test_page_moteurs_sans_effet_de_bord(self) -> None:
-        get, _ = self.application()
-        reponse = get("/moteurs")
-
-        self.assertEqual(reponse.status_code, 200)
-        self.assertFalse(self.donnees.exists())
-
-    def test_marqueur_corrompu_donne_echec_et_page_200(self) -> None:
-        self.dossier_moteur().mkdir(parents=True)
-        self.marqueur().write_bytes(b"\xff\xfe{")
-        get, _ = self.application()
-
-        etat = self.etat(self.service())
-        self.assertEqual(etat.etat, ETAT_ECHEC)
-        self.assertIn("Marqueur illisible", etat.note or "")
-
-        reponse = get("/moteurs")
-        corps = html.unescape(reponse.get_data(as_text=True))
-
-        self.assertEqual(reponse.status_code, 200)
-        self.assertIn("Moteur de test engine-test", corps)
-        self.assertIn("échec", corps)
-
-    def test_journal_est_echappe(self) -> None:
-        self.journal().parent.mkdir(parents=True, exist_ok=True)
-        self.journal().write_text(
-            "2026-10-25 <script>alert(1)</script> & suite\n", encoding="utf-8"
-        )
-        get, _ = self.application()
-        reponse = get("/moteurs/engine-test/journal")
-        corps = reponse.get_data(as_text=True)
-
-        self.assertEqual(reponse.status_code, 200)
-        self.assertIn("&lt;script&gt;alert(1)&lt;/script&gt; &amp; suite", corps)
-        # Le contenu du journal n'est jamais du balisage actif ; le seul script
-        # de la page reste celui du squelette commun.
-        self.assertNotIn("<script>alert(1)</script>", corps)
-        self.assertEqual(corps.count("<script"), 1)
-        self.assertNotIn("style=", corps)
-
-    def test_post_installation_sans_jeton_refuse_sans_io(self) -> None:
-        app = create_app(
-            ConfigApplication(port=PORT_TEST, dossier_data=self.donnees),
-            ServicesApplication(creneau=self.creneau, moteurs=self.service()),
-        )
-        reponse = app.test_client().post(
-            "/moteurs/engine-test/installer", data={"x": "1"}, base_url=BASE_URL
-        )
-
-        self.assertEqual(reponse.status_code, 403)
-        self.assertEqual(self.creneau.instantane().etat, "libre")
-        self.assertFalse(self.donnees.exists())
-
-    def test_post_identifiant_inconnu_404_sans_io(self) -> None:
-        get, post = self.application()
-
-        reponse = post("/moteurs/inconnu/installer")
-
-        self.assertEqual(reponse.status_code, 404)
-        self.assertEqual(self.creneau.instantane().etat, "libre")
-        self.assertFalse(self.donnees.exists())
-
-    def test_post_factice_ou_verrou_absent_refuse_en_403(self) -> None:
-        self.registre = RegistreMoteurs()
-        self.registre.enregistrer(declaration_test("engine-sans-verrou"))
-        self.registre.enregistrer(creer_registre_fourni().obtenir("factice"))
-        get, post = self.application()
-
-        for identifiant in ("factice", "engine-sans-verrou"):
-            with self.subTest(identifiant=identifiant):
-                reponse = post(f"/moteurs/{identifiant}/installer")
-                self.assertEqual(reponse.status_code, 403)
-        self.assertEqual(self.creneau.instantane().etat, "libre")
-        self.assertFalse(self.donnees.exists())
-
-    def test_post_pendant_une_operation_refuse_en_409(self) -> None:
-        liberation = threading.Event()
-        self.addCleanup(liberation.set)
-        self.creneau.demarrer(
-            TYPE_INSTALLATION, lambda travailleur: liberation.wait(DELAI),
-            cible="engine-test",
-        )
-        get, post = self.application()
-
-        reponse = post("/moteurs/engine-test/installer")
-
-        self.assertEqual(reponse.status_code, 409)
-        self.assertFalse(self.marqueur().exists())
-        liberation.set()
-        thread = self.creneau.thread_travailleur
-        if thread is not None:
-            thread.join(DELAI)
-
-    def test_post_apres_arret_refuse_en_503(self) -> None:
-        self.creneau.arreter(0.05)
-        get, post = self.application()
-
-        reponse = post("/moteurs/engine-test/installer")
-
-        self.assertEqual(reponse.status_code, 503)
-        self.assertFalse(self.donnees.exists())
-
-    def test_installation_autorisee_redirige_et_devient_prete(self) -> None:
-        get, post = self.application()
-        page = get("/moteurs").get_data(as_text=True)
-        jeton = page.split(f'name="{NOM_CHAMP_JETON}" value="', 1)[1].split('"', 1)[0]
-
-        reponse = post("/moteurs/engine-test/installer", jeton_envoye=jeton)
-
-        self.assertEqual(reponse.status_code, 303)
-        self.assertEqual(reponse.headers["Location"], "/executions#operation")
-        thread = self.creneau.thread_travailleur
-        self.assertIsNotNone(thread)
-        thread.join(DELAI)
-        self.assertFalse(thread.is_alive())
-        self.assertTrue(self.marqueur().is_file())
-
-        corps = get("/moteurs").get_data(as_text=True)
-        self.assertIn("prêt", corps)
-        self.assertIn("Moteur de test engine-test", corps)
-        self.assertNotIn("installation en cours", corps)
 
 
 class InterpreteurMoteurTest(SocleMoteurs):

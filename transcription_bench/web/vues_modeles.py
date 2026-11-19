@@ -1,34 +1,14 @@
-"""Vues de la page Modèles (tâche 5.1 du change refonte du parcours de résultats).
+"""Format lisible des tailles de modèles, partagé par la CLI.
 
-Ce module ne lit aucun fichier et n'écrit rien : il transforme l'inventaire des
-modèles prêts et l'instantané du créneau en dictionnaires simples, attendus par
-`modeles.html`. Comme `vues_resultats`, il garde les valeurs brutes ; le gabarit
-applique le format de premier niveau.
-
-`reference` est la référence locale `<moteur>/<clé>` déjà acceptée en GET par
-`/executions` (design D4) : la page s'en sert pour l'action « Utiliser », sans
-nouvelle route ni jeton anti-CSRF, une référence locale n'étant pas un secret.
-
-`actif` marque le modèle que l'opération longue en cours désigne par son
-identifiant. Sa suppression est alors présentée comme indisponible dans le
-gabarit ; le service la refuse de toute façon pendant une opération, et la route
-POST le prouve pour une requête forgée. Aucune autre déduction n'est faite : un
-modèle non visé reste supprimable dès que le créneau est libre.
-
-Un modèle prêt n'a pas de nom convivial distinct de son identifiant : celui-ci
-est le nom affiché au premier niveau, et l'identifiant canonique résolu reste
-dans le détail avec la révision et les fichiers.
+La page Modèles a été retirée de l'interface web (change `alleger-interface-web`,
+tâche 1.1) : ce module ne porte plus que le formatage des tailles, utilisé par
+les commandes `models` de la CLI. Il ne lit aucun fichier et n'écrit rien.
 """
 
 from __future__ import annotations
 
 import math
-from collections.abc import Sequence
 from typing import Any
-
-from transcription_bench.executions import SEPARATEUR_REFERENCE_MODELE
-from transcription_bench.gestion_modeles import ModeleLocal
-from transcription_bench.operations import ETAT_EN_COURS, InstantaneCreneau
 
 #: Tailles de poids en unités binaires conventionnelles : 1 Mio = 2²⁰ octets.
 #: Les mesures de RAM gardent les unités SI décimales du design D2 ; ce sont
@@ -37,21 +17,6 @@ OCTETS_PAR_MIO = 1024**2
 OCTETS_PAR_GIO = 1024**3
 TAILLE_INCONNUE = "taille inconnue"
 TAILLE_INTERPRETABLE_ABSENTE = "indisponible"
-
-#: Motifs bornés de suppression indisponible, affichés près du bouton et liés
-#: à lui par `aria-describedby`. Le service refuse toute suppression pendant
-#: une opération ou après un arrêt : l'interface le signale pour chaque modèle
-#: visé ou non, au lieu de proposer un bouton qui échouerait en 409 ou 503.
-MOTIF_SUPPRESSION_ACTIF = (
-    "Ce modèle est visé par l'opération en cours : sa suppression reste "
-    "indisponible jusqu'à sa fin."
-)
-MOTIF_SUPPRESSION_OPERATION = (
-    "Opération en cours : toute suppression de modèle est suspendue jusqu'à sa fin."
-)
-MOTIF_SUPPRESSION_ARRET = (
-    "Arrêt du serveur demandé : aucune suppression n'est acceptée."
-)
 
 
 def formater_taille_modele(valeur: Any) -> str:
@@ -75,49 +40,6 @@ def formater_taille_modele(valeur: Any) -> str:
     if valeur < OCTETS_PAR_GIO:
         return _decimal(valeur, OCTETS_PAR_MIO, "Mio")
     return _decimal(valeur, OCTETS_PAR_GIO, "Gio")
-
-
-def vues_modeles_locaux(
-    inventaire: Sequence[ModeleLocal], instantane: InstantaneCreneau
-) -> tuple[dict[str, Any], ...]:
-    """Vues de l'inventaire, dans l'ordre du service, pour `modeles.html`.
-
-    Chaque vue porte le nom affiché, le moteur, la famille, la variante GGUF
-    éventuelle, la taille sur disque et la taille distante (brutes, formatées
-    par le gabarit), la référence de préparation, la révision, l'identifiant
-    complet, la date d'ajout, les fichiers retenus, l'état `actif` et le
-    `motif_suppression` (ou `None` quand la suppression est proposable).
-    """
-    en_cours = instantane.etat == ETAT_EN_COURS
-    if instantane.arrete:
-        motif = MOTIF_SUPPRESSION_ARRET
-    elif en_cours:
-        motif = MOTIF_SUPPRESSION_OPERATION
-    else:
-        motif = None
-    return tuple(
-        {
-            "identifiant": modele.identifiant,
-            "moteur": modele.moteur,
-            "famille": modele.famille,
-            "variante": modele.fichier_gguf,
-            "taille_disque": modele.taille_disque,
-            "taille_distante": modele.taille_distante,
-            "reference": f"{modele.moteur}{SEPARATEUR_REFERENCE_MODELE}{modele.cle}",
-            "cle": modele.cle,
-            "id_resolu": modele.id_resolu,
-            "commit": modele.commit,
-            "date": modele.date,
-            "fichiers": modele.fichiers,
-            "actif": en_cours and instantane.cible == modele.identifiant,
-            "motif_suppression": (
-                MOTIF_SUPPRESSION_ACTIF
-                if en_cours and instantane.cible == modele.identifiant
-                else motif
-            ),
-        }
-        for modele in inventaire
-    )
 
 
 def _decimal(nombre: int, unite: int, suffixe: str) -> str:

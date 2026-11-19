@@ -17,7 +17,7 @@
 {{ composants.groupe_resultats(groupe) }}
 {% endfor %}
 {% elif not erreur_dossier %}
-<p class="callout prose">Aucune transcription à regrouper par audio pour l'instant. Une exécution apparaît ici dès que la page Exécutions en a lancé une ; les résultats déjà produits restent consultables même si le modèle local est supprimé ensuite.</p>
+<p class="callout prose">Aucune transcription à regrouper par audio pour l'instant. Lancez une exécution avec la commande « run start » ; ses résultats apparaîtront ici.</p>
 {% endif %}
-<p class="prose small">L'<a href="{{ url_for('executions') }}#historique">historique complet des exécutions</a> est tenu dans Exécutions, y compris les échecs et les résultats non interprétables.</p>
+<p class="prose small">L'<a href="{{ url_for('executions') }}#historique">historique complet des exécutions</a> est tenu dans la page Historique, y compris les échecs et les résultats non interprétables.</p>
 {% endblock %}
