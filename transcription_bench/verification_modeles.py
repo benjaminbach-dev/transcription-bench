@@ -29,6 +29,11 @@ traduites en catégories fixes. Le jeton Hugging Face est lu par les mécanismes
 standards de la bibliothèque ; il n'est jamais demandé au formulaire, stocké,
 journalisé ni affiché.
 
+Pour llama.cpp, un dépôt à accès restreint est refusé avant toute lecture de
+fichier, même avec un jeton configuré : le drapeau `restreint` des métadonnées,
+ou un accès refusé par le client, produit alors le motif `depot-restreint`.
+Les moteurs de transcription ne sont pas concernés par ce refus.
+
 Le créneau unique d'opération longue est le point d'admission : la vérification
 est admise avant toute E/S, s'exécute dans un thread démon et occupe le créneau,
 ce qui interdit une exécution ou un téléchargement concurrent (design D3). Le
@@ -63,15 +68,19 @@ from engines.registre import RegistreMoteurs
 from transcription_bench.compatibilite_modeles import (
     FICHIERS_CONFIGURATION_INSPECTES,
     INDEX_SAFETENSORS,
+    MESSAGE_DEPOT_RESTREINT,
     RAISONS_REFUS,
+    RAISON_DEPOT_RESTREINT,
     RAISON_NOM_FICHIER_REFUSE,
     REGLE_CTRANSLATE2_WHISPER,
+    REGLE_LLAMA_CPP_GGUF,
     REGLE_TRANSFORMERS_SAFETENSORS,
     REGLE_TRANSCRIBE_CPP_GGUF,
+    REGLES_GGUF_A_CHOIX,
     ResultatCompatibilite,
     verifier_compatibilite,
-    fichiers_gguf,
     nom_fichier_relatif_valide,
+    variantes_gguf,
 )
 from transcription_bench.gguf import (
     OCTETS_MAX_ENTETE,
@@ -126,6 +135,7 @@ REGLES_VERIFIABLES = (
     REGLE_CTRANSLATE2_WHISPER,
     REGLE_TRANSFORMERS_SAFETENSORS,
     REGLE_TRANSCRIBE_CPP_GGUF,
+    REGLE_LLAMA_CPP_GGUF,
 )
 
 RAISONS_VERIFICATION = RAISONS_REFUS + (
@@ -258,10 +268,13 @@ class InfosModele:
     commit: str
     fichiers: tuple[FichierDistant, ...] = ()
     id_resolu: str | None = None
+    restreint: bool = False
 
     def __post_init__(self) -> None:
         if not isinstance(self.commit, str):
             raise ValueError("commit attendu sous forme de texte")
+        if not isinstance(self.restreint, bool):
+            raise ValueError("restreint attendu sous forme de booléen")
         if self.id_resolu is not None and (
             not isinstance(self.id_resolu, str) or not self.id_resolu
         ):
@@ -471,10 +484,14 @@ class ClientHuggingFace:
             ):
                 taille = None
             fichiers.append(FichierDistant(nom=nom, taille=taille))
+        # `gated` vaut False pour un dépôt ouvert, « auto » ou « manual » sinon ;
+        # il n'est lu qu'avec les métadonnées, donc quand un accès est accordé.
         return InfosModele(
             commit=commit if isinstance(commit, str) else "",
             fichiers=tuple(fichiers),
             id_resolu=id_resolu,
+            restreint=bool(getattr(info, "gated", False))
+            or bool(getattr(info, "private", False)),
         )
 
     def ouvrir_fichier(
@@ -577,9 +594,10 @@ class VerificationModeles:
         identifiant_valide = valider_identifiant_modele(identifiant)
         revision_valide = _valider_revision(revision)
         if fichier_gguf is not None:
-            if declaration.regle_compatibilite != REGLE_TRANSCRIBE_CPP_GGUF:
+            if declaration.regle_compatibilite not in REGLES_GGUF_A_CHOIX:
                 raise ValeurRefusee(
-                    "un fichier GGUF ne peut être choisi que pour transcribe.cpp"
+                    "un fichier GGUF ne peut être choisi que pour transcribe.cpp "
+                    "ou llama.cpp"
                 )
             if not isinstance(fichier_gguf, str) or not nom_fichier_relatif_valide(
                 fichier_gguf
@@ -638,7 +656,7 @@ class VerificationModeles:
                 MESSAGE_NOM_FICHIER_REFUSE,
             )
         regle = demande.declaration.regle_compatibilite
-        est_gguf = regle == REGLE_TRANSCRIBE_CPP_GGUF
+        est_gguf = regle in REGLES_GGUF_A_CHOIX
         contenus: dict[str, bytes] = {}
         if regle == REGLE_CTRANSLATE2_WHISPER:
             noms_json = ("config.json", "preprocessor_config.json")
@@ -677,6 +695,7 @@ class VerificationModeles:
             configurations=contenus,
             fichier_gguf=demande.fichier_gguf if est_gguf else None,
             lecteur_entete_gguf=lecteur,
+            depot_restreint=infos.restreint,
         )
         return self._resultat_compatibilite(
             demande,
@@ -723,7 +742,11 @@ class VerificationModeles:
             id_resolu=identifiant_lecture,
             fichiers=fichiers,
             taille_totale=total,
-            gguf_candidats=tuple(fichiers_gguf(noms)) if est_gguf else (),
+            gguf_candidats=(
+                variantes_gguf(demande.declaration.regle_compatibilite, noms)
+                if est_gguf
+                else ()
+            ),
             fichier_gguf=choisi,
             raison=compatibilite.raison,
             message=compatibilite.message,
@@ -781,6 +804,13 @@ class VerificationModeles:
     def _resultat_echec(
         self, demande: DemandeVerification, raison: str
     ) -> ResultatVerification:
+        message = MESSAGES_ERREUR[raison]
+        if (
+            raison == RAISON_ACCES_REFUSE
+            and demande.declaration.regle_compatibilite == REGLE_LLAMA_CPP_GGUF
+        ):
+            # llama.cpp n'accepte aucun dépôt fermé : un accès refusé en est un.
+            raison, message = RAISON_DEPOT_RESTREINT, MESSAGE_DEPOT_RESTREINT
         return ResultatVerification(
             accepte=False,
             identifiant=demande.identifiant,
@@ -792,7 +822,7 @@ class VerificationModeles:
             gguf_candidats=(),
             fichier_gguf=demande.fichier_gguf,
             raison=raison,
-            message=MESSAGES_ERREUR[raison],
+            message=message,
         )
 
     def _lire_json(

@@ -67,6 +67,14 @@ Règles implémentées ici, appelées par `DeclarationAdaptateur.regle_compatibi
   sans système de fichiers ; la lecture distante appartient à la tâche 5.3. Une
   architecture absente, illisible ou non déclarée par le moteur est refusée, et
   une architecture déclarée mais non qualifiée reste refusée comme en 5.1.
+- `llama-cpp-gguf` (llama.cpp) : même lecture de l'en-tête que transcribe.cpp
+  (`general.architecture` du seul fichier choisi, lecteur borné). L'architecture
+  doit figurer dans la liste blanche provisoire `ARCHITECTURES_LLAMA_CPP`, c'est-à-dire
+  disposer d'un format de conversation local. Les fichiers auxiliaires (`mmproj-*`,
+  `mtp-*`, architecture `clip`) ne sont jamais des variantes et sont refusés, comme
+  les dépôts à accès restreint (`depot_restreint`, même avec un jeton). Ces deux
+  refus ne valent que pour llama.cpp : les moteurs de transcription acceptent
+  toujours les dépôts restreints par le jeton standard.
 
 Restrictions fonctionnelles documentaires, non qualifiées ; les listes sont à
 confirmer au jalon PC :
@@ -129,6 +137,9 @@ from transcription_bench.gguf import CLE_ARCHITECTURE, EnteteGGUF, EnteteGGUFInv
 REGLE_CTRANSLATE2_WHISPER = "ctranslate2-whisper"
 REGLE_TRANSFORMERS_SAFETENSORS = "transformers-safetensors"
 REGLE_TRANSCRIBE_CPP_GGUF = "transcribe-cpp-gguf"
+REGLE_LLAMA_CPP_GGUF = "llama-cpp-gguf"
+#: Règles qui acceptent un choix de variante GGUF (`--file`).
+REGLES_GGUF_A_CHOIX = (REGLE_TRANSCRIBE_CPP_GGUF, REGLE_LLAMA_CPP_GGUF)
 
 #: Architectures GGUF transcribe.cpp (`general.architecture`) connues du
 #: programme, avec l'identifiant de famille déclaré par le moteur. Le GGUF réel
@@ -139,6 +150,32 @@ FAMILLES_PAR_ARCHITECTURE_GGUF = {
     "whisper": "whisper",
     "qwen3_asr": "qwen3-asr",
 }
+
+#: Famille déclarée par llama.cpp pour toutes ses architectures admises.
+FAMILLE_LLAMA_CPP = "llm-gguf"
+
+#: PROVISOIRE : architectures GGUF (`general.architecture`) admises pour llama.cpp,
+#: c'est-à-dire disposant d'un format de conversation maintenu localement (design
+#: D3 du change `ajouter-bench-extraction`). La liste sera figée seulement après la
+#: qualification Linux sur PC (tâche 6.2) ; toute autre architecture est refusée.
+#: Provenance, par métadonnées publiques seulement (aucun poids lu) :
+#: - `mistral3` : `gguf.architecture` de mistralai/Ministral-3-3B-Instruct-2512-GGUF
+#:   (API Hugging Face). Le 8B, même publication, n'a pas été relu directement ;
+#:   le registre llama.cpp (`LLM_ARCH_MISTRAL3`) confirme le nom.
+#: - `qwen35` : `gguf.architecture` de unsloth/Qwen3.5-4B-GGUF (API Hugging Face) ;
+#:   le 9B n'a pas été relu directement. Registre llama.cpp : `LLM_ARCH_QWEN35`.
+#: - `granite` : `gguf.architecture` de ibm-granite/granite-4.2-8b-GGUF (API Hugging
+#:   Face), cohérente avec `model_type` « granite » du config.json d'origine (dense).
+#: - `gemma4` : `gguf.architecture` de ggml-org/gemma-4-E4B-it-GGUF (API Hugging Face).
+#: Le nom d'architecture de chaque en-tête réel reste à confirmer en
+#: qualification (tâche 6.2).
+ARCHITECTURES_LLAMA_CPP: tuple[str, ...] = ("mistral3", "qwen35", "granite", "gemma4")
+
+#: Préfixes des fichiers auxiliaires refusés pour llama.cpp (projecteurs multimodaux
+#: `mmproj-*` et têtes de prédiction multi-token `mtp-*`), comparés au nom de base
+#: en minuscules. L'architecture `clip` d'un projecteur est refusée à part.
+PREFIXES_FICHIERS_AUXILIAIRES_LLAMA_CPP = ("mmproj-", "mtp-")
+ARCHITECTURE_PROJECTEUR_CLIP = "clip"
 
 RAISON_FICHIERS_MANQUANTS = "fichiers-manquants"
 RAISON_FAMILLE_HORS_PERIMETRE = "famille-hors-perimetre"
@@ -156,6 +193,17 @@ RAISON_FICHIER_GGUF_NON_CHOISI = "fichier-gguf-non-choisi"
 RAISON_EN_TETE_GGUF_NON_LU = "en-tete-gguf-non-lu"
 RAISON_EN_TETE_GGUF_ILLISIBLE = "en-tete-gguf-illisible"
 RAISON_ARCHITECTURE_GGUF_ABSENTE = "architecture-gguf-absente"
+RAISON_ARCHITECTURE_NON_ADMISE = "architecture-non-admise"
+RAISON_FICHIER_AUXILIAIRE = "fichier-auxiliaire"
+RAISON_DEPOT_RESTREINT = "depot-restreint"
+
+#: Message fixe du refus d'un dépôt restreint pour llama.cpp, partagé avec la
+#: vérification distante qui traduit un accès refusé par le client.
+MESSAGE_DEPOT_RESTREINT = (
+    "dépôt à accès restreint (privé, soumis à l'acceptation de conditions, "
+    "inaccessible ou inexistant) : llama.cpp n'accepte que les dépôts ouverts, "
+    "même avec un jeton configuré ; aucun fichier n'est lu ni téléchargé"
+)
 
 RAISONS_REFUS: tuple[str, ...] = (
     RAISON_FICHIERS_MANQUANTS,
@@ -174,6 +222,9 @@ RAISONS_REFUS: tuple[str, ...] = (
     RAISON_EN_TETE_GGUF_NON_LU,
     RAISON_EN_TETE_GGUF_ILLISIBLE,
     RAISON_ARCHITECTURE_GGUF_ABSENTE,
+    RAISON_ARCHITECTURE_NON_ADMISE,
+    RAISON_FICHIER_AUXILIAIRE,
+    RAISON_DEPOT_RESTREINT,
 )
 
 # faster-whisper / CTranslate2 (famille Whisper au premier jalon).
@@ -334,6 +385,7 @@ def verifier_compatibilite(
     declarations_connues: Sequence[DeclarationAdaptateur] | None = None,
     fichier_gguf: str | None = None,
     lecteur_entete_gguf: Callable[[str], EnteteGGUF] | None = None,
+    depot_restreint: bool = False,
 ) -> ResultatCompatibilite:
     """Vérifie un dépôt pour un moteur, sans réseau ni fichier de modèle.
 
@@ -350,7 +402,14 @@ def verifier_compatibilite(
     fichier retenu (typiquement `transcription_bench.gguf.lire_entete_gguf`
     appliqué à un flux de la tâche 5.3). Le lecteur n'est appelé qu'après
     validation du nom, et il n'est jamais appelé quand la liste de fichiers est
-    refusée. Ces deux paramètres sont refusés pour les autres règles.
+    refusée. Ces deux paramètres sont refusés pour les règles sans GGUF ; ils valent
+    aussi pour llama.cpp (`llama-cpp-gguf`), dont `fichier_gguf` désigne le modèle de
+    langue retenu parmi les variantes, auxiliaires exclus.
+
+    `depot_restreint` indique qu'un dépôt exige l'acceptation de conditions ou
+    reste privé. Il refuse llama.cpp avant toute lecture de fichier, même avec un
+    jeton configuré ; les moteurs de transcription l'ignorent (politique inchangée :
+    ils acceptent les dépôts restreints via le jeton standard).
 
     Lève `RegleCompatibiliteInconnue` si la déclaration utilise une règle non
     implémentée ici (moteur factice, autre), et `TypeError` si la déclaration ou
@@ -361,11 +420,13 @@ def verifier_compatibilite(
         raise TypeError("déclaration d'adaptateur attendue")
     if (
         fichier_gguf is not None or lecteur_entete_gguf is not None
-    ) and declaration.regle_compatibilite != REGLE_TRANSCRIBE_CPP_GGUF:
+    ) and declaration.regle_compatibilite not in REGLES_GGUF_A_CHOIX:
         raise TypeError(
-            "fichier_gguf et lecteur_entete_gguf ne concernent que la règle "
-            f"{REGLE_TRANSCRIBE_CPP_GGUF!r}, pas {declaration.regle_compatibilite!r}"
+            "fichier_gguf et lecteur_entete_gguf ne concernent que les règles "
+            f"{REGLES_GGUF_A_CHOIX!r}, pas {declaration.regle_compatibilite!r}"
         )
+    if not isinstance(depot_restreint, bool):
+        raise TypeError("depot_restreint attendu sous forme de booléen")
     connues = (
         declarations_fournies()
         if declarations_connues is None
@@ -395,6 +456,15 @@ def verifier_compatibilite(
                 connues,
                 fichier_gguf=fichier_gguf,
                 lecteur_entete_gguf=lecteur_entete_gguf,
+            )
+        elif declaration.regle_compatibilite == REGLE_LLAMA_CPP_GGUF:
+            famille_id, retenus = _regle_llama_cpp(
+                declaration,
+                noms,
+                connues,
+                fichier_gguf=fichier_gguf,
+                lecteur_entete_gguf=lecteur_entete_gguf,
+                depot_restreint=depot_restreint,
             )
         else:
             raise RegleCompatibiliteInconnue(
@@ -835,6 +905,107 @@ def _regle_transcribe_cpp(
             "autonome est prise en charge, aucun téléchargement de fragment "
             "n'est lancé et le modèle ne peut pas devenir prêt",
         )
+    architecture = _architecture_du_fichier_choisi(choisi, lecteur_entete_gguf)
+    famille_id = FAMILLES_PAR_ARCHITECTURE_GGUF.get(architecture)
+    if famille_id is None or not any(
+        famille.identifiant == famille_id for famille in declaration.familles
+    ):
+        moteur_suggere = _suggerer_moteur_pour_architecture(
+            architecture, declaration, connues
+        ) or _suggerer_moteur(famille_id or architecture, declaration, connues)
+        raise _Refus(
+            RAISON_FAMILLE_HORS_PERIMETRE,
+            f"architecture {architecture!r} extraite de l'en-tête de {choisi!r} "
+            f"non déclarée par le moteur {declaration.identifiant!r} : seules les "
+            "architectures vérifiées sont acceptées (Whisper et Qwen3-ASR ; "
+            "les autres architectures transcribe.cpp, notamment Parakeet, "
+            "restent non vérifiées et ne sont pas activées)"
+            + _mention_moteur_suggere(architecture, moteur_suggere),
+            famille=famille_id or architecture,
+            moteur_suggere=moteur_suggere,
+        )
+    return famille_id, (choisi,)
+
+
+def _regle_llama_cpp(
+    declaration: DeclarationAdaptateur,
+    noms: Sequence[str],
+    connues: Sequence[DeclarationAdaptateur],
+    *,
+    fichier_gguf: str | None,
+    lecteur_entete_gguf: Callable[[str], EnteteGGUF] | None,
+    depot_restreint: bool,
+) -> tuple[str, tuple[str, ...]]:
+    """GGUF llama.cpp : dépôt ouvert, modèle de langue de la liste blanche.
+
+    Le refus d'un dépôt restreint précède toute lecture de fichier. Les
+    auxiliaires sont refusés par leur nom, puis par leur architecture `clip` lue
+    dans l'en-tête du seul fichier retenu. Une architecture hors de la liste blanche
+    provisoire est refusée en nommant l'architecture lue.
+    """
+    if depot_restreint:
+        raise _Refus(RAISON_DEPOT_RESTREINT, MESSAGE_DEPOT_RESTREINT)
+    candidats = fichiers_gguf(noms)
+    if not candidats:
+        raise _Refus(
+            RAISON_FICHIER_GGUF_ABSENT,
+            "dépôt sans fichier .gguf : llama.cpp exige un modèle GGUF dont "
+            "l'architecture est lue dans l'en-tête",
+        )
+    if (
+        isinstance(fichier_gguf, str)
+        and _nom_relatif_valide(fichier_gguf)
+        and est_fichier_auxiliaire_llama_cpp(fichier_gguf)
+    ):
+        raise _Refus(
+            RAISON_FICHIER_AUXILIAIRE,
+            f"{fichier_gguf!r} est un fichier auxiliaire (projecteur multimodal ou "
+            "tête de prédiction multi-token) : llama.cpp ne retient que le modèle "
+            "de langue, à choisir parmi les autres GGUF du dépôt",
+        )
+    variantes = variantes_gguf(REGLE_LLAMA_CPP_GGUF, noms)
+    if not variantes:
+        raise _Refus(
+            RAISON_FICHIER_AUXILIAIRE,
+            "seuls des fichiers auxiliaires sont présents (projecteur multimodal ou "
+            "tête multi-token) : aucun modèle de langue n'est proposé ; fichiers : "
+            + ", ".join(candidats),
+        )
+    choisi = _choisir_fichier_gguf(variantes, fichier_gguf)
+    if est_fragment_gguf(choisi):
+        raise _Refus(
+            RAISON_FICHIER_GGUF_DECOUPE,
+            f"{choisi!r} est un fragment de GGUF découpé : une seule variante "
+            "autonome est prise en charge, aucun téléchargement de fragment "
+            "n'est lancé et le modèle ne peut pas devenir prêt",
+        )
+    architecture = _architecture_du_fichier_choisi(choisi, lecteur_entete_gguf)
+    if architecture == ARCHITECTURE_PROJECTEUR_CLIP:
+        raise _Refus(
+            RAISON_FICHIER_AUXILIAIRE,
+            f"{choisi!r} a l'architecture {ARCHITECTURE_PROJECTEUR_CLIP!r} : c'est un "
+            "projecteur multimodal, pas un modèle de langue",
+        )
+    if architecture not in ARCHITECTURES_LLAMA_CPP:
+        moteur_suggere = _suggerer_moteur_pour_architecture(
+            architecture, declaration, connues
+        )
+        raise _Refus(
+            RAISON_ARCHITECTURE_NON_ADMISE,
+            f"architecture {architecture!r} lue dans l'en-tête de {choisi!r} absente "
+            "de la liste blanche provisoire de llama.cpp "
+            f"({', '.join(ARCHITECTURES_LLAMA_CPP)}) : seules les architectures "
+            "disposant d'un format de conversation local sont admises"
+            + _mention_moteur_suggere(architecture, moteur_suggere),
+            moteur_suggere=moteur_suggere,
+        )
+    return FAMILLE_LLAMA_CPP, (choisi,)
+
+
+def _architecture_du_fichier_choisi(
+    choisi: str, lecteur_entete_gguf: Callable[[str], EnteteGGUF] | None
+) -> str:
+    """Architecture lue dans l'en-tête du seul fichier choisi, jamais déduite du nom."""
     if lecteur_entete_gguf is None:
         raise _Refus(
             RAISON_EN_TETE_GGUF_NON_LU,
@@ -851,30 +1022,48 @@ def _regle_transcribe_cpp(
         ) from None
     if not isinstance(entete, EnteteGGUF):
         raise TypeError("EnteteGGUF attendu du lecteur d'en-tête GGUF")
-    architecture = entete.architecture
-    if architecture is None:
+    if entete.architecture is None:
         raise _Refus(
             RAISON_ARCHITECTURE_GGUF_ABSENTE,
             f"en-tête de {choisi!r} sans {CLE_ARCHITECTURE} : la famille ne peut "
             "pas être vérifiée et le nom de fichier ne la prouve pas",
         )
-    famille_id = FAMILLES_PAR_ARCHITECTURE_GGUF.get(architecture)
-    if famille_id is None or not any(
-        famille.identifiant == famille_id for famille in declaration.familles
-    ):
-        raise _Refus(
-            RAISON_FAMILLE_HORS_PERIMETRE,
-            f"architecture {architecture!r} extraite de l'en-tête de {choisi!r} "
-            f"non déclarée par le moteur {declaration.identifiant!r} : seules les "
-            "architectures vérifiées sont acceptées (Whisper et Qwen3-ASR ; "
-            "les autres architectures transcribe.cpp, notamment Parakeet, "
-            "restent non vérifiées et ne sont pas activées)",
-            famille=famille_id or architecture,
-            moteur_suggere=_suggerer_moteur(
-                famille_id or architecture, declaration, connues
-            ),
+    return entete.architecture
+
+
+def est_fichier_auxiliaire_llama_cpp(nom: str) -> bool:
+    """Vrai si le nom de base désigne un projecteur ou une tête multi-token.
+
+    Contrôle de nom seul, insensible à la casse : il complète, sans le remplacer,
+    le refus par l'architecture `clip` lue dans l'en-tête.
+    """
+    return nom.rsplit("/", 1)[-1].lower().startswith(
+        PREFIXES_FICHIERS_AUXILIAIRES_LLAMA_CPP
+    )
+
+
+def variantes_gguf(regle: str, noms: Sequence[str]) -> tuple[str, ...]:
+    """Variantes GGUF proposables pour une règle, triées et dédoublonnées.
+
+    Pour llama.cpp, les auxiliaires ne sont jamais des variantes : ils ne sont ni
+    proposés au choix, ni retenus seuls. Pour transcribe.cpp, c'est `fichiers_gguf`.
+    """
+    variantes = fichiers_gguf(noms)
+    if regle == REGLE_LLAMA_CPP_GGUF:
+        return tuple(
+            nom for nom in variantes if not est_fichier_auxiliaire_llama_cpp(nom)
         )
-    return famille_id, (choisi,)
+    return variantes
+
+
+def _mention_moteur_suggere(architecture: str, moteur: str | None) -> str:
+    """Phrase d'indication vers le moteur qui accepte l'architecture, s'il existe."""
+    if moteur is None:
+        return ""
+    return (
+        f" ; le moteur {moteur!r} accepte l'architecture {architecture!r} : "
+        "choisissez-le pour ce dépôt"
+    )
 
 
 def _choisir_fichier_gguf(
@@ -936,5 +1125,32 @@ def _suggerer_transformers(
         if candidate.regle_compatibilite != REGLE_TRANSFORMERS_SAFETENSORS:
             continue
         if any(famille.identifiant == "whisper" for famille in candidate.familles):
+            return candidate.identifiant
+    return None
+
+
+def _suggerer_moteur_pour_architecture(
+    architecture: str,
+    declaration: DeclarationAdaptateur,
+    connues: Sequence[DeclarationAdaptateur],
+) -> str | None:
+    """Autre moteur dont la règle et la famille admettent cette architecture GGUF.
+
+    Indication seulement : le moteur suggré reste soumis à sa propre règle et
+    à sa qualification. Une architecture non listée ici ne suggère rien.
+    """
+    if architecture in ARCHITECTURES_LLAMA_CPP:
+        regle, famille = REGLE_LLAMA_CPP_GGUF, FAMILLE_LLAMA_CPP
+    elif architecture in FAMILLES_PAR_ARCHITECTURE_GGUF:
+        regle = REGLE_TRANSCRIBE_CPP_GGUF
+        famille = FAMILLES_PAR_ARCHITECTURE_GGUF[architecture]
+    else:
+        return None
+    for candidate in connues:
+        if candidate.identifiant == declaration.identifiant:
+            continue
+        if candidate.regle_compatibilite != regle:
+            continue
+        if any(f.identifiant == famille for f in candidate.familles):
             return candidate.identifiant
     return None

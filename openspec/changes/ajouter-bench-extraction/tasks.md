@@ -11,9 +11,9 @@
 
 ## 2. Moteurs et modèles
 
-- [ ] 2.1 Déclarations : champ de tâche (transcription/extraction) sur chaque moteur, moteur `llama-cpp` et famille `llm-gguf` avec réglages `contexte` et `sortie_max`, famille d'extraction du moteur factice ; refus croisés de tâche. Tests sans import moteur dans le serveur.
-- [ ] 2.2 Verrou `requirements/llama-cpp.in|txt` : llama-cpp-python 0.3.36 depuis l'index de roues CPU, verrou auto-porté, `--no-build`, contrôle d'import. Aucune installation réelle sur le serveur de développement ; la résolution du verrou n'est faite qu'avec l'accord du propriétaire et sans installer.
-- [ ] 2.3 Compatibilité llama.cpp (règles de `model-management`) : architecture lue par `gguf.py`, liste blanche provisoire limitée aux architectures dotées d'un format local, fichiers auxiliaires et dépôts restreints refusés, choix `--file`. Tests avec en-têtes GGUF synthétiques et réponses de vérification simulées.
+- [x] 2.1 Déclarations : champ de tâche (transcription/extraction) sur chaque moteur, moteur `llama-cpp` et famille `llm-gguf` avec réglages `contexte` et `sortie_max`, famille d'extraction du moteur factice ; refus croisés de tâche. Tests sans import moteur dans le serveur.
+- [x] 2.2 Verrou `requirements/llama-cpp.in|txt` : llama-cpp-python 0.3.36 depuis l'index de roues CPU, verrou auto-porté, `--no-build`, contrôle d'import. Aucune installation réelle sur le serveur de développement ; la résolution du verrou n'est faite qu'avec l'accord du propriétaire et sans installer. — verrou rédigé sur le serveur par consultation des métadonnées publiques (2026-11-19), non résolu ni vérifié : résolution et vérification réelles sur le PC de test lors de l'essai minimal (0.1), verrou résolu commité et drapeau `verrou_valide` repassé à `True` avant 6.1.
+- [x] 2.3 Compatibilité llama.cpp (règles de `model-management`) : architecture lue par `gguf.py`, liste blanche provisoire limitée aux architectures dotées d'un format local, fichiers auxiliaires et dépôts restreints refusés, choix `--file`. Tests avec en-têtes GGUF synthétiques et réponses de vérification simulées.
 
 ## 3. Exécution d'extraction
 
@@ -38,7 +38,7 @@
 
 ## 6. Qualification réelle (PC de test Linux déclaré, accord explicite requis)
 
-- [ ] 6.1 Installer `llama-cpp` depuis le verrou par le programme, sans compilation ; consigner OS, machine, versions, durée et taille de l'environnement.
+- [ ] 6.1 Installer `llama-cpp` depuis le verrou par le programme, sans compilation ; consigner OS, machine, versions, durée et taille de l'environnement. Préalable : verrou réellement résolu sur le PC (essai minimal 0.1) puis verrou résolu commité avec `verrou_valide=True`, sinon le programme refuse l'installation.
 - [ ] 6.2 Vérifier puis télécharger les six modèles candidats (environ 31 Go) ; consigner le commit de révision complet et l'architecture GGUF de chacun ; fixer la liste blanche définitive.
 - [ ] 6.3 Extraire avec la grille d'exemple les trois transcriptions des audios Gemini existants pour chaque modèle, threads 8 ; verdict par modèle (chargé, conforme, mesures), budget RAM mesuré par palier, hors ligne, arrêt par signal ; consigner sans extrapolation à d'autres machines.
 - [ ] 6.4 Vérification Windows : uniquement si le propriétaire autorise une extension de la CI ; sinon consigner la limite « non vérifié sous Windows ».

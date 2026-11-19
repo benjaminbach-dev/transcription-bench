@@ -34,10 +34,13 @@ from engines.declarations import (
 )
 from engines.registre import MoteurInconnu, RegistreMoteurs
 from transcription_bench.compatibilite_modeles import (
+    RAISON_DEPOT_RESTREINT,
     RAISON_FAMILLE_NON_QUALIFIEE,
+    RAISON_FICHIER_AUXILIAIRE,
     RAISON_FICHIER_GGUF_NON_CHOISI,
     RAISON_NOM_FICHIER_REFUSE,
     REGLE_CTRANSLATE2_WHISPER,
+    REGLE_LLAMA_CPP_GGUF,
     REGLE_TRANSFORMERS_SAFETENSORS,
     REGLE_TRANSCRIBE_CPP_GGUF,
 )
@@ -739,6 +742,178 @@ class GgufTest(BaseVerificationTest):
         assert resultat is not None
         self.assertEqual(resultat.famille, "whisper")
         self.assertEqual(resultat.gguf_candidats, ("modele-q8_0.gguf",))
+
+
+def declaration_llama_synthetique() -> DeclarationAdaptateur:
+    """Moteur llama.cpp synthétique qualifié : la liste blanche seule est testable."""
+    return declaration_synthetique(
+        identifiant="llama-test",
+        regle=REGLE_LLAMA_CPP_GGUF,
+        familles=("llm-gguf",),
+    )
+
+
+class LlamaCppVerificationTest(BaseVerificationTest):
+    def setUp(self) -> None:
+        super().setUp()
+        self.enregistrer(declaration_llama_synthetique())
+        self.enregistrer(
+            declaration_synthetique(
+                identifiant="transcribe-test", regle=REGLE_TRANSCRIBE_CPP_GGUF
+            )
+        )
+
+    def test_gguf_llm_accepte_avec_choix_sans_lire_les_poids(self) -> None:
+        entete = entete_gguf(("general.architecture", "string", "qwen35"))
+        contenu = entete + b"SENTINELLE-POIDS-" * 100_000
+        infos = InfosModele(
+            commit=COMMIT,
+            fichiers=(
+                FichierDistant("modele-f16.gguf", 100),
+                FichierDistant("modele-q8_0.gguf", len(contenu)),
+                FichierDistant("mmproj-modele-f16.gguf", 50),
+                FichierDistant("README.md", 5),
+            ),
+        )
+        faux = FauxClient(infos, {"modele-q8_0.gguf": contenu})
+        service = self.service(faux)
+        self.lancer_et_attendre(
+            service,
+            identifiant="org/modele",
+            moteur="llama-test",
+            fichier_gguf="modele-q8_0.gguf",
+        )
+        resultat = service.dernier_resultat()
+        assert resultat is not None
+        self.assertTrue(resultat.accepte, resultat.message)
+        self.assertEqual(resultat.famille, "llm-gguf")
+        self.assertEqual(resultat.fichier_gguf, "modele-q8_0.gguf")
+        self.assertEqual(
+            resultat.gguf_candidats, ("modele-f16.gguf", "modele-q8_0.gguf")
+        )
+        self.assertEqual([nom for _, _, nom in faux.ouvertures], ["modele-q8_0.gguf"])
+        self.assertEqual(sum(taille for _, taille in faux.lectures), len(entete))
+
+    def test_fichier_auxiliaire_choisi_refuse_sans_ouverture(self) -> None:
+        infos = InfosModele(
+            commit=COMMIT,
+            fichiers=(
+                FichierDistant("mmproj-modele-f16.gguf", 10),
+                FichierDistant("modele-q8_0.gguf", 20),
+            ),
+        )
+        faux = FauxClient(infos)
+        service = self.service(faux)
+        self.lancer_et_attendre(
+            service,
+            identifiant="org/modele",
+            moteur="llama-test",
+            fichier_gguf="mmproj-modele-f16.gguf",
+        )
+        self.assert_refus(service.dernier_resultat(), RAISON_FICHIER_AUXILIAIRE)
+        self.assertEqual(faux.ouvertures, [])
+
+    def test_plusieurs_gguf_sans_choix_ne_proposent_pas_le_projecteur(self) -> None:
+        infos = InfosModele(
+            commit=COMMIT,
+            fichiers=(
+                FichierDistant("mmproj-modele-f16.gguf", 10),
+                FichierDistant("modele-f16.gguf", 20),
+                FichierDistant("modele-q8_0.gguf", 30),
+            ),
+        )
+        faux = FauxClient(infos)
+        service = self.service(faux)
+        self.lancer_et_attendre(service, identifiant="org/modele", moteur="llama-test")
+        resultat = service.dernier_resultat()
+        self.assert_refus(resultat, RAISON_FICHIER_GGUF_NON_CHOISI)
+        assert resultat is not None
+        self.assertEqual(
+            resultat.gguf_candidats, ("modele-f16.gguf", "modele-q8_0.gguf")
+        )
+        self.assertEqual(faux.ouvertures, [])
+
+    def test_depot_restreint_avec_jeton_refuse_pour_llama_sans_lecture(self) -> None:
+        contenu = entete_gguf(("general.architecture", "string", "qwen35"))
+        infos = InfosModele(
+            commit=COMMIT,
+            fichiers=(FichierDistant("modele-q8_0.gguf", len(contenu)),),
+            restreint=True,
+        )
+        faux = FauxClient(infos, {"modele-q8_0.gguf": contenu})
+        service = self.service(faux)
+        self.lancer_et_attendre(
+            service,
+            identifiant="org/modele",
+            moteur="llama-test",
+            fichier_gguf="modele-q8_0.gguf",
+        )
+        resultat = service.dernier_resultat()
+        self.assert_refus(resultat, RAISON_DEPOT_RESTREINT)
+        assert resultat is not None
+        self.assertIn("jeton", resultat.message)
+        self.assertEqual(faux.ouvertures, [])
+        self.assertEqual(faux.lectures, [])
+
+    def test_depot_restreint_reste_accepte_pour_transcribe_cpp(self) -> None:
+        contenu = entete_gguf(("general.architecture", "string", "whisper"))
+        infos = InfosModele(
+            commit=COMMIT,
+            fichiers=(FichierDistant("modele-q8_0.gguf", len(contenu)),),
+            restreint=True,
+        )
+        faux = FauxClient(infos, {"modele-q8_0.gguf": contenu})
+        service = self.service(faux)
+        self.lancer_et_attendre(
+            service,
+            identifiant="org/modele",
+            moteur="transcribe-test",
+            fichier_gguf="modele-q8_0.gguf",
+        )
+        resultat = service.dernier_resultat()
+        assert resultat is not None
+        self.assertTrue(resultat.accepte, resultat.message)
+        self.assertEqual(resultat.fichier_gguf, "modele-q8_0.gguf")
+
+    def test_acces_refuse_devient_depot_restreint_pour_llama_seulement(self) -> None:
+        faux = FauxClient(erreur_infos=ErreurClientModeles(RAISON_ACCES_REFUSE))
+        service = self.service(faux)
+        self.lancer_et_attendre(service, identifiant="org/modele", moteur="llama-test")
+        self.assert_refus(service.dernier_resultat(), RAISON_DEPOT_RESTREINT)
+
+        faux = FauxClient(erreur_infos=ErreurClientModeles(RAISON_ACCES_REFUSE))
+        service = self.service(faux)
+        self.lancer_et_attendre(
+            service, identifiant="org/modele", moteur="transcribe-test"
+        )
+        self.assert_refus(service.dernier_resultat(), RAISON_ACCES_REFUSE)
+
+
+class ClientRestreintTest(unittest.TestCase):
+    def test_gated_ou_prive_des_metadonnees_alimente_le_drapeau_restreint(self) -> None:
+        # Lecture sans réseau : seule la réponse `model_info` est simulée.
+        # Un dépôt privé accessible avec jeton reste refusé pour llama.cpp
+        # (`restreint`), comme un dépôt soumis à des conditions.
+        cas = (
+            ("auto", False, True),
+            ("manual", False, True),
+            (False, False, False),
+            (None, False, False),
+            (False, True, True),
+        )
+        for gated, private, attendu in cas:
+            with self.subTest(gated=gated, private=private):
+                info = SimpleNamespace(
+                    id="org/modele",
+                    sha=COMMIT,
+                    siblings=[],
+                    gated=gated,
+                    private=private,
+                )
+                client = ClientHuggingFace.__new__(ClientHuggingFace)
+                client._api = SimpleNamespace(model_info=lambda *args, **kwargs: info)
+                infos = client.informations("org/modele", None)
+                self.assertIs(infos.restreint, attendu)
 
 
 class ArretEtPublicationTest(BaseVerificationTest):

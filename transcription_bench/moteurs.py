@@ -50,7 +50,7 @@ import subprocess
 import sys
 import threading
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from engines.declarations import DeclarationAdaptateur
@@ -101,6 +101,14 @@ SUFFIXE_JOURNAL = ".installation.log"
 DELAI_CONTROLE_IMPORT = 120.0
 DELAI_SONDAGE_INTERPRETEUR = 30.0
 
+# Motif d'un moteur dont le verrou n'est pas encore résolu ni vérifié sur PC
+# (`verrou_valide=False`). Ce n'est pas le jalon 0 : ce jalon ne concerne que les
+# moteurs de transcription déjà validés.
+MOTIF_VERROU_NON_VERIFIE = (
+    "Verrou de dépendances non résolu ni vérifié : installation refusée sur tout "
+    "poste tant que le verrou n'a pas été résolu et vérifié sur un PC de test."
+)
+
 CODE_PREFIXE_INTERPRETEUR = "import sys\nprint(sys.prefix)"
 DELAI_ARRET_PROCESSUS = 5.0
 
@@ -143,7 +151,8 @@ class EtatMoteur:
     `versions` contient des couples (module, version ou `None`) : aucune version
     n'est inventée, et l'absence de métadonnée de distribution reste affichée
     comme telle. `installable` indique seulement qu'une installation explicite
-    peut être demandée depuis l'interface.
+    peut être demandée depuis l'interface. `tasks` reprend les tâches déclarées
+    par le moteur (`transcription`, `extraction`).
     """
 
     identifiant: str
@@ -154,6 +163,7 @@ class EtatMoteur:
     note: str | None = None
     date_installation: str | None = None
     versions: tuple[tuple[str, str | None], ...] = ()
+    tasks: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -356,7 +366,10 @@ class InstallationMoteurs:
             else None
         )
         return tuple(
-            self._etat_moteur(declaration, cible_installation)
+            replace(
+                self._etat_moteur(declaration, cible_installation),
+                tasks=declaration.tasks,
+            )
             for declaration in self._registre.lister()
         )
 
@@ -376,6 +389,8 @@ class InstallationMoteurs:
             raise InstallationIndisponible(
                 "moteur factice : aucune installation n'est nécessaire ni possible"
             )
+        if not declaration.verrou_valide:
+            raise InstallationIndisponible(MOTIF_VERROU_NON_VERIFIE)
         verrou = self.chemin_verrou(declaration)
         if not verrou.is_file():
             raise InstallationIndisponible(
@@ -549,6 +564,14 @@ class InstallationMoteurs:
                     "inférence réelle. Textes et mesures sont simulés et ne "
                     "représentent aucun PC."
                 ),
+            )
+        if not declaration.verrou_valide:
+            return EtatMoteur(
+                identifiant=identifiant,
+                nom=declaration.nom,
+                etat=ETAT_NON_INSTALLE,
+                installable=False,
+                note=MOTIF_VERROU_NON_VERIFIE,
             )
         try:
             verrou = self.chemin_verrou(declaration)

@@ -1,0 +1,41 @@
+# Verrou de llama-cpp-python 0.3.36 (moteur llama.cpp, extraction).
+#
+# STATUT : VERROU NON RÉSOLU NI VÉRIFIÉ.
+# Rédigé sur le serveur de développement le 2026-11-19 par consultation des
+# métadonnées publiques seulement : PyPI JSON de llama-cpp-python 0.3.36 et de
+# chacune de ses dépendances d'exécution, page plate de l'index abetlen. Aucune
+# résolution par uv, aucune installation, aucun téléchargement de roue ni de
+# distribution n'ont été faits. Les versions ci-dessous sont les plus récentes
+# stables satisfaisant les contraintes lues ; elles restent à confirmer.
+#
+# La résolution et la vérification réelles (roues CPU Linux x64 et Windows x64,
+# installation sans compilation, contrôle d'import de llama_cpp) sont réservées
+# au PC de test, avec l'accord explicite du propriétaire (tâches 0.1 et 6.1 du
+# change ajouter-bench-extraction). Ne pas installer ce verrou ailleurs.
+#
+# Commande de résolution recommandée, à confirmer et à exécuter sur le PC de test
+# seulement :
+#    uv pip compile --universal --python-version 3.12 --no-build --emit-index-url --emit-find-links --find-links https://abetlen.github.io/llama-cpp-python/whl/cpu/llama-cpp-python/ -o requirements/llama-cpp.txt requirements/llama-cpp.in
+#
+# Les épingles sont celles de requirements/llama-cpp.in et des dépendances
+# d'exécution de llama-cpp-python 0.3.36 (extras test, server, dev et all écartés).
+# À remplacer par le verrou réellement résolu sur le PC de test (commande
+# ci-dessus), puis à régénérer après toute modification du .in.
+
+--index-url https://pypi.org/simple
+--find-links https://abetlen.github.io/llama-cpp-python/whl/cpu/llama-cpp-python/
+
+diskcache==5.6.3
+    # via llama-cpp-python
+jinja2==3.1.6
+    # via llama-cpp-python
+llama-cpp-python==0.3.36
+    # via -r requirements/llama-cpp.in
+markupsafe==3.0.4
+    # via jinja2
+numpy==2.5.5
+    # via llama-cpp-python
+psutil==7.2.2
+    # via -r requirements/llama-cpp.in
+typing-extensions==4.16.0
+    # via llama-cpp-python

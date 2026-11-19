@@ -73,6 +73,7 @@ from transcription_bench import (
 )
 from transcription_bench.executions import (
     CLE_MODELE_FACTICE,
+    CLE_MODELE_FACTICE_EXTRACTION,
     LIBELLE_MODELE_FACTICE,
     threads_par_defaut,
 )
@@ -126,6 +127,7 @@ AUDIO_ENTRY_KEYS = ["nom", "format", "taille_octets", "duree_indicative", "erreu
 ENGINE_STATE_KEYS = [
     "identifiant",
     "nom",
+    "tasks",
     "etat",
     "factice",
     "installable",
@@ -819,14 +821,21 @@ class EnginesListTest(CommandTestCase):
         states = {state["identifiant"]: state for state in data["engines"]}
         self.assertEqual(
             [state["identifiant"] for state in data["engines"]],
-            ["faster-whisper", "transcribe-cpp", "transformers", "factice"],
+            ["faster-whisper", "transcribe-cpp", "transformers", "llama-cpp", "factice"],
         )
+        # Tâche déclarée par moteur ; le moteur factice en porte deux.
+        self.assertEqual(states["faster-whisper"]["tasks"], ["transcription"])
+        self.assertEqual(states["llama-cpp"]["tasks"], ["extraction"])
+        self.assertEqual(states["factice"]["tasks"], ["transcription", "extraction"])
         # Trois états du service dans un même scénario : échec (journal sans
         # environnement), non installé, prêt (moteur factice signalé).
         self.assertEqual(states["faster-whisper"]["etat"], "echec")
         self.assertIn("réinstallation", states["faster-whisper"]["note"])
         self.assertEqual(states["transcribe-cpp"]["etat"], "non-installe")
         self.assertEqual(states["transformers"]["etat"], "non-installe")
+        # Le moteur d'extraction est déclaré, mais non installé.
+        self.assertEqual(states["llama-cpp"]["etat"], "non-installe")
+        self.assertFalse(states["llama-cpp"]["installable"])
         fake_state = states["factice"]
         self.assertEqual(list(fake_state.keys()), ENGINE_STATE_KEYS)
         self.assertEqual(fake_state["etat"], "pret")
@@ -844,8 +853,16 @@ class EnginesListTest(CommandTestCase):
 
         self.assertEqual(code, 0)
         self.assertEqual(stderr, "")
-        for identifiant in ("faster-whisper", "transcribe-cpp", "transformers", "factice"):
+        for identifiant in (
+            "faster-whisper",
+            "transcribe-cpp",
+            "transformers",
+            "llama-cpp",
+            "factice",
+        ):
             self.assertIn(identifiant, stdout)
+        self.assertIn("llama.cpp (GGUF) — extraction — non installé", stdout)
+        self.assertIn("factice : Moteur factice (développement) — transcription, extraction — prêt", stdout)
         self.assertIn("échec", stdout)
         self.assertIn("non installé", stdout)
         self.assertIn("prêt", stdout)
@@ -1833,9 +1850,10 @@ class RunOptionsTest(CommandTestCase):
                 f"{self.FW_ENGINE}/{fw_key}",
                 f"{self.TD_ENGINE}/{td_key}",
                 f"factice/{CLE_MODELE_FACTICE}",
+                f"factice/{CLE_MODELE_FACTICE_EXTRACTION}",
             ],
         )
-        fw_model, td_model, synthetic_model = data["models"]
+        fw_model, td_model, synthetic_model, extraction_model = data["models"]
         self.assertEqual(list(fw_model.keys()), MODEL_OPTION_KEYS)
         self.assertTrue(fw_model["executable"])
         self.assertIsNone(fw_model["motif_non_executable"])
@@ -1857,6 +1875,11 @@ class RunOptionsTest(CommandTestCase):
         self.assertEqual(synthetic_model["identifiant"], LIBELLE_MODELE_FACTICE)
         self.assertEqual(synthetic_model["commit"], "aucun")
         self.assertTrue(synthetic_model["executable"])
+        # Modèle synthétique d'extraction : affiché, non exécutable en transcription.
+        self.assertEqual(extraction_model["famille"], "factice-extraction")
+        self.assertTrue(extraction_model["synthetique"])
+        self.assertFalse(extraction_model["executable"])
+        self.assertIn("extraction", extraction_model["motif_non_executable"])
         # Seuls les audios lisibles sont proposables : b.wav illisible est exclu.
         self.assertEqual(len(data["audios"]), 1)
         self.assertEqual(list(data["audios"][0].keys()), AUDIO_ENTRY_KEYS)
@@ -2942,6 +2965,25 @@ class RunStartTest(RunCommandTest):
 
         self.assertEqual((code, stdout), (CODE_REFUS, ""))
         self.assertIn("plusieurs fois : modele", stderr)
+        self.assert_no_execution_written()
+        self.assert_unlocked()
+
+    def test_extraction_model_is_refused_for_a_transcription_run(self) -> None:
+        # Scénario « Tâche respectée » (engine-management) : un modèle
+        # d'extraction proposé à une exécution de transcription est refusé
+        # avec le code 2 et le motif croisé nommant les deux tâches.
+        self.write_audios("a.wav")
+
+        code, stdout, stderr = self.run_command(
+            [
+                "run", "start", "--model", f"factice/{CLE_MODELE_FACTICE_EXTRACTION}",
+                "--audio", "a.wav", "--json",
+            ]
+        )
+
+        self.assertEqual((code, stdout), (CODE_REFUS, ""))
+        self.assertIn("destinée à la tâche 'extraction'", stderr)
+        self.assertIn("non à la tâche 'transcription'", stderr)
         self.assert_no_execution_written()
         self.assert_unlocked()
 

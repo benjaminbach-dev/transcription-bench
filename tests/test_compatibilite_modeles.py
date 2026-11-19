@@ -22,6 +22,7 @@ import unittest
 from engines.declarations import (
     DECLARATION_FACTICE,
     DECLARATION_FASTER_WHISPER,
+    DECLARATION_LLAMA_CPP,
     DECLARATION_TRANSCRIBE_CPP,
     DECLARATION_TRANSFORMERS,
     DeclarationAdaptateur,
@@ -29,7 +30,11 @@ from engines.declarations import (
     declarations_fournies,
 )
 from transcription_bench.compatibilite_modeles import (
+    ARCHITECTURES_LLAMA_CPP,
     RAISON_ARCHITECTURE_GGUF_ABSENTE,
+    RAISON_ARCHITECTURE_NON_ADMISE,
+    RAISON_DEPOT_RESTREINT,
+    RAISON_FICHIER_AUXILIAIRE,
     RAISON_CODE_DISTANT,
     RAISON_CONFIGURATION_ILLISIBLE,
     RAISON_CONFIGURATION_NON_INSPECTEE,
@@ -48,6 +53,7 @@ from transcription_bench.compatibilite_modeles import (
     PROFONDEUR_MAX_INSPECTION,
     RAISONS_REFUS,
     REGLE_CTRANSLATE2_WHISPER,
+    REGLE_LLAMA_CPP_GGUF,
     REGLE_TRANSCRIBE_CPP_GGUF,
     REGLE_TRANSFORMERS_SAFETENSORS,
     RegleCompatibiliteInconnue,
@@ -55,6 +61,7 @@ from transcription_bench.compatibilite_modeles import (
     ResultatCompatibiliteInvalide,
     fichiers_gguf,
     est_fragment_gguf,
+    variantes_gguf,
     verifier_compatibilite,
 )
 from transcription_bench.gguf import lire_entete_gguf
@@ -66,6 +73,7 @@ PAQUETS_INTERDITS = (
     "ctranslate2",
     "faster_whisper",
     "huggingface_hub",
+    "llama_cpp",
     "numpy",
     "torch",
     "transformers",
@@ -1138,6 +1146,258 @@ class TranscribeCppCompatibiliteTest(AssertionsCompatibilite):
             )
 
 
+# Dépôt llama.cpp simulé : deux quantifications d'un modèle de langue, un
+# projecteur multimodal `mmproj-*` et un README. Aucun poids n'est lu.
+FICHIERS_LLAMA = (
+    ".gitattributes",
+    "README.md",
+    "config.json",
+    "mmproj-modele-f16.gguf",
+    "modele-f16.gguf",
+    "modele-q8_0.gguf",
+)
+
+
+class LlamaCppCompatibiliteTest(AssertionsCompatibilite):
+    def setUp(self) -> None:
+        # Déclaration synthétique qualifiée : les chemins de succès passent par
+        # la liste blanche, sans dépendre de la qualification PC (tâche 6.2).
+        self.declaration = declaration_synthetique(
+            identifiant="llama-cpp",
+            regle=REGLE_LLAMA_CPP_GGUF,
+            familles=("llm-gguf",),
+        )
+
+    def test_architectures_admises_acceptees_avec_fichier_choisi(self) -> None:
+        for architecture in ARCHITECTURES_LLAMA_CPP:
+            with self.subTest(architecture=architecture):
+                journal: list[str] = []
+                resultat = verifier_compatibilite(
+                    self.declaration,
+                    FICHIERS_LLAMA,
+                    fichier_gguf="modele-q8_0.gguf",
+                    lecteur_entete_gguf=lecteur_gguf_de(
+                        octets_gguf(architecture), journal
+                    ),
+                )
+                self.assertAccepte(resultat, "llm-gguf")
+                self.assertEqual(resultat.fichiers, ("modele-q8_0.gguf",))
+                self.assertEqual(journal, ["modele-q8_0.gguf"])
+
+    def test_liste_blanche_provisoire_sans_clip_ni_qwen3(self) -> None:
+        self.assertEqual(
+            ARCHITECTURES_LLAMA_CPP, ("mistral3", "qwen35", "granite", "gemma4")
+        )
+        self.assertNotIn("clip", ARCHITECTURES_LLAMA_CPP)
+        self.assertNotIn("qwen3", ARCHITECTURES_LLAMA_CPP)
+
+    def test_plusieurs_gguf_sans_choix_refuses_sans_projecteur_liste(self) -> None:
+        journal: list[str] = []
+        resultat = verifier_compatibilite(
+            self.declaration,
+            FICHIERS_LLAMA,
+            lecteur_entete_gguf=lecteur_gguf_de(octets_gguf("qwen35"), journal),
+        )
+        refus = self.assertRefus(resultat, RAISON_FICHIER_GGUF_NON_CHOISI)
+        self.assertIn("modele-f16.gguf", refus.message)
+        self.assertIn("modele-q8_0.gguf", refus.message)
+        self.assertNotIn("mmproj", refus.message)
+        self.assertEqual(journal, [])
+
+    def test_projecteur_n_est_pas_une_variante(self) -> None:
+        # Avec un seul modèle de langue, le projecteur n'empêche pas la sélection.
+        journal: list[str] = []
+        resultat = verifier_compatibilite(
+            self.declaration,
+            retire(FICHIERS_LLAMA, "modele-f16.gguf"),
+            lecteur_entete_gguf=lecteur_gguf_de(octets_gguf("gemma4"), journal),
+        )
+        self.assertAccepte(resultat, "llm-gguf")
+        self.assertEqual(resultat.fichiers, ("modele-q8_0.gguf",))
+        self.assertEqual(journal, ["modele-q8_0.gguf"])
+        self.assertEqual(
+            variantes_gguf(REGLE_LLAMA_CPP_GGUF, FICHIERS_LLAMA),
+            ("modele-f16.gguf", "modele-q8_0.gguf"),
+        )
+        self.assertIn(
+            "mmproj-modele-f16.gguf",
+            variantes_gguf(REGLE_TRANSCRIBE_CPP_GGUF, FICHIERS_LLAMA),
+        )
+
+    def test_seuls_des_auxiliaires_refuses_sans_lecture(self) -> None:
+        journal: list[str] = []
+        resultat = verifier_compatibilite(
+            self.declaration,
+            ("README.md", "mmproj-modele-f16.gguf", "mtp-modele.gguf"),
+            lecteur_entete_gguf=lecteur_gguf_de(octets_gguf("qwen35"), journal),
+        )
+        self.assertRefus(resultat, RAISON_FICHIER_AUXILIAIRE)
+        self.assertEqual(journal, [])
+
+    def test_fichier_auxiliaire_choisi_refuse_avant_lecture(self) -> None:
+        journal: list[str] = []
+        lecteur = lecteur_gguf_de(octets_gguf("qwen35"), journal)
+        for choix in (
+            "mmproj-modele-f16.gguf",
+            "MMPROJ-modele.gguf",
+            "mtp-modele-q8.gguf",
+            "vision/mmproj-x.gguf",
+        ):
+            with self.subTest(choix=choix):
+                resultat = verifier_compatibilite(
+                    self.declaration,
+                    (*FICHIERS_LLAMA, choix),
+                    fichier_gguf=choix,
+                    lecteur_entete_gguf=lecteur,
+                )
+                refus = self.assertRefus(resultat, RAISON_FICHIER_AUXILIAIRE)
+                self.assertIn(choix, refus.message)
+        self.assertEqual(journal, [])
+
+    def test_gguf_d_architecture_clip_refuse_par_son_en_tete(self) -> None:
+        # Un projecteur sans préfixe connu reste refusé après lecture de son en-tête.
+        journal: list[str] = []
+        resultat = verifier_compatibilite(
+            self.declaration,
+            ("README.md", "vision-projecteur.gguf"),
+            fichier_gguf="vision-projecteur.gguf",
+            lecteur_entete_gguf=lecteur_gguf_de(octets_gguf("clip"), journal),
+        )
+        refus = self.assertRefus(resultat, RAISON_FICHIER_AUXILIAIRE)
+        self.assertIn("clip", refus.message)
+        self.assertEqual(journal, ["vision-projecteur.gguf"])
+        resultat = verifier_compatibilite(
+            self.declaration,
+            ("README.md", "vision-projecteur.gguf"),
+            lecteur_entete_gguf=lecteur_gguf_de(octets_gguf("clip")),
+        )
+        self.assertRefus(resultat, RAISON_FICHIER_AUXILIAIRE)
+
+    def test_architectures_hors_liste_blanche_refusees_en_nommant_l_architecture(
+        self,
+    ) -> None:
+        for architecture in (
+            "llama",
+            "qwen3",
+            "qwen35moe",
+            "granitehybrid",
+            "whisper",
+            "qwen3_asr",
+            "parakeet",
+        ):
+            with self.subTest(architecture=architecture):
+                resultat = verifier_compatibilite(
+                    self.declaration,
+                    ("modele.gguf",),
+                    lecteur_entete_gguf=lecteur_gguf_de(octets_gguf(architecture)),
+                )
+                refus = self.assertRefus(resultat, RAISON_ARCHITECTURE_NON_ADMISE)
+                self.assertIn(f"{architecture!r}", refus.message)
+                self.assertIn("liste blanche provisoire", refus.message)
+
+    def test_depot_restreint_refuse_avant_lecture_meme_avec_jeton(self) -> None:
+        journal: list[str] = []
+        resultat = verifier_compatibilite(
+            self.declaration,
+            FICHIERS_LLAMA,
+            fichier_gguf="modele-q8_0.gguf",
+            lecteur_entete_gguf=lecteur_gguf_de(octets_gguf("qwen35"), journal),
+            depot_restreint=True,
+        )
+        refus = self.assertRefus(resultat, RAISON_DEPOT_RESTREINT)
+        self.assertIn("jeton", refus.message)
+        self.assertIsNone(refus.famille)
+        self.assertEqual(journal, [])
+        with self.assertRaises(TypeError):
+            verifier_compatibilite(
+                self.declaration,
+                FICHIERS_LLAMA,
+                depot_restreint="oui",  # type: ignore[arg-type]
+            )
+
+    def test_depot_restreint_reste_accepte_par_les_moteurs_de_transcription(
+        self,
+    ) -> None:
+        # Politique inchangée : le drapeau n'a aucun effet hors llama.cpp.
+        resultat = verifier_compatibilite(
+            declaration_synthetique(
+                identifiant="faster-whisper", regle=REGLE_CTRANSLATE2_WHISPER
+            ),
+            FICHIERS_CTRANSLATE2,
+            configurations=CONTENUS_CTRANSLATE2,
+            depot_restreint=True,
+        )
+        self.assertAccepte(resultat, "whisper")
+        resultat = verifier_compatibilite(
+            declaration_synthetique(
+                identifiant="transcribe-cpp", regle=REGLE_TRANSCRIBE_CPP_GGUF
+            ),
+            FICHIERS_GGUF,
+            fichier_gguf="modele-q8_0.gguf",
+            lecteur_entete_gguf=lecteur_gguf_de(octets_gguf()),
+            depot_restreint=True,
+        )
+        self.assertAccepte(resultat, "whisper")
+        resultat = verifier_compatibilite(
+            declaration_synthetique(
+                identifiant="transformers",
+                regle=REGLE_TRANSFORMERS_SAFETENSORS,
+                familles=("whisper",),
+            ),
+            FICHIERS_WHISPER_TRANSFORMERS,
+            configurations=CONTENUS_WHISPER_TRANSFORMERS,
+            depot_restreint=True,
+        )
+        self.assertAccepte(resultat, "whisper")
+
+    def test_gguf_llm_propose_a_transcribe_cpp_refuse_avec_llama_suggere(self) -> None:
+        for architecture in ("qwen35", "mistral3", "granite", "gemma4"):
+            with self.subTest(architecture=architecture):
+                resultat = verifier_compatibilite(
+                    DECLARATION_TRANSCRIBE_CPP,
+                    ("modele-q8_0.gguf",),
+                    lecteur_entete_gguf=lecteur_gguf_de(octets_gguf(architecture)),
+                )
+                refus = self.assertRefus(resultat, RAISON_FAMILLE_HORS_PERIMETRE)
+                self.assertEqual(refus.famille, architecture)
+                self.assertEqual(refus.moteur_suggere, "llama-cpp")
+                self.assertIn("'llama-cpp'", refus.message)
+
+    def test_gguf_transcription_propose_a_llama_refuse_en_nommant_l_architecture(
+        self,
+    ) -> None:
+        resultat = verifier_compatibilite(
+            DECLARATION_LLAMA_CPP,
+            ("modele-q8_0.gguf",),
+            lecteur_entete_gguf=lecteur_gguf_de(octets_gguf("whisper")),
+        )
+        refus = self.assertRefus(resultat, RAISON_ARCHITECTURE_NON_ADMISE)
+        self.assertIn("'whisper'", refus.message)
+        self.assertEqual(refus.moteur_suggere, "transcribe-cpp")
+
+    def test_declaration_llama_reelle_reste_non_qualifiee(self) -> None:
+        # Aucun modèle n'est accepté à l'ajout tant que la famille n'est pas qualifiée.
+        resultat = verifier_compatibilite(
+            DECLARATION_LLAMA_CPP,
+            ("modele-q8_0.gguf",),
+            lecteur_entete_gguf=lecteur_gguf_de(octets_gguf("qwen35")),
+        )
+        refus = self.assertRefus(resultat, RAISON_FAMILLE_NON_QUALIFIEE)
+        self.assertEqual(refus.famille, "llm-gguf")
+
+    def test_en_tete_absent_ou_sans_architecture_refuse(self) -> None:
+        resultat = verifier_compatibilite(self.declaration, ("modele.gguf",))
+        self.assertRefus(resultat, RAISON_EN_TETE_GGUF_NON_LU)
+        resultat = verifier_compatibilite(
+            self.declaration,
+            ("modele.gguf",),
+            lecteur_entete_gguf=lecteur_gguf_de(
+                entete_gguf(("general.name", "string", "test"))
+            ),
+        )
+        self.assertRefus(resultat, RAISON_ARCHITECTURE_GGUF_ABSENTE)
+
+
 class EntreesRefuseesTest(AssertionsCompatibilite):
     def setUp(self) -> None:
         self.declaration = declaration_synthetique()
@@ -1182,7 +1442,8 @@ class QualificationProductionTest(AssertionsCompatibilite):
         # Les familles de production sont qualifiées sur le PC Linux de test
         # (jalon 0 et tâches 8.x) ; la qualification Windows reste due à la CI.
         for declaration in declarations_fournies():
-            if declaration.factice:
+            # llama-cpp n'est pas encore qualifié sur PC (tâches 6.x).
+            if declaration.factice or declaration.identifiant == "llama-cpp":
                 continue
             for famille in declaration.familles:
                 with self.subTest(

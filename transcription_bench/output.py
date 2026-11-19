@@ -643,6 +643,7 @@ def serialize_engine_state(view: EtatMoteur) -> dict[str, Any]:
     return {
         "identifiant": view.identifiant,
         "nom": view.nom,
+        "tasks": list(view.tasks),
         "etat": view.etat,
         "factice": view.factice,
         "installable": view.installable,

@@ -19,6 +19,7 @@ import tempfile
 import threading
 import time
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from unittest import mock
 
@@ -44,7 +45,7 @@ from transcription_bench.operations import (
     TYPE_INSTALLATION,
     CreneauOperations,
 )
-from transcription_bench.paths import ValeurRefusee
+from transcription_bench.paths import RACINE_PROJET, ValeurRefusee
 from transcription_bench.stockage import JsonInvalide, ecrire_json_atomique, lire_json
 
 PORT_TEST = 8765
@@ -682,6 +683,132 @@ class ArretEtCheminsTest(SocleMoteurs):
         self.assertEqual(
             commande[-1],
             str((self.racine / "requirements" / "engine-test.txt").resolve()),
+        )
+
+
+class ExecuteurLlamaSimule(ExecuteurEnregistreur):
+    """Enregistre les commandes ; le contrôle d'import renvoie `llama_cpp`, sans version."""
+
+    def executer(self, arguments, *, env, journaliser, delai=None):
+        if "-c" in arguments and "sys.prefix" not in arguments[-1]:
+            self.commandes.append(list(arguments))
+            return ResultatCommande(code=0, sortie='{"modules": {"llama_cpp": null}}')
+        return super().executer(
+            arguments, env=env, journaliser=journaliser, delai=delai
+        )
+
+
+class InstallationLlamaCppTest(SocleMoteurs):
+    """llama.cpp : refus sur ce serveur, chemin d'installation simulé sans réseau.
+
+    Le verrou réel est lu en lecture seule dans le dépôt ; aucune commande uv
+    n'est lancée, l'exécuteur enregistre les arguments et simule les sorties.
+    """
+
+    def test_llama_cpp_refuse_tant_que_le_verrou_n_est_pas_valide(self) -> None:
+        service = InstallationMoteurs(
+            self.donnees,
+            creer_registre_fourni(),
+            self.creneau,
+            racine_projet=RACINE_PROJET,
+            environ=ENVIRON_UV,
+        )
+
+        etat = {moteur.identifiant: moteur for moteur in service.inventaire()}[
+            "llama-cpp"
+        ]
+        self.assertEqual(etat.etat, ETAT_NON_INSTALLE)
+        self.assertFalse(etat.installable)
+        self.assertIn("résolu et vérifié sur un PC de test", etat.note or "")
+        self.assertNotIn("jalon 0", etat.note or "")
+        with self.assertRaises(InstallationIndisponible) as contexte:
+            service.verifier_installable("llama-cpp")
+        self.assertIn("résolu et vérifié sur un PC de test", str(contexte.exception))
+        self.assertFalse(self.donnees.exists())
+
+    def test_chemin_d_installation_sans_compilation_ni_reseau(self) -> None:
+        declaration = replace(
+            creer_registre_fourni().obtenir("llama-cpp"), verrou_valide=True
+        )
+        registre = RegistreMoteurs()
+        registre.enregistrer(declaration)
+        executeur = ExecuteurLlamaSimule()
+        service = InstallationMoteurs(
+            self.donnees,
+            registre,
+            self.creneau,
+            racine_projet=RACINE_PROJET,
+            executeur=executeur,
+            environ=ENVIRON_UV,
+        )
+
+        instantane = self.lancer_installation(service, "llama-cpp")
+
+        self.assertEqual(instantane.etat, ETAT_TERMINEE, instantane.erreur)
+        venv = [
+            c for c in executeur.commandes if c[:3] == ["uv", "venv", "--no-project"]
+        ]
+        self.assertEqual(len(venv), 1)
+        self.assertIn("--clear", venv[0])
+        synchronisations = [
+            c for c in executeur.commandes if c[:3] == ["uv", "pip", "sync"]
+        ]
+        self.assertEqual(len(synchronisations), 1)
+        self.assertIn("--no-build", synchronisations[0])
+        # Les roues viennent du verrou lui-même (auto-portant) : aucun
+        # --find-links en ligne de commande.
+        self.assertNotIn("--find-links", synchronisations[0])
+        self.assertEqual(
+            synchronisations[0][-1],
+            str((RACINE_PROJET / "requirements" / "llama-cpp.txt").resolve()),
+        )
+        controles = [
+            c for c in executeur.commandes if len(c) == 5 and c[1:3] == ["-I", "-c"]
+        ]
+        self.assertEqual(len(controles), 1)
+        self.assertEqual(json.loads(controles[0][-1]), ["llama_cpp"])
+        donnees = lire_json(self.marqueur("llama-cpp"))
+        self.assertEqual(donnees["versions"], {"llama_cpp": None})
+
+    def test_echec_de_synchronisation_donne_echec_sans_marqueur(self) -> None:
+        # Une roue absente fait échouer `uv pip sync --no-build` au lieu de
+        # compiler (design D4) : le motif remonte au journal, pas de marqueur.
+        declaration = replace(
+            creer_registre_fourni().obtenir("llama-cpp"), verrou_valide=True
+        )
+        registre = RegistreMoteurs()
+        registre.enregistrer(declaration)
+
+        class ExecuteurLlamaSyncEchouee(ExecuteurLlamaSimule):
+            def executer(self, arguments, *, env, journaliser, delai=None):
+                if "sync" in arguments:
+                    journaliser("échec de synchronisation simulé")
+                    return ResultatCommande(
+                        code=1, sortie="uv pip sync a échoué (code 1) : roue absente"
+                    )
+                return super().executer(
+                    arguments, env=env, journaliser=journaliser, delai=delai
+                )
+
+        service = InstallationMoteurs(
+            self.donnees,
+            registre,
+            self.creneau,
+            racine_projet=RACINE_PROJET,
+            executeur=ExecuteurLlamaSyncEchouee(),
+            environ=ENVIRON_UV,
+        )
+
+        instantane = self.lancer_installation(service, "llama-cpp")
+
+        self.assertEqual(instantane.etat, ETAT_ECHOUEE, instantane.erreur)
+        self.assertFalse(self.marqueur("llama-cpp").exists())
+        self.assertEqual(self.etat(service, "llama-cpp").etat, ETAT_ECHEC)
+        self.assertTrue(
+            any(
+                "uv pip sync a échoué" in ligne
+                for ligne in service.lire_journal("llama-cpp")
+            )
         )
 
 

@@ -1,0 +1,27 @@
+# Déclaration directe du moteur llama.cpp (extraction, GGUF, CPU uniquement).
+#
+# llama-cpp-python 0.3.36 : PyPI ne publie que la source (sdist) pour cette
+# version ; les roues CPU précompilées viennent de l'index abetlen. Pages lues
+# le 2026-11-19 : la racine https://abetlen.github.io/llama-cpp-python/whl/cpu/
+# ne liste que le paquet ; la page plate utilisée par --find-links est
+# https://abetlen.github.io/llama-cpp-python/whl/cpu/llama-cpp-python/
+# (roues py3-none-manylinux2014_x86_64 et py3-none-win_amd64 pour 0.3.36).
+#
+# Résolution : l'index et la page plate ne sont pas passés dans ce fichier ;
+# ils sont fournis à la commande de résolution, puis consignés dans le verrou
+# par --emit-find-links pour que `uv pip sync` les relise (verrou auto-porté).
+# Commande prévue, à exécuter seulement sur le PC de test avec accord :
+#   uv pip compile --universal --python-version 3.12 --no-build --emit-index-url --emit-find-links --find-links https://abetlen.github.io/llama-cpp-python/whl/cpu/llama-cpp-python/ -o requirements/llama-cpp.txt requirements/llama-cpp.in
+#
+# --no-build : aucune compilation n'est admise. Si une roue CPU manque pour la
+# plateforme visée, l'installation échoue au lieu de compiler la source : c'est
+# le comportement voulu (design D4).
+#
+# Le verrou est rédigé mais non résolu ni vérifié : voir requirements/llama-cpp.txt.
+
+# Le runner du moteur relève le pic mémoire et les mesures système : psutil
+# est épinglé comme pour les moteurs de transcription (numpy vient par
+# llama-cpp-python).
+
+llama-cpp-python==0.3.36
+psutil==7.2.2

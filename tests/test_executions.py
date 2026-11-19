@@ -29,6 +29,7 @@ from tests.test_web import SocleWebTest
 from transcription_bench.audios import AudioListe
 from transcription_bench.executions import (
     CLE_MODELE_FACTICE,
+    CLE_MODELE_FACTICE_EXTRACTION,
     FENETRE_FIXE_SECONDES,
     LIBELLE_MODELE_FACTICE,
     MESSAGE_AUDIO_INCOHERENT,
@@ -277,7 +278,8 @@ class ModelesProposesTest(SocleExecutionsTest):
 
         proposes = service.modeles_proposables()
 
-        self.assertEqual(len(proposes), 1)
+        # Un modèle synthétique par famille : transcription, puis extraction.
+        self.assertEqual(len(proposes), 2)
         propose = proposes[0]
         self.assertEqual(propose.moteur, "factice")
         self.assertEqual(propose.cle, CLE_MODELE_FACTICE)
@@ -292,6 +294,13 @@ class ModelesProposesTest(SocleExecutionsTest):
         self.assertIsNone(propose.fichier_gguf)
         self.assertEqual(propose.reglages, ())
         self.assertEqual(propose.fenetre_fixe_secondes, FENETRE_FIXE_SECONDES)
+        extraction = proposes[1]
+        self.assertEqual(extraction.famille, "factice-extraction")
+        self.assertEqual(extraction.cle, CLE_MODELE_FACTICE_EXTRACTION)
+        self.assertTrue(extraction.synthetique)
+        # Famille d'extraction proposée à une exécution de transcription : refusée.
+        self.assertFalse(extraction.executable)
+        self.assertIn("extraction", extraction.motif_non_executable or "")
 
         demande = service.valider(
             modele=propose.reference,
@@ -346,7 +355,7 @@ class ModelesProposesTest(SocleExecutionsTest):
 
         proposes = service.modeles_proposables()
 
-        self.assertEqual([propose.synthetique for propose in proposes], [True])
+        self.assertEqual([propose.synthetique for propose in proposes], [True, True])
         self.assertTrue(proposes[0].executable)
 
     def test_audios_proposables_excluent_les_illisibles(self) -> None:
@@ -453,6 +462,26 @@ class ValidationDemandeTest(SocleExecutionsTest):
                         threads="4",
                         reglages={},
                     )
+
+    def test_modele_d_extraction_refuse_en_transcription(self) -> None:
+        registre = RegistreMoteurs()
+        registre.enregistrer(DECLARATION_FACTICE)
+        service = self.construire(registre=registre)
+        reference = f"factice/{CLE_MODELE_FACTICE_EXTRACTION}"
+
+        with self.assertRaises(ValeurRefusee) as contexte:
+            service.valider(
+                modele=reference,
+                audios=["a.wav"],
+                threads="4",
+                reglages={},
+            )
+        self.assertIn("extraction", str(contexte.exception))
+        self.assertIn("transcription", str(contexte.exception))
+        # La préparation n'applique jamais ce modèle : repli sur le modèle de transcription.
+        preparation = service.preparer(modele=reference)
+        self.assertEqual(preparation.reference, f"factice/{CLE_MODELE_FACTICE}")
+        self.assertIsNotNone(preparation.notice)
 
     def test_threads_invalides_refuses(self) -> None:
         for threads in ("0", "-2", "4.0", "1.5", "", "  ", "quatre", True, None):

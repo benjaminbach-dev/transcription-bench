@@ -769,6 +769,7 @@ class SerializerKeySnapshotTests(unittest.TestCase):
             [
                 "identifiant",
                 "nom",
+                "tasks",
                 "etat",
                 "factice",
                 "installable",

@@ -29,7 +29,14 @@ from transcription_bench.operations import CreneauOperations
 from transcription_bench.recuperation import EtatAnterieurNonTraitable
 from transcription_bench.supervision import GestionnaireSignaux, NettoyageArret
 
-PAQUETS_MOTEURS = ("ctranslate2", "faster_whisper", "torch", "transcribe_cpp", "transformers")
+PAQUETS_MOTEURS = (
+    "ctranslate2",
+    "faster_whisper",
+    "llama_cpp",
+    "torch",
+    "transcribe_cpp",
+    "transformers",
+)
 CONFIGURATION_ATTENDUE = {
     "host": "127.0.0.1",
     "threads": 4,

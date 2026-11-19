@@ -345,6 +345,11 @@ class ReglagesEtVerrousTest(unittest.TestCase):
                     all(famille.duree_native is None for famille in declaration.familles)
                 )
                 continue
+            if declaration.identifiant == "llama-cpp":
+                # Qualification PC pas encore faite (tâches 6.x) : aucune
+                # famille qualifiée, donc aucune durée native.
+                self.assertEqual(declaration.familles_qualifiees, ())
+                continue
             for famille in declaration.familles:
                 self.assertTrue(famille.qualifiee)
                 obtenus.add((declaration.identifiant, famille.identifiant))
@@ -446,6 +451,58 @@ class ReglagesEtVerrousTest(unittest.TestCase):
                 encoding="utf-8"
             ),
         )
+
+
+class VerrouLlamaCppTest(unittest.TestCase):
+    """Verrou llama.cpp rédigé hors PC : contenu documentaire, lu sans réseau."""
+
+    def setUp(self) -> None:
+        self.verrou = (RACINE_PROJET / "requirements/llama-cpp.txt").read_text(
+            encoding="utf-8"
+        )
+        self.declaration = (RACINE_PROJET / "requirements/llama-cpp.in").read_text(
+            encoding="utf-8"
+        )
+
+    @staticmethod
+    def _lignes_actives(contenu: str) -> list[str]:
+        return [
+            ligne.strip()
+            for ligne in contenu.splitlines()
+            if ligne.strip() and not ligne.lstrip().startswith("#")
+        ]
+
+    def test_pin_principal_dans_le_in_et_le_txt(self) -> None:
+        self.assertIn(
+            "llama-cpp-python==0.3.36", self._lignes_actives(self.declaration)
+        )
+        self.assertIn("llama-cpp-python==0.3.36", self._lignes_actives(self.verrou))
+
+    def test_index_et_find_links_auto_portants(self) -> None:
+        actives = self._lignes_actives(self.verrou)
+        self.assertEqual(actives[0], "--index-url https://pypi.org/simple")
+        # Page plate de l'index abetlen : la racine /whl/cpu/ ne liste aucune roue.
+        self.assertEqual(
+            actives[1],
+            "--find-links "
+            "https://abetlen.github.io/llama-cpp-python/whl/cpu/llama-cpp-python/",
+        )
+
+    def test_dependances_d_execution_epinglees(self) -> None:
+        attendues = {
+            "diskcache==5.6.3",
+            "jinja2==3.1.6",
+            "markupsafe==3.0.4",
+            "numpy==2.5.5",
+            "typing-extensions==4.16.0",
+        }
+        self.assertLessEqual(attendues, set(self._lignes_actives(self.verrou)))
+
+    def test_statut_non_resolu_et_renvoi_au_pc_de_test(self) -> None:
+        self.assertIn("VERROU NON RÉSOLU NI VÉRIFIÉ", self.verrou)
+        self.assertIn("2026-11-19", self.verrou)
+        self.assertIn("PC de test", self.verrou)
+        self.assertIn("--no-build", self.declaration)
 
 
 class EnvironnementNumbaTest(unittest.TestCase):

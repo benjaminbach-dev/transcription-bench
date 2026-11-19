@@ -33,9 +33,11 @@ Règles reprises des specs et du design :
   `engines.declarations.motif_famille_non_executable`, celle du runner, pour ne
   jamais annoncer une capacité que le runner refuse ;
 - pour toute déclaration `factice=True`, un **modèle synthétique** est proposé
-  sans inventaire : clé constante, libellé « aucun modèle, textes et mesures
-  simulés ». Il ne correspond à aucun fichier ; la tâche 6.3 lui passera un
-  chemin fictif sous `data/`, car le runner exige un chemin non vide ;
+  par famille, sans inventaire : clé constante propre à la tâche de la famille,
+  libellé « aucun modèle, textes et mesures simulés ». Il ne correspond à aucun
+  fichier ; la tâche 6.3 lui passera un chemin fictif sous `data/`, car le
+  runner exige un chemin non vide. Une famille d'une autre tâche que celle de
+  la demande est affichée non exécutable, avec son motif, et refusée ;
 - sans mécanisme natif déclaré (`Famille.duree_native` absente), l'exécution
   annonce le découpage en fenêtres fixes de 30 s sans recouvrement (D9). La
   constante est tenue égale à celle du runner (`engines.runner.FENETRE_SECONDES`)
@@ -72,6 +74,8 @@ from pathlib import Path
 import psutil
 
 from engines.declarations import (
+    TASK_EXTRACTION,
+    TASK_TRANSCRIPTION,
     TYPE_BOOLEEN,
     TYPE_CHOIX,
     TYPE_ENTIER,
@@ -121,9 +125,18 @@ MESSAGE_AUDIO_AUCUN = (
     "est retenu par défaut."
 )
 
-#: Clé constante du modèle synthétique (SHA-256 d'un texte fixe), distincte des
-#: clés calculées depuis un inventaire.
+#: Clé constante du modèle synthétique de transcription (SHA-256 d'un texte
+#: fixe), distincte des clés calculées depuis un inventaire.
 CLE_MODELE_FACTICE = hashlib.sha256(b"modele-synthetique-factice").hexdigest()
+#: Clé constante du modèle synthétique d'extraction du moteur factice.
+CLE_MODELE_FACTICE_EXTRACTION = hashlib.sha256(
+    b"modele-synthetique-factice-extraction"
+).hexdigest()
+#: Clé du modèle synthétique selon la tâche de sa famille (une famille par tâche).
+CLES_MODELE_FACTICE: dict[str, str] = {
+    TASK_TRANSCRIPTION: CLE_MODELE_FACTICE,
+    TASK_EXTRACTION: CLE_MODELE_FACTICE_EXTRACTION,
+}
 
 _MOTIF_ENTIER = re.compile(r"-?[0-9]+", re.ASCII)
 _MOTIF_CLE_MODELE = re.compile(r"[0-9a-f]{64}", re.ASCII)
@@ -372,18 +385,19 @@ class ConfigurationExecutions:
         for declaration in self._registre.lister():
             if not declaration.factice:
                 continue
-            proposes.append(
-                _proposer(
-                    declaration,
-                    declaration.familles[0],
-                    cle=CLE_MODELE_FACTICE,
-                    identifiant=LIBELLE_MODELE_FACTICE,
-                    id_resolu=LIBELLE_MODELE_FACTICE,
-                    commit="aucun",
-                    fichier_gguf=None,
-                    synthetique=True,
+            for famille in declaration.familles:
+                proposes.append(
+                    _proposer(
+                        declaration,
+                        famille,
+                        cle=CLES_MODELE_FACTICE[famille.task],
+                        identifiant=LIBELLE_MODELE_FACTICE,
+                        id_resolu=LIBELLE_MODELE_FACTICE,
+                        commit="aucun",
+                        fichier_gguf=None,
+                        synthetique=True,
+                    )
                 )
-            )
         return tuple(proposes)
 
     def audios_proposables(self) -> tuple[AudioListe, ...]:

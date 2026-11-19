@@ -42,6 +42,11 @@ TYPE_CHOIX = "choix"
 
 TYPES_REGLAGE = (TYPE_ENTIER, TYPE_BOOLEEN, TYPE_TEXTE, TYPE_CHOIX)
 
+#: Tâches d'une famille : transcription audio ou extraction depuis un texte.
+TASK_TRANSCRIPTION = "transcription"
+TASK_EXTRACTION = "extraction"
+TASKS = (TASK_TRANSCRIPTION, TASK_EXTRACTION)
+
 # Identifiant de moteur ou de famille : minuscules ASCII, chiffres et tirets.
 _MOTIF_IDENTIFIANT = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*", re.ASCII)
 # Nom de réglage : minuscules ASCII, chiffres et soulignés (futur mot-clé du moteur).
@@ -107,6 +112,10 @@ class Famille:
     validation Linux consignée ; elle ne vaut pas validation Windows. Les réglages appartiennent à la famille
     qui les expose ; leurs noms y sont uniques.
 
+    `task` indique la tâche de la famille (`TASK_TRANSCRIPTION` ou
+    `TASK_EXTRACTION`) : une famille ne s'exécute que pour sa tâche. La valeur
+    par défaut couvre les familles de transcription existantes.
+
     Cette valeur reste `False` pour la famille factice : exécuter le moteur
     factice ne demande aucune validation PC, car il ne charge aucun modèle et
     n'effectue aucune inférence. Le runner s'appuie pour cela sur
@@ -118,10 +127,16 @@ class Famille:
     qualifiee: bool = False
     duree_native: DureeNative | None = None
     reglages: tuple[Reglage, ...] = ()
+    task: str = TASK_TRANSCRIPTION
 
     def __post_init__(self) -> None:
         _exiger_identifiant(self.identifiant, "identifiant de famille")
         _exiger_texte_non_vide(self.libelle, "libellé de famille")
+        if self.task not in TASKS:
+            raise ValueError(
+                f"tâche de famille inconnue : {self.task!r} "
+                f"(attendu : {', '.join(TASKS)})"
+            )
         noms_reglages = [reglage.nom for reglage in self.reglages]
         if len(set(noms_reglages)) != len(noms_reglages):
             raise ValueError("noms de réglage en double dans la famille")
@@ -180,6 +195,10 @@ class DeclarationAdaptateur:
     est une référence pointée vers du code local, importée seulement au moment
     où une exécution est demandée (`RegistreMoteurs.charger_adaptateur`).
 
+    `tasks` est dérivé des familles (ordre de déclaration, sans doublon). Un
+    moteur réel porte une seule tâche ; seul le moteur factice en porte deux
+    (transcription et extraction), comme le prévoit le change d'extraction.
+
     `modules_verification` énumère les noms de modules Python (bibliothèque
     standard comprise) que le contrôle d'import exécute dans l'environnement du
     moteur, avec l'interpréteur de cet environnement. Ces noms viennent du code
@@ -192,6 +211,15 @@ class DeclarationAdaptateur:
     simulés. Ce drapeau n'est jamais lu depuis un job et ne se déduit pas d'un
     identifiant fourni : une déclaration qui ne le porte pas reste soumise à la
     qualification PC, même si elle s'appelle « factice ».
+
+    `verrou_valide=False` signifie que le verrou déclaré n'a pas encore été
+    résolu ni vérifié sur PC de test : l'installation est alors refusée sur tout
+    poste, y compris le serveur de développement. Ordre de bascule pour
+    llama.cpp : l'essai minimal (tâche 0.1, PC de test avec accord) résout
+    réellement le verrou ; le commit qui remplace le verrou rédigé à la main
+    par le verrou résolu repose ce drapeau à `True` AVANT la tâche 6.1, qui
+    installe alors par le programme. Sans cette bascule, la tâche 6.1 serait
+    refusée par le programme lui-même.
     """
 
     identifiant: str
@@ -202,11 +230,14 @@ class DeclarationAdaptateur:
     module_adaptateur: str | None = None
     modules_verification: tuple[str, ...] = ()
     factice: bool = False
+    verrou_valide: bool = True
 
     def __post_init__(self) -> None:
         _exiger_identifiant(self.identifiant, "identifiant de moteur")
         if not isinstance(self.factice, bool):
             raise ValueError("factice doit être un booléen")
+        if not isinstance(self.verrou_valide, bool):
+            raise ValueError("verrou_valide doit être un booléen")
         _exiger_texte_non_vide(self.nom, "nom de moteur")
         _exiger_identifiant(self.regle_compatibilite, "règle de compatibilité")
         if self.fichier_requirements is not None and not _MOTIF_REQUIREMENTS.fullmatch(
@@ -243,6 +274,16 @@ class DeclarationAdaptateur:
         identifiants_familles = [famille.identifiant for famille in self.familles]
         if len(set(identifiants_familles)) != len(identifiants_familles):
             raise ValueError("identifiants de famille en double")
+        if not self.factice and len(self.tasks) != 1:
+            raise ValueError(
+                f"moteur {self.identifiant!r} : un moteur réel porte une seule "
+                f"tâche, déclarées : {', '.join(self.tasks)}"
+            )
+
+    @property
+    def tasks(self) -> tuple[str, ...]:
+        """Tâches des familles, dans l'ordre de déclaration, sans doublon."""
+        return tuple(dict.fromkeys(famille.task for famille in self.familles))
 
     @property
     def familles_qualifiees(self) -> tuple[Famille, ...]:
@@ -251,23 +292,33 @@ class DeclarationAdaptateur:
 
 
 def motif_famille_non_executable(
-    declaration: DeclarationAdaptateur, famille: Famille
+    declaration: DeclarationAdaptateur,
+    famille: Famille,
+    task: str = TASK_TRANSCRIPTION,
 ) -> str | None:
     """Motif pour lequel le runner refuserait cette famille, ou `None`.
 
     Règle unique, partagée par `engines.runner` et par le service des demandes
-    d'exécution : une famille n'est exécutable que si la déclaration est
-    factice (`factice=True`, sans qualification PC) ou si la famille est
-    qualifiée sur PC. Une durée native déclarée n'est pas un refus : le runner
-    l'applique tant que la durée décodée ne la dépasse pas, et découpe sinon en
-    fenêtres fixes de 30 s (D9). Le motif renvoyé est un texte prêt à afficher ;
-    il ne contient ni chemin ni donnée d'exécution.
+    d'exécution. `task` est la tâche de la demande : une famille d'une autre
+    tâche est refusée en nommant les deux tâches (refus croisé). Pour le reste,
+    une famille n'est exécutable que si la déclaration est factice
+    (`factice=True`, sans qualification PC) ou si la famille est qualifiée sur
+    PC. Une durée native déclarée n'est pas un refus : le runner l'applique tant
+    que la durée décodée ne la dépasse pas, et découpe sinon en fenêtres fixes de
+    30 s (D9). Le motif renvoyé est un texte prêt à afficher ; il ne contient ni
+    chemin ni donnée d'exécution.
     """
+    if famille.task != task:
+        return (
+            f"famille {famille.identifiant!r} du moteur "
+            f"{declaration.identifiant!r} destinée à la tâche {famille.task!r}, "
+            f"non à la tâche {task!r}"
+        )
     if not famille.qualifiee and not declaration.factice:
         return (
             f"famille {famille.identifiant!r} du moteur "
             f"{declaration.identifiant!r} non qualifiée sur PC "
-            "(jalon 0 et tâches 8.x)"
+            "(validation Linux requise)"
         )
     return None
 
@@ -419,12 +470,68 @@ DECLARATION_TRANSFORMERS = DeclarationAdaptateur(
     modules_verification=("transformers", "numpy"),
 )
 
+#: Réglages de la famille GGUF de llama.cpp : valeurs documentées (design D4),
+#: non mesurées sur PC ; le contexte couvre le prompt, les consignes et la sortie.
+DEFAUT_CONTEXTE_LLAMA = 16384
+DEFAUT_SORTIE_MAX_LLAMA = 4096
+
+DECLARATION_LLAMA_CPP = DeclarationAdaptateur(
+    identifiant="llama-cpp",
+    nom="llama.cpp (GGUF)",
+    fichier_requirements="requirements/llama-cpp.txt",
+    regle_compatibilite="llama-cpp-gguf",
+    familles=(
+        Famille(
+            "llm-gguf",
+            "LLM GGUF",
+            task=TASK_EXTRACTION,
+            reglages=(
+                Reglage(
+                    "contexte",
+                    "Contexte",
+                    TYPE_ENTIER,
+                    DEFAUT_CONTEXTE_LLAMA,
+                    "Taille de la fenêtre de contexte en tokens, prompt et sortie "
+                    "compris ; valeur documentée, non mesurée sur PC.",
+                ),
+                Reglage(
+                    "sortie_max",
+                    "Sortie maximale",
+                    TYPE_ENTIER,
+                    DEFAUT_SORTIE_MAX_LLAMA,
+                    "Nombre maximal de tokens générés par source ; atteint, la "
+                    "sortie est non conforme. Valeur documentée, non mesurée sur PC.",
+                ),
+            ),
+        ),
+    ),
+    module_adaptateur="engines.adaptateurs.llama_cpp",
+    modules_verification=("llama_cpp",),
+    # Verrou rédigé par consultation des métadonnées seulement (2026-11-19) : non
+    # résolu ni vérifié, donc installation refusée tant que la tâche 6.1 ne l'a pas
+    # validé sur le PC de test.
+    verrou_valide=False,
+)
+
 DECLARATION_FACTICE = DeclarationAdaptateur(
     identifiant="factice",
     nom="Moteur factice (développement)",
     fichier_requirements=None,
     regle_compatibilite="aucune",
-    familles=(Famille("factice", "Moteur factice", qualifiee=False),),
+    familles=(
+        Famille(
+            "factice",
+            "Moteur factice",
+            qualifiee=False,
+            task=TASK_TRANSCRIPTION,
+        ),
+        Famille(
+            "factice-extraction",
+            "Moteur factice (extraction)",
+            qualifiee=False,
+            task=TASK_EXTRACTION,
+        ),
+    ),
     module_adaptateur="engines.adaptateurs.factice",
     factice=True,
 )
@@ -433,16 +540,18 @@ DECLARATIONS_FOURNIES: tuple[DeclarationAdaptateur, ...] = (
     DECLARATION_FASTER_WHISPER,
     DECLARATION_TRANSCRIBE_CPP,
     DECLARATION_TRANSFORMERS,
+    DECLARATION_LLAMA_CPP,
     DECLARATION_FACTICE,
 )
 
 
 def declarations_fournies() -> tuple[DeclarationAdaptateur, ...]:
-    """Renvoie les quatre déclarations fournies, dans un ordre stable.
+    """Renvoie les cinq déclarations fournies, dans un ordre stable.
 
-    Les trois moteurs réels sont déclarés même si leurs environnements ne sont
-    pas installés : le lot 4.4 affiche leur état, et leurs adaptateurs sont
-    fournis par les tâches 8.x. Le moteur factice reste exécutable sans modèle ni
+    Les trois moteurs de transcription et le moteur d'extraction llama.cpp sont
+    déclarés même si leurs environnements ne sont pas installés : la page et
+    `engines list` affichent leur état, et leurs adaptateurs sont fournis par les
+    tâches 8.x et 3.3. Le moteur factice reste exécutable sans modèle ni
     qualification PC.
     """
     return DECLARATIONS_FOURNIES

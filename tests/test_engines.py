@@ -19,6 +19,8 @@ from pathlib import Path
 
 from engines.declarations import (
     DECLARATIONS_FOURNIES,
+    TASK_EXTRACTION,
+    TASK_TRANSCRIPTION,
     TYPE_BOOLEEN,
     TYPE_CHOIX,
     TYPE_ENTIER,
@@ -28,6 +30,7 @@ from engines.declarations import (
     Famille,
     Reglage,
     declarations_fournies,
+    motif_famille_non_executable,
 )
 from engines.registre import (
     AdaptateurIndisponible,
@@ -40,6 +43,9 @@ from transcription_bench.paths import RACINE_PROJET
 
 MODULE_ADAPTATEUR_DE_TEST = "tests.adaptateur_de_test"
 MODULE_MOTEUR_FACTICE = "moteur_factice_stub"
+#: Moteur dont la validation PC n'a pas encore eu lieu (tâches 6.x) : toutes ses
+#: familles restent non qualifiées, comme celles du moteur factice.
+MOTEUR_NON_QUALIFIE = "llama-cpp"
 
 PAQUETS_INTERDITS = (
     "av",
@@ -48,6 +54,7 @@ PAQUETS_INTERDITS = (
     "flask",
     "huggingface_hub",
     "jinja2",
+    "llama_cpp",
     "numpy",
     "psutil",
     "torch",
@@ -114,7 +121,13 @@ class DeclarationsFourniesTest(unittest.TestCase):
     def test_identifiants_stables_et_ordre(self) -> None:
         self.assertEqual(
             tuple(declaration.identifiant for declaration in declarations_fournies()),
-            ("faster-whisper", "transcribe-cpp", "transformers", "factice"),
+            (
+                "faster-whisper",
+                "transcribe-cpp",
+                "transformers",
+                "llama-cpp",
+                "factice",
+            ),
         )
         self.assertIs(declarations_fournies(), DECLARATIONS_FOURNIES)
 
@@ -122,7 +135,7 @@ class DeclarationsFourniesTest(unittest.TestCase):
         for declaration in declarations_fournies():
             with self.subTest(moteur=declaration.identifiant):
                 self.assertTrue(declaration.familles)
-                if declaration.factice:
+                if declaration.factice or declaration.identifiant == MOTEUR_NON_QUALIFIE:
                     self.assertEqual(declaration.familles_qualifiees, ())
                     for famille in declaration.familles:
                         self.assertFalse(famille.qualifiee)
@@ -156,6 +169,7 @@ class DeclarationsFourniesTest(unittest.TestCase):
                 "faster-whisper": False,
                 "transcribe-cpp": False,
                 "transformers": False,
+                "llama-cpp": False,
                 "factice": True,
             },
         )
@@ -169,6 +183,7 @@ class DeclarationsFourniesTest(unittest.TestCase):
             "faster-whisper": "requirements/faster-whisper.txt",
             "transcribe-cpp": "requirements/transcribe-cpp.txt",
             "transformers": "requirements/transformers.txt",
+            "llama-cpp": "requirements/llama-cpp.txt",
             "factice": None,
         }
         for declaration in declarations_fournies():
@@ -177,6 +192,22 @@ class DeclarationsFourniesTest(unittest.TestCase):
                     declaration.fichier_requirements,
                     attendus[declaration.identifiant],
                 )
+
+    def test_seul_le_verrou_llama_cpp_est_marque_non_valide(self) -> None:
+        valides = {
+            declaration.identifiant: declaration.verrou_valide
+            for declaration in declarations_fournies()
+        }
+        self.assertEqual(
+            valides,
+            {
+                "faster-whisper": True,
+                "transcribe-cpp": True,
+                "transformers": True,
+                "llama-cpp": False,
+                "factice": True,
+            },
+        )
 
     def test_references_d_adaptateur_locales(self) -> None:
         for declaration in declarations_fournies():
@@ -191,6 +222,7 @@ class DeclarationsFourniesTest(unittest.TestCase):
             "faster-whisper": ("faster_whisper", "numpy"),
             "transcribe-cpp": ("transcribe_cpp", "numpy"),
             "transformers": ("transformers", "numpy"),
+            "llama-cpp": ("llama_cpp",),
             "factice": (),
         }
         for declaration in declarations_fournies():
@@ -236,11 +268,117 @@ class DeclarationsFourniesTest(unittest.TestCase):
         )
         self.assertEqual(noms[("transformers", "whisper")], ("do_normalize",))
         self.assertEqual(noms[("transformers", "parakeet-tdt")], ())
+        self.assertEqual(noms[("llama-cpp", "llm-gguf")], ("contexte", "sortie_max"))
+        self.assertEqual(noms[("factice", "factice-extraction")], ())
 
     def test_declarations_immuables(self) -> None:
         declaration = declarations_fournies()[0]
         with self.assertRaises(FrozenInstanceError):
             declaration.nom = "autre"  # type: ignore[misc]
+
+
+class TachesTest(unittest.TestCase):
+    """Tâche de chaque moteur et de chaque famille, refus croisés de tâche."""
+
+    def test_taches_des_moteurs_fournis(self) -> None:
+        obtenues = {
+            declaration.identifiant: declaration.tasks
+            for declaration in declarations_fournies()
+        }
+        self.assertEqual(
+            obtenues,
+            {
+                "faster-whisper": ("transcription",),
+                "transcribe-cpp": ("transcription",),
+                "transformers": ("transcription",),
+                "llama-cpp": ("extraction",),
+                "factice": ("transcription", "extraction"),
+            },
+        )
+
+    def test_famille_llama_cpp_d_extraction_avec_reglages_documentes(self) -> None:
+        famille = creer_registre_fourni().obtenir("llama-cpp").familles[0]
+
+        self.assertEqual(famille.identifiant, "llm-gguf")
+        self.assertEqual(famille.task, TASK_EXTRACTION)
+        self.assertIsNone(famille.duree_native)
+        self.assertEqual(
+            {reglage.nom: (reglage.type_valeur, reglage.defaut) for reglage in famille.reglages},
+            {"contexte": (TYPE_ENTIER, 16384), "sortie_max": (TYPE_ENTIER, 4096)},
+        )
+
+    def test_factice_expose_une_famille_par_tache(self) -> None:
+        factice = creer_registre_fourni().obtenir("factice")
+
+        self.assertEqual(
+            {famille.identifiant: famille.task for famille in factice.familles},
+            {"factice": TASK_TRANSCRIPTION, "factice-extraction": TASK_EXTRACTION},
+        )
+
+    def test_moteur_reel_porte_une_seule_tache(self) -> None:
+        with self.assertRaises(ValueError) as contexte:
+            DeclarationAdaptateur(
+                identifiant="moteur-de-test",
+                nom="Moteur de test",
+                fichier_requirements=None,
+                regle_compatibilite="aucune",
+                familles=(
+                    Famille("transcription-de-test", "Transcription"),
+                    Famille(
+                        "extraction-de-test",
+                        "Extraction",
+                        task=TASK_EXTRACTION,
+                    ),
+                ),
+            )
+        self.assertIn("une seule tâche", str(contexte.exception))
+
+    def test_factice_peut_porter_deux_taches(self) -> None:
+        declaration = DeclarationAdaptateur(
+            identifiant="factice-de-test",
+            nom="Factice de test",
+            fichier_requirements=None,
+            regle_compatibilite="aucune",
+            familles=(
+                Famille("transcription-de-test", "Transcription"),
+                Famille("extraction-de-test", "Extraction", task=TASK_EXTRACTION),
+            ),
+            factice=True,
+        )
+
+        self.assertEqual(declaration.tasks, ("transcription", "extraction"))
+
+    def test_tache_de_famille_inconnue_refusee(self) -> None:
+        with self.assertRaises(ValueError):
+            Famille("classification-de-test", "Classification", task="classification")
+
+    def test_refus_croise_nomme_les_deux_taches(self) -> None:
+        factice = creer_registre_fourni().obtenir("factice")
+        famille_transcription, famille_extraction = factice.familles
+
+        motif = motif_famille_non_executable(factice, famille_extraction)
+        self.assertIsNotNone(motif)
+        self.assertIn("extraction", motif)
+        self.assertIn("transcription", motif)
+        self.assertIsNone(
+            motif_famille_non_executable(factice, famille_extraction, TASK_EXTRACTION)
+        )
+        motif_inverse = motif_famille_non_executable(
+            factice, famille_transcription, TASK_EXTRACTION
+        )
+        self.assertIsNotNone(motif_inverse)
+        self.assertIn("transcription", motif_inverse)
+
+    def test_famille_llama_cpp_refusee_en_transcription_puis_non_qualifiee(self) -> None:
+        llama = creer_registre_fourni().obtenir("llama-cpp")
+        famille = llama.familles[0]
+
+        motif_transcription = motif_famille_non_executable(llama, famille)
+        self.assertIn("extraction", motif_transcription)
+        motif_extraction = motif_famille_non_executable(
+            llama, famille, TASK_EXTRACTION
+        )
+        self.assertIn("non qualifiée", motif_extraction)
 
 
 class ValidationDeclarationTest(unittest.TestCase):
@@ -326,7 +464,7 @@ class RegistreMoteursTest(unittest.TestCase):
             ["moteur-de-test"],
         )
         self.assertEqual(autre.lister(), ())
-        self.assertEqual(len(creer_registre_fourni().lister()), 4)
+        self.assertEqual(len(creer_registre_fourni().lister()), 5)
         self.assertNotIn(MODULE_ADAPTATEUR_DE_TEST, sys.modules)
 
     def test_doublon_refuse_sans_remplacement(self) -> None:

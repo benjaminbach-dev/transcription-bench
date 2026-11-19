@@ -419,7 +419,7 @@ def engine_text_lines(states: Sequence[EtatMoteur]) -> list[str]:
     lines: list[str] = []
     for state in states:
         line = (
-            f"{state.identifiant} : {state.nom} — "
+            f"{state.identifiant} : {state.nom} — {', '.join(state.tasks)} — "
             f"{LIBELLES_ETATS_MOTEUR[state.etat]}"
         )
         if state.factice:
