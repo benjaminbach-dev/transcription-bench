@@ -1,16 +1,14 @@
-"""Format lisible des tailles de modèles, partagé par la CLI.
+"""Format lisible des tailles de modèles, pour les sorties des commandes `models`.
 
-La page Modèles et ses actions POST ont été retirées de l'interface web (change
-`alleger-interface-web`, tâche 1.1) : l'inventaire, la vérification, le
-téléchargement et la suppression se pilotent par la CLI, dont les tests vivent
-dans `tests/test_commands.py`.
+Le formatage vit dans `transcription_bench.commands`, employé par les lignes
+de texte de « models list », « models check » et « models download ».
 """
 
 from __future__ import annotations
 
 import unittest
 
-from transcription_bench.web.vues_modeles import formater_taille_modele
+from transcription_bench.commands import formater_taille_modele
 
 
 class TailleModeleTest(unittest.TestCase):

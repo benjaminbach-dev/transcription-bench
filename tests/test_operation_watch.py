@@ -23,12 +23,17 @@ from transcription_bench.command_session import (
 )
 from transcription_bench.execution_moteur import (
     ARRET_DEMANDE,
+    ARRET_SURVIVANT,
     ExecutionMoteur,
     ResultatAudio,
     ResultatExecution,
 )
 from transcription_bench.moteurs import InstallationMoteurs
-from transcription_bench.operation_watch import OperationWatch, execution_exit_code
+from transcription_bench.operation_watch import (
+    SURVIVING_ENGINE_MESSAGE,
+    OperationWatch,
+    execution_exit_code,
+)
 from transcription_bench.operations import (
     ETAT_EN_COURS,
     ETAT_ECHOUEE,
@@ -280,6 +285,24 @@ class SignalTest(WatchTestCase):
         # Motif utilisateur : aucun argument, donc pas `arret_serveur=True`.
         execution.arreter_execution.assert_called_once_with()
         installation.arreter.assert_called_once_with()
+
+    def test_moteur_survivant_au_signal_est_signale_en_diagnostic(self) -> None:
+        execution = mock.Mock(spec=ExecutionMoteur)
+        execution.en_cours.return_value = True
+        execution.arreter_execution.return_value = ARRET_SURVIVANT
+
+        def work(worker) -> None:
+            wait_for_stop(self.operations)
+
+        send_signal(signal.SIGINT)
+        self.operations.demarrer(TYPE_EXECUTION, work)
+        watch, _, error = watch_operation(self.operations, self.signal_flag, execution=execution)
+
+        code = watch.wait(lambda snapshot: CODE_SUCCESS)
+
+        self.assertEqual(code, CODE_INTERRUPTED)
+        execution.arreter_execution.assert_called_once_with()
+        self.assertIn(SURVIVING_ENGINE_MESSAGE, error.getvalue())
 
     def test_arret_d_une_installation_termine_son_sous_processus(self) -> None:
         installation = mock.Mock(spec=InstallationMoteurs)

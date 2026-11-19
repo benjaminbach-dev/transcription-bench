@@ -39,7 +39,7 @@ from transcription_bench.executions import (
     ConfigurationExecutions,
     ReglageValide,
     refuser_champs_repetes,
-    reglages_depuis_formulaire,
+    reglages_depuis_champs,
     threads_par_defaut,
 )
 from transcription_bench.gestion_modeles import ModeleLocal
@@ -505,12 +505,12 @@ class ReglagesFormulaireTest(unittest.TestCase):
         }
 
         self.assertEqual(
-            reglages_depuis_formulaire(champs),
+            reglages_depuis_champs(champs),
             {"beam_size": "7", "vad_filter": "oui"},
         )
 
     def test_prefixe_seul_devient_un_nom_vide_donc_inconnu(self) -> None:
-        self.assertEqual(reglages_depuis_formulaire({PREFIXE_CHAMP_REGLAGE: "x"}), {"": "x"})
+        self.assertEqual(reglages_depuis_champs({PREFIXE_CHAMP_REGLAGE: "x"}), {"": "x"})
 
     def test_champs_repetes_refuses(self) -> None:
         cas = (

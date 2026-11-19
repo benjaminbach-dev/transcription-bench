@@ -90,6 +90,33 @@ def action(services, drapeau):
 raise SystemExit(run_session(Path(sys.argv[1]), action))
 """
 
+#: Commande d'exécution factice : même tenue de verrou, opération d'exécution.
+CODE_TENIR_EXECUTION = """
+import sys, time
+from pathlib import Path
+from transcription_bench.command_session import run_session
+from transcription_bench.operation_watch import OperationWatch
+from transcription_bench.operations import OperationInterrompue, TYPE_EXECUTION
+from transcription_bench.output import CommandOutput
+
+marqueur = Path(sys.argv[2])
+
+def action(services, drapeau):
+    def travail(travailleur):
+        marqueur.write_text("exécution tenue", encoding="utf-8")
+        echeance = time.monotonic() + 60
+        while time.monotonic() < echeance:
+            if services.operations.instantane().arrete:
+                raise OperationInterrompue("arrêt factice")
+            time.sleep(0.02)
+
+    services.operations.demarrer(TYPE_EXECUTION, travail)
+    sortie = CommandOutput(json_mode=False)
+    return OperationWatch(services.operations, drapeau, sortie).wait(lambda etat: 0)
+
+raise SystemExit(run_session(Path(sys.argv[1]), action))
+"""
+
 #: Téléchargement factice qui ignore l'arrêt : après un SIGINT reçu par la commande,
 #: la clôture reste incomplète (délai de clôture réduit pour le test).
 CODE_CLOTURE_INCOMPLETE = """
@@ -328,6 +355,43 @@ class ExclusionTest(SessionTestCase):
         recuperation.assert_not_called()
         self.assertEqual(len(messages), 1)
         self.assertIn("autre instance", messages[0])
+
+    def test_download_command_refused_while_an_execution_command_holds_the_lock(
+        self,
+    ) -> None:
+        """Seconde commande pendant une exécution : code 2, message d'instance."""
+        marqueur = self.dossier / "execution-en-cours"
+        processus = self.lancer(CODE_TENIR_EXECUTION, str(self.base), str(marqueur))
+        attendre_fichier(marqueur)
+        avant = arborescence(self.base)
+        recuperations: list[Path] = []
+        erreur = io.StringIO()
+
+        with (
+            mock.patch.object(paths, "DOSSIER_DATA", self.base),
+            contextlib.redirect_stderr(erreur),
+        ):
+            code = cli.main(
+                [
+                    "models",
+                    "download",
+                    "organisation/modele",
+                    "--engine",
+                    "factice",
+                ],
+                recuperer=recuperations.append,
+            )
+
+        self.assertEqual(code, CODE_REFUS)
+        self.assertEqual(recuperations, [])
+        self.assertIn(
+            "une autre instance utilise déjà ce dossier de données",
+            erreur.getvalue(),
+        )
+        self.assertNotIn("Traceback", erreur.getvalue())
+        self.assertEqual(arborescence(self.base), avant)
+        processus.kill()
+        processus.wait(timeout=DELAI_PROCESSUS)
 
 
 class LiberationTest(SessionTestCase):

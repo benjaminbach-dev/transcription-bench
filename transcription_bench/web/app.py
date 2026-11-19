@@ -111,38 +111,6 @@ CHAMP_EMPREINTE_GROUPE = "empreinte"
 HOTES_AUTORISES = ("127.0.0.1", "localhost")
 METHODES_LECTURE = ("GET", "HEAD")
 
-# Messages partagés avec la CLI (`commands.py`) : l'interface web ne les emploie
-# plus (tâche 1.1 du change `alleger-interface-web`) ; leur déplacement est prévu
-# avec la tâche 2.2.
-MESSAGES_ACTION = {
-    "dossiers-verifies": "Dossiers de données vérifiés.",
-    "arret-demande": (
-        "Arrêt de l'exécution demandé : les résultats d'audios déjà reçus sont "
-        "conservés et les audios restants sont signalés non traités. Le créneau "
-        "reste occupé jusqu'à la fin réelle du processus moteur."
-    ),
-    "arret-incomplet": (
-        "Arrêt demandé, mais le processus moteur n'a pas pu être terminé, même "
-        "après kill : il peut encore tourner. Le créneau reste occupé jusqu'à sa "
-        "fin réelle et aucun résultat n'est publié avant."
-    ),
-    "verification-lancee": (
-        "Vérification distante lancée : le résultat apparaîtra après actualisation."
-    ),
-    "telechargement-lance": (
-        "Téléchargement lancé à la révision vérifiée : le modèle ne sera prêt "
-        "qu'après succès complet."
-    ),
-    "modele-deja-present": "Ce modèle est déjà présent : aucun téléchargement n'a été lancé.",
-    "modele-supprime": "Modèle local supprimé.",
-}
-
-MESSAGE_DOSSIER_AUDIO_INACCESSIBLE = (
-    "Le dossier d'entrée n'a pas pu être lu : aucun audio n'est listé. "
-    "Vérifiez qu'il s'agit d'un dossier accessible en lecture."
-)
-
-
 MESSAGES_ERREUR = {
     400: "Demande refusée : valeur invalide.",
     403: "Requête refusée : adresse invalide.",

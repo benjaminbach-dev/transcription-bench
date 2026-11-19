@@ -8,8 +8,8 @@
 
 ## 2. CLI et parité
 
-- [ ] 2.1 Inverser la table de parité (D3) : page de consultation → commande de lecture, exclusions `/` et feuilles de style ; adapter `tests/test_parity.py` pour qu'une nouvelle page sans commande fasse échouer la suite et qu'une commande sans page soit admise.
-- [ ] 2.2 Vérifier que les messages, l'aide `--help` et les sorties des commandes ne renvoient plus à des pages supprimées ; refus d'une seconde opération en code 2 toujours testé.
+- [x] 2.1 Inverser la table de parité (D3) : page de consultation → commande de lecture, exclusions `/` et feuilles de style ; adapter `tests/test_parity.py` pour qu'une nouvelle page sans commande fasse échouer la suite et qu'une commande sans page soit admise.
+- [x] 2.2 Vérifier que les messages, l'aide `--help` et les sorties des commandes ne renvoient plus à des pages supprimées ; refus d'une seconde opération en code 2 toujours testé.
 
 ## 3. Documentation et vérifications
 

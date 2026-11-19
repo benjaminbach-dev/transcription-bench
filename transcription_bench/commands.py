@@ -105,6 +105,7 @@ même si l'action a réussi (voir `command_session`).
 from __future__ import annotations
 
 import argparse
+import math
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
@@ -216,22 +217,23 @@ from transcription_bench.paths import (
 from transcription_bench.supervision import SignalFlag
 from transcription_bench.verification_modeles import ResultatVerification
 from transcription_bench.web.app import (
-    MESSAGES_ACTION,
-    MESSAGE_DOSSIER_AUDIO_INACCESSIBLE,
     MESSAGE_RESULTAT_NON_INTERPRETABLE,
     MESSAGE_RESULTATS_INACCESSIBLES,
 )
 from transcription_bench.web.results_help import RESULTS_HELP
-from transcription_bench.web.vues_modeles import formater_taille_modele
 from transcription_bench.web.vues_resultats import etats_ligne
 
-#: Message de confirmation partagé avec l'action web « dossiers-verifies ».
-FOLDERS_CHECKED_MESSAGE = MESSAGES_ACTION["dossiers-verifies"]
+#: « data check » : confirmation après la préparation des dossiers.
+FOLDERS_CHECKED_MESSAGE = "Dossiers de données vérifiés."
 NO_AUDIO_MESSAGE = "Aucun fichier audio dans le dossier d'entrée."
-#: Même information que la page Modèles quand l'inventaire est vide.
+#: « audios list » : message fixe d'un dossier d'entrée illisible, sans trace.
+MESSAGE_DOSSIER_AUDIO_INACCESSIBLE = (
+    "Le dossier d'entrée n'a pas pu être lu : aucun audio n'est listé. "
+    "Vérifiez qu'il s'agit d'un dossier accessible en lecture."
+)
 NO_MODEL_MESSAGE = "Aucun modèle local prêt."
 
-#: « run options » : inventaire et préparation, mêmes libellés que la page.
+#: « run options » : inventaire et préparation.
 NO_PROPOSABLE_MODEL_MESSAGE = "Aucun modèle proposable."
 NO_READABLE_AUDIO_MESSAGE = "Aucun audio lisible dans le dossier d'entrée."
 NOT_APPLICABLE_REASON = (
@@ -242,9 +244,8 @@ NO_FAMILY_SETTING_MESSAGE = (
     "proposé pour cette exécution"
 )
 
-#: Dernières lignes du journal affichées par défaut, comme la page Moteurs.
+#: Dernières lignes du journal affichées par défaut par « engines log ».
 DEFAULT_LOG_LIMIT = 2000
-#: Même information que la page Journal d'installation d'un moteur factice.
 FAKE_ENGINE_JOURNAL_MESSAGE = (
     "Le moteur factice ne s'installe pas : il n'a ni environnement ni journal "
     "d'installation."
@@ -261,17 +262,17 @@ def _run_audios_list(
     services: DataServices,
     signal_flag: SignalFlag,
 ) -> int:
-    """Liste les audios du dossier d'entrée, comme la page « Audios ».
+    """Liste les audios du dossier d'entrée.
 
     Aucun signal n'est décodé : la durée reste celle annoncée par l'en-tête du
     conteneur. Une erreur d'accès au dossier est un refus (code 2) avec le
-    message fixe de la page ; un fichier illisible ne fait pas échouer la liste.
+    message fixe ; un fichier illisible ne fait pas échouer la liste.
     """
     output = output_from_arguments(arguments)
     try:
         entries = lister_audios(services.data_dir)
     except (ValeurRefusee, OSError):
-        # Même validation que la route web : message fixe, sans trace ni chemin.
+        # Message fixe, sans trace ni chemin.
         output.diagnostic(MESSAGE_DOSSIER_AUDIO_INACCESSIBLE)
         return CODE_REFUS
     input_dir = services.data_dir / NOM_DOSSIER_AUDIO
@@ -329,11 +330,11 @@ def _run_data_check(
     services: DataServices,
     signal_flag: SignalFlag,
 ) -> int:
-    """Prépare puis décrit les dossiers, comme le bouton de la page Exécutions."""
+    """Prépare puis décrit les dossiers attendus."""
     output = output_from_arguments(arguments)
     try:
-        # Même chemin que POST /dossiers/verifier : mutation courte du créneau,
-        # refusée pendant une opération longue ou après le passage à l'arrêt.
+        # Mutation courte du créneau, refusée pendant une opération longue ou
+        # après le passage à l'arrêt.
         services.operations.executer_mutation(
             lambda: paths.preparer_dossiers_data(services.data_dir)
         )
@@ -443,7 +444,7 @@ def configure_engines_log(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "engine_id",
         metavar="ID",
-        help="identifiant du moteur, comme sur la page Moteurs",
+        help="identifiant du moteur, comme listé par « engines list »",
     )
     parser.add_argument(
         "--limit",
@@ -519,7 +520,7 @@ def configure_engines_install(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "engine_id",
         metavar="ID",
-        help="identifiant du moteur à installer, comme sur la page Moteurs",
+        help="identifiant du moteur à installer, comme listé par « engines list »",
     )
 
 
@@ -617,6 +618,44 @@ ENGINES = CommandGroup(
     help_text="état, installation et journal d'installation des moteurs",
     commands=(ENGINES_LIST, ENGINES_INSTALL, ENGINES_LOG),
 )
+
+#: Tailles de poids en unités binaires conventionnelles : 1 Mio = 2²⁰ octets.
+#: Les mesures de RAM gardent les unités SI décimales du design D2 ; ce sont
+#: deux grandeurs distinctes, et aucune taille de fichier n'est réécrite.
+OCTETS_PAR_MIO = 1024**2
+OCTETS_PAR_GIO = 1024**3
+TAILLE_INCONNUE = "taille inconnue"
+TAILLE_INTERPRETABLE_ABSENTE = "indisponible"
+
+
+def formater_taille_modele(valeur: Any) -> str:
+    """Taille de modèle lisible en Mio ou Gio, jamais en octets bruts.
+
+    `1 Mio = 2²⁰ octets` et `1 Gio = 2³⁰ octets` : ce sont les unités des
+    tailles de poids, distinctes des unités SI décimales des mesures de RAM.
+    Une taille absente affiche « taille inconnue », une valeur qui n'est pas un
+    entier d'octets positif ou nul « indisponible » : aucune valeur inconnue
+    n'est remplacée par zéro. Le dixième est tronqué, sans décimale nulle
+    inutile, et une petite valeur positive garde une borne (« < 0,1 Mio »).
+    """
+    if valeur is None:
+        return TAILLE_INCONNUE
+    if isinstance(valeur, bool) or not isinstance(valeur, int) or valeur < 0:
+        return TAILLE_INTERPRETABLE_ABSENTE
+    if valeur == 0:
+        return "0 Mio"
+    if valeur * 10 < OCTETS_PAR_MIO:
+        return "< 0,1 Mio"
+    if valeur < OCTETS_PAR_GIO:
+        return _decimal(valeur, OCTETS_PAR_MIO, "Mio")
+    return _decimal(valeur, OCTETS_PAR_GIO, "Gio")
+
+
+def _decimal(nombre: int, unite: int, suffixe: str) -> str:
+    """Valeur en unité binaire, tronquée au dixième, sans décimale nulle inutile."""
+    dixiemes = math.floor((nombre / unite) * 10)
+    entiers, reste = divmod(dixiemes, 10)
+    return f"{entiers} {suffixe}" if reste == 0 else f"{entiers},{reste} {suffixe}"
 
 def _run_models_list(
     arguments: argparse.Namespace,

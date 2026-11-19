@@ -9,6 +9,9 @@ pour l'accueil et les ressources fixes servies. Le test de parité confronte
 cette table aux routes réelles de ``create_app`` et à l'analyseur CLI : une
 route sans entrée, une entrée sans route, une commande inexistante ou une page
 sans commande de lecture y fait échouer la suite.
+Les exclusions admises et les commandes de lecture sont listées dans
+``tests/test_parity.py``, hors de ce module : élargir la table exige aussi de
+modifier ce test.
 """
 
 from __future__ import annotations
@@ -30,10 +33,6 @@ class RouteParity:
     commands: tuple[tuple[str, ...], ...] = ()
     exclusion: str = ""
 
-
-#: Seules ces routes peuvent être exclues : l'accueil et les ressources fixes.
-#: Toute page de consultation doit porter une commande de lecture.
-ROUTES_EXCLUES_AUTORISEES: frozenset[str] = frozenset({"/", "/sumi.css", "/app.css"})
 
 #: Table de parité web/CLI, confrontée aux routes réelles et à l'analyseur CLI.
 WEB_CLI_PARITY: tuple[RouteParity, ...] = (

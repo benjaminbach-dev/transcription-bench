@@ -2,7 +2,9 @@
 
 Le sens est inversé : chaque page de consultation a une commande de lecture ; une
 commande sans page est admise. Seuls l'accueil et les ressources fixes peuvent
-être exclus.
+être exclus. Les listes admises (exclusions, commandes de lecture) sont fixées
+ici, hors du module de production : élargir la table exige aussi de modifier ce
+test.
 """
 
 from __future__ import annotations
@@ -15,10 +17,25 @@ from pathlib import Path
 
 from transcription_bench import cli
 from transcription_bench.commands import COMMANDS
-from transcription_bench.parity import ROUTES_EXCLUES_AUTORISEES, WEB_CLI_PARITY
+from transcription_bench.parity import WEB_CLI_PARITY
 from transcription_bench.web import ConfigApplication, ServicesApplication, create_app
 
 PORT_TEST = 8765
+
+#: Seules ces routes peuvent être exclues de la table : l'accueil et les
+#: ressources fixes.
+ROUTES_EXCLUES_AUTORISEES: frozenset[str] = frozenset({"/", "/sumi.css", "/app.css"})
+
+#: Seules ces commandes peuvent être associées à une page de consultation.
+COMMANDES_DE_LECTURE: frozenset[tuple[str, ...]] = frozenset(
+    {
+        ("results", "list"),
+        ("results", "show"),
+        ("results", "explain"),
+        ("results", "history"),
+        ("compare",),
+    }
+)
 
 
 class PariteWebCliTest(unittest.TestCase):
@@ -95,17 +112,28 @@ class PariteWebCliTest(unittest.TestCase):
                         "une exclusion doit documenter sa raison",
                     )
 
-    def test_seuls_l_accueil_et_les_ressources_sont_exclus(self) -> None:
-        """Une nouvelle page sans commande de lecture fait échouer la suite."""
+    def test_exclusions_de_la_table_egales_a_la_liste_blanche(self) -> None:
+        """Une exclusion non listée ici, ou une entrée listée sans exclusion, échoue."""
+        exclues = {entree.rule for entree in WEB_CLI_PARITY if not entree.commands}
+        self.assertEqual(
+            exclues,
+            ROUTES_EXCLUES_AUTORISEES,
+            "exclusions de la table différentes de la liste blanche de ce test",
+        )
+
+    def test_commandes_associees_aux_pages_sont_de_lecture(self) -> None:
+        """Une page de consultation ne mène qu'à une commande de lecture."""
         for entree in WEB_CLI_PARITY:
-            if entree.commands:
-                continue
-            with self.subTest(route=f"{entree.method} {entree.rule}"):
-                self.assertIn(
-                    entree.rule,
-                    ROUTES_EXCLUES_AUTORISEES,
-                    "une page de consultation doit avoir une commande de lecture",
-                )
+            for chemin in entree.commands:
+                with self.subTest(
+                    route=f"{entree.method} {entree.rule}",
+                    commande=" ".join(chemin),
+                ):
+                    self.assertIn(
+                        chemin,
+                        COMMANDES_DE_LECTURE,
+                        "commande d'action associée à une page de consultation",
+                    )
 
 
 if __name__ == "__main__":

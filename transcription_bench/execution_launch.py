@@ -23,7 +23,7 @@ from transcription_bench.executions import (
     ConfigurationExecutions,
     DemandeExecution,
     refuser_champs_repetes,
-    reglages_depuis_formulaire,
+    reglages_depuis_champs,
 )
 from transcription_bench.operations import TYPE_EXECUTION, CreneauOperations
 
@@ -66,7 +66,7 @@ def validate_execution_fields(
         modele=_first_value(fields, "modele") or "",
         audios=_all_values(fields, "audios"),
         threads=_first_value(fields, "threads") or "",
-        reglages=reglages_depuis_formulaire(dict(fields)),
+        reglages=reglages_depuis_champs(dict(fields)),
         moteur=_first_value(fields, "moteur"),
     )
 

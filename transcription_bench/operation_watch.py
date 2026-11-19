@@ -150,8 +150,8 @@ class OperationWatch:
         # finit son travail pendant la clôture.
         self._operations.passer_a_l_arret()
         if self._execution is not None and self._execution.en_cours():
-            # Arrêt demandé comme par l'utilisateur, non par le serveur : le journal
-            # du créneau nomme ce motif, comme la page web.
+            # Arrêt demandé comme par l'utilisateur : le journal du créneau nomme
+            # ce motif.
             try:
                 outcome = self._execution.arreter_execution()
             except Exception as error:
