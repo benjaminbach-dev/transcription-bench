@@ -1,10 +1,14 @@
 # transcription-bench
 
 ## Objectif et périmètre
-Prototype local de comparaison de modèles de transcription française sur CPU,
-sous Linux x64 et Windows x64. Ce n'est pas un produit clinique validé.
+Prototype local de comparaison, sur CPU, sous Linux x64 et Windows x64, de modèles
+de transcription française et de LLM d'extraction structurée (grilles Markdown
+sous `grilles/`) appliqués à ces transcriptions. Ce n'est pas un produit clinique validé.
+Le programme mesure les ressources et présente les résultats ; il ne juge pas leur qualité
+(jugement par un humain ou un agent local, extérieur au programme).
 Répondre et documenter en français. Distinguer mesures locales, faits documentaires
-et hypothèses ; ne jamais présenter une transcription fluide comme médicalement correcte.
+et hypothèses ; ne jamais présenter une transcription fluide ni une grille bien
+remplie comme médicalement correctes.
 
 ## Sources de contexte
 - Mémoire projet Basic Memory : `transcription-bench`, dossier versionné `.basic-memory/`,
@@ -34,17 +38,17 @@ et hypothèses ; ne jamais présenter une transcription fluide comme médicaleme
 - uv et Python 3.12 géré par uv ; ne pas modifier le Python système.
 - Environnement du serveur séparé de ceux des moteurs ; aucune bibliothèque de
   moteur importée dans le serveur. CPU uniquement, sans GPU ni Vulkan.
-- HTML rendu par Jinja/Flask, fonctionnel sans JavaScript ; amélioration progressive
-  autorisée par un seul fichier local `/app.js` vanilla chargé avec `defer`, sans
-  dépendance, CDN ni étape de compilation. Aucun script inline, attribut `on…`,
-  `eval`, `new Function` ou code issu des modèles ; CSP stricte selon le design D6
-  de `refondre-parcours-resultats`, sans `unsafe-inline` ni `unsafe-eval`.
+- Interface web rendue par Jinja/Flask. Cible (change `alleger-interface-web`) :
+  consultation seule (résultats, comparaisons, historique ; extractions après
+  `ajouter-bench-extraction`), GET/HEAD uniquement, aucun script, CSP
+  `script-src 'none'` ; la CLI est la seule interface d'action. Tant que ce change
+  n'est pas appliqué : POST existants protégés par Host/Origin/CSRF, aucune action
+  par GET, seul script local `/app.js`, sans script inline, `on…`, `eval` ni `unsafe-*`.
 - Feuilles de style locales uniquement : Sumi.css figé et `app.css` applicative
   (composants, tailles, espacements et grille), palette Flexoki et contrastes
   clair/sombre conservés ; aucune seconde bibliothèque CSS ni CDN.
-- Conserver les validations serveur, Host/Origin/CSRF, le confinement des chemins
-  et l'échappement ; aucune action modificatrice par GET. Une seule opération
-  longue, sans file d'attente.
+- Conserver les validations serveur, le contrôle Host, le confinement des chemins
+  et l'échappement. Une seule opération longue, sans file d'attente.
 - Installations et téléchargements explicites ; inférences exclusivement locales
   et hors ligne, sans exécution de code distant.
 
@@ -86,9 +90,10 @@ activé par une modification locale de fichier.
 - Tests sous Linux et Windows avec moteur factice et données synthétiques
   générées localement dans le job ; aucun accès réseau externe pendant les
   tests, loopback autorisé pour les sondes HTTP.
-- Jobs moteurs manuels : installation des trois environnements depuis leurs
-  verrous et contrôle d'import ; inférences CPU uniquement des quatre
+- Jobs moteurs manuels : installation des trois environnements de transcription
+  depuis leurs verrous et contrôle d'import ; inférences CPU uniquement des quatre
   combinaisons et révisions arrêtées dans OpenSpec et dans le harnais CI.
+  Le moteur d'extraction `llama-cpp` n'est pas couvert par la CI sans nouvel accord.
 - Téléchargements explicites avant l'inférence ; un seul modèle par job ; aucun
   modèle ni famille supplémentaire sans nouvel accord. Respecter les licences
   et conditions d'accès, sans jeton ni contournement d'un dépôt restreint.
@@ -108,8 +113,9 @@ activé par une modification locale de fichier.
   du runner pour vérifier une hypothèse sans accord spécifique.
 
 ## Données et secrets
-- Audios, poids, environnements et résultats restent sous `data/`, hors Git.
-- Aucun audio ni transcription envoyé à un service externe, y compris pour les tests.
+- Audios, poids, environnements, résultats et extractions restent sous `data/`, hors Git.
+  Les grilles versionnées ne contiennent aucune donnée personnelle.
+- Aucun audio, transcription ni extraction envoyé à un service externe, y compris pour les tests.
   Les essais CI autorisés utilisent exclusivement de la parole synthétique créée
   sur le runner, sans import d'audio utilisateur et sans publication de l'audio
   ou de sa transcription. Cette exception ne vaut pas autorisation d'exporter des
