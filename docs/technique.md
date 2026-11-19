@@ -279,6 +279,7 @@ sans lire ni écrire dans `data/`.
 |---|---|
 | `audios list` | audios du dossier d'entrée |
 | `data check` | état des dossiers de données |
+| `grids list`, `grids show NOM` | grilles d'extraction : liste et interprétation avant lancement |
 | `engines list`, `engines install ID`, `engines log ID [--limit N]` | moteurs : états, installation, journal d'installation |
 | `models list`, `models check/download REPO --engine E [--revision R] [--file F]`, `models delete ENGINE KEY` | modèles : inventaire, vérification, téléchargement, suppression |
 | `run options`, `run check/start --model REF --audio NAME... [--threads N] [--setting NOM=VALEUR]...` | exécutions : préparation, vérification à blanc, lancement |

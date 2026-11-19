@@ -1,3 +1,7 @@
 # Copie figée de Sumi.css : aucune conversion de fin de ligne, sinon le SHA-256
 # consigné dans transcription_bench/web/ressources/PROVENANCE.md changerait.
 transcription_bench/web/ressources/sumi.min.css -text
+
+# Grilles d'extraction : aucune conversion de fin de ligne, pour que l'empreinte
+# SHA-256 consignée reste identique sur tout OS, Windows compris.
+grilles/*.md -text

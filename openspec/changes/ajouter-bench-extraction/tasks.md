@@ -4,10 +4,10 @@
 
 ## 1. Grilles
 
-- [ ] 1.1 Module `transcription_bench/grilles.py` : découverte confinée de `grilles/`, lecture bornée, interprétation (D1), clés, erreurs avec ligne et règle. Tests : cases simple/liste/composée/liste composée, règle « Liste » (`Liste.`, `Liste:`, `Liste :`, `Listes`, sans signe), consignes générales, blocs de code fermés et non fermés, `####`, `###` orphelin, normalisation des clés (accents, `œ`, ponctuation répétée), doublons, clé réservée, limites de taille et de nombre, noms et liens sortants refusés.
-- [ ] 1.2 Génération déterministe du schéma (D2) et validateur interne du sous-ensemble. Tests : schéma attendu pour la grille d'exemple, sortie conforme, case manquante, clé inconnue, clé JSON dupliquée, liste vide, chaîne vide, mauvais type, `null` accepté partout sauf `autres_informations`.
-- [ ] 1.3 Gabarit de consignes versionné (D3) produisant message système et message utilisateur. Tests : présence des règles fixes, des consignes de la grille et de chaque case ; version consignée.
-- [ ] 1.4 Grille d'exemple `grilles/consultation-generale.md` (D1) et commandes `grids list`, `grids show` avec `--json`, instantanés de clés, codes 0/2, aucune écriture ni réseau.
+- [x] 1.1 Module `transcription_bench/grilles.py` : découverte confinée de `grilles/`, lecture bornée, interprétation (D1), clés, erreurs avec ligne et règle. Tests : cases simple/liste/composée/liste composée, règle « Liste » (`Liste.`, `Liste:`, `Liste :`, `Listes`, sans signe), consignes générales, blocs de code fermés et non fermés, `####`, `###` orphelin, normalisation des clés (accents, `œ`, ponctuation répétée), doublons, clé réservée, limites de taille et de nombre, noms et liens sortants refusés.
+- [x] 1.2 Génération déterministe du schéma (D2) et validateur interne du sous-ensemble. Tests : schéma attendu pour la grille d'exemple, sortie conforme, case manquante, clé inconnue, clé JSON dupliquée, liste vide, chaîne vide, mauvais type, `null` accepté partout sauf `autres_informations`.
+- [x] 1.3 Gabarit de consignes versionné (D3) produisant message système et message utilisateur. Tests : présence des règles fixes, des consignes de la grille et de chaque case ; version consignée.
+- [x] 1.4 Grille d'exemple `grilles/consultation-generale.md` (D1) et commandes `grids list`, `grids show` avec `--json`, instantanés de clés, codes 0/2, aucune écriture ni réseau.
 
 ## 2. Moteurs et modèles
 

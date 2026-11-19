@@ -28,11 +28,12 @@ from unittest import mock
 
 import psutil
 
-from transcription_bench import cli, command_session, paths
+from transcription_bench import cli, command_session, grilles, paths
 from transcription_bench.command_session import (
     CODE_ECHEC,
     CODE_INTERRUPTED,
     CODE_REFUS,
+    CODE_SUCCESS,
     CommandSpec,
     run_session,
 )
@@ -648,6 +649,45 @@ def _tuer_si_vivant(pid: int) -> None:
         psutil.Process(pid).kill()
     except (psutil.NoSuchProcess, psutil.ZombieProcess, psutil.AccessDenied):
         pass
+
+class LectureGrillesSessionTest(SessionTestCase):
+    """« grids » suit la session standard (tâche 1.4) : verrou, refus, libération."""
+
+    def test_grids_refused_while_an_instance_holds_the_lock(self) -> None:
+        verrou = VerrouInstance(self.base).acquerir()
+        self.addCleanup(verrou.liberer)
+        erreur = io.StringIO()
+
+        with (
+            mock.patch.object(paths, "DOSSIER_DATA", self.base),
+            mock.patch.object(grilles, "discover_grids") as decouverte,
+            contextlib.redirect_stderr(erreur),
+        ):
+            code = cli.main(["grids", "list"], recuperer=_rien)
+
+        self.assertEqual(code, CODE_REFUS)
+        decouverte.assert_not_called()
+        self.assertIn("autre instance", erreur.getvalue())
+
+    def test_grids_runs_in_session_and_releases_the_lock(self) -> None:
+        recuperations: list[Path] = []
+
+        with (
+            mock.patch.object(paths, "DOSSIER_DATA", self.base),
+            mock.patch.object(
+                command_session,
+                "open_data_session",
+                wraps=command_session.open_data_session,
+            ) as session,
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            code = cli.main(["grids", "list"], recuperer=recuperations.append)
+
+        self.assertEqual(code, CODE_SUCCESS)
+        session.assert_called_once()
+        self.assertEqual(len(recuperations), 1)
+        self.assertTrue(self.base.is_dir(), "la session prépare data/")
+        self.assertLibre()
 
 
 if __name__ == "__main__":

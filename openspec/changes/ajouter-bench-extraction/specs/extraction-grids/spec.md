@@ -63,7 +63,7 @@ L'empreinte d'une grille SHALL être le SHA-256 de son fichier. Chaque exécutio
 - **THEN** l'ancienne extraction s'affiche avec sa copie de grille d'origine, et les nouvelles extractions forment un groupe distinct
 
 ### Requirement: Consultation des grilles sans écriture
-`grids list` SHALL lister les grilles avec nom, titre, nombre de cases, empreinte et état (valide ou motif d'invalidité). `grids show NOM` SHALL présenter les cases interprétées, le schéma généré et le message système complet qui serait envoyé au modèle. Ces commandes MUST NOT écrire de fichier ni accéder au réseau.
+`grids list` SHALL lister les grilles avec nom, titre, nombre de cases, empreinte et état (valide ou motif d'invalidité). `grids show NOM` SHALL présenter les cases interprétées, le schéma généré et le message système complet qui serait envoyé au modèle. Ces commandes sont de pures lectures : elles MUST NOT écrire de résultat ni accéder au réseau ; elles partagent le socle commun de toute commande (verrou d'instance, récupération des exécutions abandonnées, préparation des dossiers de données).
 
 #### Scenario: Vérifier l'interprétation avant de lancer
 - **WHEN** l'utilisateur ou un agent modifie une grille puis exécute `grids show`

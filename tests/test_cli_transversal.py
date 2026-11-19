@@ -88,6 +88,8 @@ COMMANDES_LECTURE: tuple[list[str], ...] = (
     ["results", "explain"],
     ["results", "show", IDENTIFIANT],
     ["compare", EMPREINTE_A, f"{IDENTIFIANT}:1", f"{IDENTIFIANT_AUTRE}:1"],
+    ["grids", "list"],
+    ["grids", "show", "consultation-generale"],
 )
 
 #: Refus attendus dans le sous-processus : arguments hostiles ou ressources

@@ -1,4 +1,5 @@
-"""Commandes publiques de lecture : « audios list », « data check » (tâche 2.1),
+"""Commandes publiques de lecture : « grids list » et « grids show » (tâche 1.4 de
+`ajouter-bench-extraction`), « audios list », « data check » (tâche 2.1),
 « engines list » et « engines log » (tâche 2.2), « models list » (tâche 2.3),
 « run options » (tâche 2.4), puis « results list », « results history » et
 « results explain » (tâche 2.5), puis « results show » et « compare » (tâche 2.6).
@@ -94,8 +95,15 @@ réutilise les mêmes services sans dupliquer le métier :
 
 Les commandes s'exécutent dans une session de données (`run_session`) : verrou
 d'instance, récupération et préparation avant l'action, libération garantie
-après. Sortie : texte français concis par défaut ; avec `--json`, un unique
-objet `schema: 1` sur la sortie standard, les diagnostics sur la sortie d'erreur.
+après. « grids list » et « grids show NOM » (tâche 1.4 de
+`ajouter-bench-extraction`) lisent le dossier versionné `grilles/` dans cette
+même session. Un refus (nom sortant ou mal formé, grille inconnue ou invalide)
+donne le code 2, avec le motif sur la sortie d'erreur et rien sur la sortie
+standard en `--json`. Leur `--json` porte `schema: 1`, puis `grids` (liste) ou
+les cases, le schéma de sortie (`output_schema`), le message système
+(`system_message`) et sa version (`version_consignes`). Sortie : texte français
+concis par défaut ; avec `--json`, un unique objet `schema: 1` sur la sortie
+standard, les diagnostics sur la sortie d'erreur.
 Les lectures n'interrogent pas le drapeau de signal pendant leur action (elles
 sont instantanées), mais `run_session` le consulte avant l'action et après la
 clôture : un signal reçu pendant une commande la fait rendre avec le code 3,
@@ -113,7 +121,7 @@ from typing import Any
 from engines.declarations import Reglage, TYPE_BOOLEEN, TYPE_CHOIX
 from engines.mesures_systeme import ETAT_ABSENT, ETAT_VERSION_INCONNUE
 from engines.registre import MoteurInconnu
-from transcription_bench import paths
+from transcription_bench import consignes_grilles, grilles, paths, schema_grilles
 from transcription_bench.audios import AudioListe, lister_audios
 from transcription_bench.command_session import (
     CODE_ECHEC,
@@ -166,6 +174,7 @@ from transcription_bench.executions import (
     VALEUR_VRAIE,
     refuser_champs_repetes,
 )
+from transcription_bench.grilles import Field, GridSummary
 from transcription_bench.gestion_modeles import (
     ModeleLocal,
     cle_stockage,
@@ -2148,8 +2157,190 @@ COMPARE = CommandSpec(
     run=_run_compare,
 )
 
+#: « grids » : messages fixes de la lecture des grilles.
+NO_GRID_MESSAGE = "Aucune grille dans grilles/."
+GRID_FIELD_TYPES = {
+    (False, False): "texte",
+    (False, True): "liste de textes",
+    (True, False): "composée",
+    (True, True): "liste composée",
+}
+
+
+def configure_grids_show(parser: argparse.ArgumentParser) -> None:
+    """Argument de « grids show » : le nom de la grille, sans extension."""
+    parser.add_argument(
+        "name",
+        metavar="NOM",
+        help="nom de la grille sans extension, comme listé par « grids list »",
+    )
+
+
+def grid_field_type(field: Field) -> str:
+    """Type D2 d'une case ou sous-case : texte, liste, composée ou liste composée."""
+    return GRID_FIELD_TYPES[(field.composed, field.is_list)]
+
+
+def serialize_grid_summary(summary: GridSummary) -> dict[str, Any]:
+    """Entrée de « grids list » : état valide ou motif d'invalidité."""
+    return {
+        "name": summary.name,
+        "title": summary.title,
+        "field_count": summary.field_count,
+        "sha256": summary.sha256,
+        "valid": summary.error is None,
+        "error": summary.error,
+    }
+
+
+def serialize_grid_field(field: Field) -> dict[str, Any]:
+    """Case interprétée de « grids show » : clé, libellé, type, consigne, sous-cases."""
+    return {
+        "key": field.key,
+        "label": field.label,
+        "type": grid_field_type(field),
+        "instruction": field.instructions,
+        "subfields": [serialize_grid_field(sub) for sub in field.subfields],
+    }
+
+
+def _run_grids_list(
+    arguments: argparse.Namespace,
+    services: DataServices,
+    signal_flag: SignalFlag,
+) -> int:
+    """Liste les grilles de `grilles/` avec leur état, sans rien écrire."""
+    output = output_from_arguments(arguments)
+    summaries = grilles.discover_grids()
+    output.result(
+        {"grids": [serialize_grid_summary(summary) for summary in summaries]},
+        grids_list_text_lines(summaries),
+    )
+    return CODE_SUCCESS
+
+
+def grids_list_text_lines(summaries: Sequence[GridSummary]) -> list[str]:
+    """Lignes de texte de « grids list » : une grille par ligne."""
+    if not summaries:
+        return [NO_GRID_MESSAGE]
+    lines = []
+    for summary in summaries:
+        if summary.error is not None:
+            lines.append(f"{summary.name} : invalide — {summary.error}")
+            continue
+        cases = "case" if summary.field_count == 1 else "cases"
+        lines.append(
+            f"{summary.name} : « {summary.title} », {summary.field_count} {cases}, "
+            f"empreinte {summary.sha256}, valide"
+        )
+    return lines
+
+
+def _run_grids_show(
+    arguments: argparse.Namespace,
+    services: DataServices,
+    signal_flag: SignalFlag,
+) -> int:
+    """Présente l'interprétation d'une grille, son schéma et son message système.
+
+    Un nom mal formé, sortant du dossier ou inconnu est refusé avant toute
+    lecture ; une grille invalide donne le code 2 avec la ligne et la règle.
+    """
+    output = output_from_arguments(arguments)
+    try:
+        grid = grilles.read_grid(arguments.name)
+    except (ValeurRefusee, grilles.GridUnreadable) as error:
+        output.diagnostic(str(error))
+        return CODE_REFUS
+    if not grid.valid:
+        output.diagnostic(
+            f"grille invalide ({grid.name}) : {grid.error.message} "
+            f"[règle : {grid.error.rule}]"
+        )
+        return CODE_REFUS
+    schema = schema_grilles.grid_schema(grid)
+    message = consignes_grilles.system_message(grid)
+    output.result(
+        {
+            "name": grid.name,
+            "title": grid.title,
+            "sha256": grid.sha256,
+            "general_instructions": grid.general_instructions,
+            "fields": [serialize_grid_field(field) for field in grid.fields],
+            "output_schema": schema,
+            "system_message": message.text,
+            "version_consignes": message.version,
+        },
+        grids_show_text_lines(grid, schema, message),
+    )
+    return CODE_SUCCESS
+
+
+def grids_show_text_lines(
+    grid: grilles.Grid,
+    schema: dict[str, Any],
+    message: consignes_grilles.SystemMessage,
+) -> list[str]:
+    """Lignes de texte de « grids show » : cases, schéma, puis message système."""
+    lines = [
+        f"Grille « {grid.name} » : {grid.title}",
+        f"Empreinte SHA-256 : {grid.sha256}",
+        "",
+    ]
+    if grid.general_instructions:
+        lines += ["Consignes générales :", grid.general_instructions, ""]
+    lines.append("Cases interprétées (clé, libellé, type et consigne) :")
+    for field in grid.fields:
+        lines += grid_field_text_lines(field, "  ")
+    lines += [
+        "",
+        "Schéma généré :",
+        schema_grilles.schema_to_json(schema),
+        "",
+        f"Message système (version des consignes {message.version}) :",
+        message.text,
+    ]
+    return lines
+
+
+def grid_field_text_lines(field: Field, indent: str) -> list[str]:
+    """Une case puis ses sous-cases, avec leur consigne sur les lignes suivantes."""
+    lines = [f"{indent}{field.key} : {field.label}, {grid_field_type(field)}"]
+    if field.instructions is None:
+        lines.append(f"{indent}  consigne : aucune")
+    else:
+        lines.append(f"{indent}  consigne :")
+        lines += [f"{indent}    {ligne}".rstrip() for ligne in field.instructions.splitlines()]
+    for sub in field.subfields:
+        lines += grid_field_text_lines(sub, indent + "  ")
+    return lines
+
+
+GRIDS_LIST = CommandSpec(
+    name="list",
+    help_text="liste les grilles de grilles/ avec leur état (lecture seule)",
+    configure=configure_no_arguments,
+    run=_run_grids_list,
+)
+
+GRIDS_SHOW = CommandSpec(
+    name="show",
+    help_text=(
+        "présente les cases interprétées, le schéma et le message système "
+        "d'une grille (lecture seule)"
+    ),
+    configure=configure_grids_show,
+    run=_run_grids_show,
+)
+
+GRIDS = CommandGroup(
+    name="grids",
+    help_text="grilles d'extraction versionnées dans grilles/ (lecture seule)",
+    commands=(GRIDS_LIST, GRIDS_SHOW),
+)
+
 #: Enregistrement public : groupes « audios », « data », « engines »,
-#: « models », « results » et « run », et commande racine « compare », sans
+#: « grids », « models », « results » et « run », et commande racine « compare », sans
 #: commande future vide. `cli` y ajoute `serve` et refuse les doublons.
 COMMANDS: tuple[CommandSpec | CommandGroup, ...] = (
     AUDIOS,
@@ -2159,4 +2350,5 @@ COMMANDS: tuple[CommandSpec | CommandGroup, ...] = (
     RESULTS,
     RUN,
     COMPARE,
+    GRIDS,
 )

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import contextlib
 import functools
+import hashlib
 import io
 import json
 import os
@@ -62,10 +63,13 @@ from transcription_bench import (
     cli,
     commands,
     composition,
+    consignes_grilles,
     gestion_modeles,
+    grilles,
     moteurs,
     operations,
     paths,
+    schema_grilles,
 )
 from transcription_bench.executions import (
     CLE_MODELE_FACTICE,
@@ -243,6 +247,18 @@ JSON_SNAPSHOT_KEYS = {
     ("results", "explain"): ["schema", "title", "intro", "sections"],
     ("results", "show"): ["schema", *RUN_DETAIL_KEYS],
     ("compare",): ["schema", *COMPARISON_KEYS],
+    ("grids", "list"): ["schema", "grids"],
+    ("grids", "show"): [
+        "schema",
+        "name",
+        "title",
+        "sha256",
+        "general_instructions",
+        "fields",
+        "output_schema",
+        "system_message",
+        "version_consignes",
+    ],
 }
 #: Clés d'un événement de journal émis en flux (tâche 3.1), commun à toute opération.
 JOURNAL_EVENT_KEYS = ["schema", "event", "operation", "generation", "line"]
@@ -344,6 +360,41 @@ HASH_ENTRY_KEYS = [
 ]
 #: Clés d'une portion de texte de l'aide, dans l'ordre du module (tâche 2.5).
 HELP_PART_KEYS = ["kind", "text"]
+#: Clés d'un résumé de grille (« grids list »), dans l'ordre du sérialiseur (tâche 1.4).
+GRID_SUMMARY_KEYS = ["name", "title", "field_count", "sha256", "valid", "error"]
+#: Clés d'une case interprétée (« grids show »), sous-cases comprises (tâche 1.4).
+GRID_FIELD_KEYS = ["key", "label", "type", "instruction", "subfields"]
+#: Empreinte SHA-256 de `grilles/consultation-generale.md`, copie verbatim du design D1.
+EMPREINTE_GRILLE_EXEMPLE = (
+    "ca607fea198f130be16de442c9362635f30fac232c8e47262b2222716e34b961"
+)
+#: Cases de premier niveau de la grille d'exemple : clé, libellé, type, consigne.
+CASES_GRILLE_EXEMPLE = [
+    ("qui", "Qui ?", "texte", "Personnes présentes et leur rôle (patient, accompagnant, soignant)."),
+    ("quand", "Quand ?", "texte", "Date, moment ou délai évoqués pour les faits rapportés."),
+    ("motif_de_consultation", "Motif de consultation ?", "texte", None),
+    (
+        "symptomes_declares",
+        "Symptômes déclarés ?",
+        "liste de textes",
+        "Liste. Un symptôme par entrée, avec durée ou intensité si dites.",
+    ),
+    (
+        "examens_pratiques",
+        "Examens pratiqués ?",
+        "liste de textes",
+        "Liste. Examen clinique ou complémentaire réalisé ou demandé, avec résultat s'il est dit.",
+    ),
+    ("doute_restant", "Doute restant ?", "texte", "Hypothèses non tranchées, points à vérifier."),
+    ("prescription", "Prescription ?", "liste composée", "Liste."),
+    ("prise_en_charge", "Prise en charge ?", "texte", "Orientation, conseils, suivi prévu."),
+]
+#: Sous-cases de « Prescription ? » : clé, libellé, type, consigne.
+SOUS_CASES_PRESCRIPTION = [
+    ("medicament", "Médicament", "texte", None),
+    ("posologie", "Posologie", "texte", None),
+    ("duree", "Durée", "texte", None),
+]
 
 
 class CommandTestCase(unittest.TestCase):
@@ -481,6 +532,266 @@ class DataCheckTest(CommandTestCase):
             self.assertIn(f"{name} : {self.base / name}", stdout)
         self.assertIn("(présent)", stdout)
         self.assertNotIn("(absent)", stdout)
+
+
+def _cases_resumees(cases: list[dict[str, object]]) -> list[tuple[object, ...]]:
+    """Clé, libellé, type et consigne de chaque case de premier niveau."""
+    return [
+        (case["key"], case["label"], case["type"], case["instruction"])
+        for case in cases
+    ]
+
+
+class GrilleExempleTest(CommandTestCase):
+    """Grille d'exemple du dépôt réel, relue sans toucher à `data/`."""
+
+    def run_grids(self, argv: list[str]) -> tuple[int, str, str]:
+        """Commande « grids » sur le dossier `grilles/` réel du dépôt."""
+        return self.run_command(["grids", *argv])
+
+    def test_liste_sur_depot_frais_prepare_data(self) -> None:
+        code, stdout, stderr = self.run_grids(["list", "--json"])
+
+        self.assertEqual((code, stderr), (CODE_SUCCESS, ""))
+        lignes = [ligne for ligne in stdout.splitlines() if ligne]
+        self.assertEqual(len(lignes), 1, "un seul objet JSON sur la sortie standard")
+        data = json.loads(lignes[0])
+        self.assertEqual(list(data.keys()), JSON_SNAPSHOT_KEYS[("grids", "list")])
+        self.assertEqual(data["schema"], 1)
+        entree = next(g for g in data["grids"] if g["name"] == "consultation-generale")
+        self.assertEqual(list(entree.keys()), GRID_SUMMARY_KEYS)
+        self.assertEqual(entree["title"], "Consultation de médecine générale")
+        self.assertEqual(entree["field_count"], len(CASES_GRILLE_EXEMPLE))
+        self.assertEqual(entree["sha256"], EMPREINTE_GRILLE_EXEMPLE)
+        contenu = (paths.RACINE_PROJET / "grilles" / "consultation-generale.md").read_bytes()
+        self.assertEqual(hashlib.sha256(contenu).hexdigest(), EMPREINTE_GRILLE_EXEMPLE)
+        self.assertTrue(entree["valid"])
+        self.assertIsNone(entree["error"])
+        # Session standard : data/ est préparé ; grilles/ n'est jamais créé.
+        self.assertTrue(self.base.exists())
+
+    def test_show_json_presente_cases_schema_et_message(self) -> None:
+        code, stdout, stderr = self.run_grids(["show", "consultation-generale", "--json"])
+
+        self.assertEqual((code, stderr), (CODE_SUCCESS, ""))
+        lignes = [ligne for ligne in stdout.splitlines() if ligne]
+        self.assertEqual(len(lignes), 1, "un seul objet JSON sur la sortie standard")
+        data = json.loads(lignes[0])
+        self.assertEqual(list(data.keys()), JSON_SNAPSHOT_KEYS[("grids", "show")])
+        self.assertEqual(data["schema"], 1)
+        self.assertEqual(data["name"], "consultation-generale")
+        self.assertEqual(data["title"], "Consultation de médecine générale")
+        self.assertEqual(data["sha256"], EMPREINTE_GRILLE_EXEMPLE)
+        self.assertEqual(
+            data["general_instructions"],
+            "Consignes : n'extraire que ce qui est dit pendant la consultation.",
+        )
+        self.assertEqual(_cases_resumees(data["fields"]), CASES_GRILLE_EXEMPLE)
+        for case in data["fields"]:
+            self.assertEqual(list(case.keys()), GRID_FIELD_KEYS)
+        prescription = data["fields"][6]
+        self.assertEqual(
+            [
+                (sub["key"], sub["label"], sub["type"], sub["instruction"])
+                for sub in prescription["subfields"]
+            ],
+            SOUS_CASES_PRESCRIPTION,
+        )
+        for sub in prescription["subfields"]:
+            self.assertEqual(list(sub.keys()), GRID_FIELD_KEYS)
+            self.assertEqual(sub["subfields"], [])
+        # Schéma : toutes les cases requises, `autres_informations` en dernier.
+        schema = data["output_schema"]
+        cles_attendues = [case[0] for case in CASES_GRILLE_EXEMPLE] + [
+            "autres_informations"
+        ]
+        self.assertEqual(schema["required"], cles_attendues)
+        self.assertEqual(list(schema["properties"].keys()), cles_attendues)
+        self.assertFalse(schema["additionalProperties"])
+        # Message système complet et version du gabarit.
+        self.assertEqual(data["version_consignes"], consignes_grilles.VERSION_CONSIGNES)
+        message = data["system_message"]
+        self.assertIn("Consignes générales de la grille :", message)
+        self.assertIn(
+            "Consignes : n'extraire que ce qui est dit pendant la consultation.",
+            message,
+        )
+        for cle in cles_attendues[:-1]:
+            self.assertIn(f"Clé : `{cle}`", message)
+        for cle, _, _, _ in SOUS_CASES_PRESCRIPTION:
+            self.assertIn(f"Clé : `{cle}`", message)
+        self.assertTrue(self.base.exists())
+
+    def test_show_json_est_deterministe(self) -> None:
+        _, premiere, _ = self.run_grids(["show", "consultation-generale", "--json"])
+        _, seconde, _ = self.run_grids(["show", "consultation-generale", "--json"])
+
+        self.assertEqual(premiere, seconde)
+
+    def test_show_texte_presente_chaque_case_schema_et_message(self) -> None:
+        code, stdout, stderr = self.run_grids(["show", "consultation-generale"])
+
+        self.assertEqual((code, stderr), (CODE_SUCCESS, ""))
+        self.assertIn("Grille « consultation-generale » : Consultation de médecine générale", stdout)
+        self.assertIn(f"Empreinte SHA-256 : {EMPREINTE_GRILLE_EXEMPLE}", stdout)
+        self.assertIn("  qui : Qui ?, texte", stdout)
+        self.assertIn("  symptomes_declares : Symptômes déclarés ?, liste de textes", stdout)
+        self.assertIn("  prescription : Prescription ?, liste composée", stdout)
+        self.assertIn("    medicament : Médicament, texte", stdout)
+        self.assertIn("    duree : Durée, texte", stdout)
+        self.assertIn("  motif_de_consultation : Motif de consultation ?, texte", stdout)
+        self.assertIn("    consigne : aucune", stdout)
+        grille = grilles.read_grid("consultation-generale")
+        self.assertIn(
+            schema_grilles.schema_to_json(schema_grilles.grid_schema(grille)), stdout
+        )
+        self.assertIn(consignes_grilles.system_message(grille).text, stdout)
+        self.assertIn(
+            f"version des consignes {consignes_grilles.VERSION_CONSIGNES}", stdout
+        )
+        self.assertTrue(self.base.exists())
+
+    def test_list_texte_affiche_nom_titre_cases_et_empreinte(self) -> None:
+        code, stdout, stderr = self.run_grids(["list"])
+
+        self.assertEqual((code, stderr), (CODE_SUCCESS, ""))
+        self.assertIn(
+            "consultation-generale : « Consultation de médecine générale », "
+            f"8 cases, empreinte {EMPREINTE_GRILLE_EXEMPLE}, valide",
+            stdout,
+        )
+
+
+class GrillesTemporairesTest(CommandTestCase):
+    """Grilles écrites dans un dépôt temporaire : invalides, refusées, absentes."""
+
+    GRILLE_VALIDE = "# Titre\n\n## Qui ?\n\n## Quand ?\nDate.\n"
+    #: Doublon : « Qui » (ligne 6) répète la clé de « Qui ? » (ligne 3).
+    GRILLE_INVALIDE = "# Titre\n\n## Qui ?\nTexte.\n\n## Qui\nDoublon.\n"
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.racine = self.base.parent / "depot"
+        self.racine.mkdir()
+        patcher = mock.patch.object(grilles, "RACINE_PROJET", self.racine)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def ecrire_grille(self, nom: str, texte: str) -> Path:
+        dossier = self.racine / grilles.GRID_DIR_NAME
+        dossier.mkdir(exist_ok=True)
+        chemin = dossier / nom
+        chemin.write_text(texte, encoding="utf-8")
+        return chemin
+
+    def test_dossier_absent_donne_liste_vide_sans_le_creer(self) -> None:
+        code, stdout, stderr = self.run_command(["grids", "list", "--json"])
+
+        self.assertEqual((code, stderr), (CODE_SUCCESS, ""))
+        self.assertEqual(json.loads(stdout)["grids"], [])
+        self.assertFalse((self.racine / grilles.GRID_DIR_NAME).exists())
+        self.assertTrue(self.base.exists())
+
+    def test_list_melange_valide_invalide_et_nom_refuse(self) -> None:
+        self.ecrire_grille("valide.md", self.GRILLE_VALIDE)
+        self.ecrire_grille("invalide.md", self.GRILLE_INVALIDE)
+        self.ecrire_grille("Majuscules.md", self.GRILLE_VALIDE)
+
+        code, stdout, stderr = self.run_command(["grids", "list", "--json"])
+
+        self.assertEqual((code, stderr), (CODE_SUCCESS, ""))
+        data = json.loads(stdout)
+        entrees = {entree["name"]: entree for entree in data["grids"]}
+        self.assertEqual(list(entrees), ["Majuscules.md", "invalide", "valide"])
+        for entree in data["grids"]:
+            self.assertEqual(list(entree.keys()), GRID_SUMMARY_KEYS)
+        valide = entrees["valide"]
+        self.assertTrue(valide["valid"])
+        self.assertEqual(valide["field_count"], 2)
+        self.assertIsNone(valide["error"])
+        invalide = entrees["invalide"]
+        self.assertFalse(invalide["valid"])
+        self.assertIsNone(invalide["field_count"], "un nombre de cases inconnu n'est pas zéro")
+        self.assertIn("ligne 6", invalide["error"])
+        self.assertIn("déjà définie", invalide["error"])
+        refusee = entrees["Majuscules.md"]
+        self.assertFalse(refusee["valid"])
+        self.assertEqual(refusee["error"], grilles.NAME_REJECTED_ERROR)
+        self.assertIsNone(refusee["sha256"])
+
+        code, stdout, _ = self.run_command(["grids", "list"])
+        self.assertEqual(code, CODE_SUCCESS)
+        self.assertIn("invalide : invalide — ligne 6", stdout)
+        self.assertIn("valide : « Titre », 2 cases", stdout)
+        self.assertIn("Majuscules.md : invalide — nom refusé", stdout)
+
+    def test_show_grille_invalide_refusee_avec_ligne_et_regle(self) -> None:
+        self.ecrire_grille("invalide.md", self.GRILLE_INVALIDE)
+
+        code, stdout, stderr = self.run_command(["grids", "show", "invalide", "--json"])
+
+        self.assertEqual(code, CODE_REFUS)
+        self.assertEqual(stdout, "", "aucune sortie JSON pour une grille refusée")
+        self.assertIn("grille invalide (invalide)", stderr)
+        self.assertIn("ligne 6", stderr)
+        self.assertIn("[règle : cle_dupliquee]", stderr)
+        self.assertNotIn("Traceback", stderr)
+
+    def test_show_bloc_de_code_non_ferme_refuse(self) -> None:
+        self.ecrire_grille("bloc.md", "# Titre\n\n## Qui ?\n```\nouvert\n")
+
+        code, stdout, stderr = self.run_command(["grids", "show", "bloc"])
+
+        self.assertEqual((code, stdout), (CODE_REFUS, ""))
+        self.assertIn("ligne 4", stderr)
+        self.assertIn("[règle : bloc_non_ferme]", stderr)
+
+    def test_grille_inconnue_refusee(self) -> None:
+        code, stdout, stderr = self.run_command(["grids", "show", "absente"])
+
+        self.assertEqual((code, stdout), (CODE_REFUS, ""))
+        self.assertIn("grille inconnue : absente", stderr)
+
+    def test_noms_hostiles_refuses_sans_lecture(self) -> None:
+        self.ecrire_grille("valide.md", self.GRILLE_VALIDE)
+        hostiles = [
+            "../secret",
+            "a/b",
+            "..",
+            "consultation-generale.md",
+            "Majuscules",
+            "a" * 65,
+        ]
+        for nom in hostiles:
+            with self.subTest(nom=nom[:20]), mock.patch.object(
+                grilles, "_read_file"
+            ) as lecture:
+                code, stdout, stderr = self.run_command(["grids", "show", nom, "--json"])
+
+                self.assertEqual((code, stdout), (CODE_REFUS, ""))
+                self.assertIn("grille refusée", stderr)
+                lecture.assert_not_called()
+
+    def test_lien_sortant_refuse_sans_lecture(self) -> None:
+        hors = self.base.parent / "hors.md"
+        hors.write_text(self.GRILLE_VALIDE, encoding="utf-8")
+        dossier = self.racine / grilles.GRID_DIR_NAME
+        dossier.mkdir()
+        try:
+            os.symlink(hors, dossier / "lien.md")
+        except (OSError, NotImplementedError):
+            self.skipTest("lien symbolique indisponible sur cette plateforme")
+
+        with mock.patch.object(grilles, "_read_file") as lecture:
+            code, stdout, stderr = self.run_command(["grids", "show", "lien"])
+            liste = self.run_command(["grids", "list", "--json"])
+
+        self.assertEqual((code, stdout), (CODE_REFUS, ""))
+        self.assertIn("sort du dossier autorisé", stderr)
+        lecture.assert_not_called()
+        entrees = {entree["name"]: entree for entree in json.loads(liste[1])["grids"]}
+        self.assertEqual(entrees["lien.md"]["error"], grilles.NAME_REJECTED_ERROR)
+        self.assertTrue(self.base.exists())
 
 
 class EnginesListTest(CommandTestCase):
