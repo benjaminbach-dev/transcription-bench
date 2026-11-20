@@ -969,7 +969,11 @@ class Utf8StreamTests(unittest.TestCase):
         configure_utf8_streams(flux)
         flux.write("Élève 中文\n")
         flux.flush()
-        self.assertEqual(flux.buffer.getvalue().decode("utf-8"), "Élève 中文\n")
+        # Le décodage UTF-8 reste strict ; seule la fin de ligne est celle du
+        # système (`TextIOWrapper` traduit `\n` en CRLF sous Windows).
+        self.assertEqual(
+            flux.buffer.getvalue().decode("utf-8"), "Élève 中文" + os.linesep
+        )
 
     def test_unencodable_surrogate_stays_valid_json(self) -> None:
         flux = io.TextIOWrapper(io.BytesIO(), encoding="ascii")
@@ -1017,7 +1021,12 @@ class Utf8StreamTests(unittest.TestCase):
             self.assertEqual(resultat.returncode, 0)
             objet = json.loads(sortie.read_bytes().decode("utf-8"))
             self.assertEqual(objet, {"schema": 1, "texte": "Élève 中文 😀"})
-            self.assertEqual(erreur.read_bytes().decode("utf-8"), "transcription-bench : é 中文\n")
+            # Le décodage UTF-8 reste strict ; `print` termine par la fin de
+            # ligne du système (CRLF sous Windows).
+            self.assertEqual(
+                erreur.read_bytes().decode("utf-8"),
+                "transcription-bench : é 中文" + os.linesep,
+            )
 
 
 class JsonOptionTests(unittest.TestCase):

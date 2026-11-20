@@ -115,6 +115,13 @@ class SocleGrillesTest(unittest.TestCase):
         chemin.write_text(texte, encoding="utf-8")
         return chemin
 
+    def write_grid_bytes(self, content: bytes) -> Path:
+        """Écrit la grille sans conversion des fins de ligne."""
+        self.dossier.mkdir(exist_ok=True)
+        path = self.dossier / "exemple.md"
+        path.write_bytes(content)
+        return path
+
     def lire(self, nom: str = "exemple"):
         """Lit la grille écrite par `ecrire`, sous la racine temporaire."""
         return read_grid(nom, self.racine)
@@ -523,24 +530,23 @@ class LectureGrillesTest(SocleGrillesTest):
         self.assertEqual(len(grille.fields), MAX_FIELDS)
 
     def test_taille_maximale_exacte_admise(self) -> None:
-        structure = "# T\n\n## Case ?\n"
-        bourre = "x" * (MAX_GRID_BYTES - len(structure.encode("utf-8")))
-        self.ecrire(structure + bourre)
+        structure = b"# T\n\n## Case ?\n"
+        path = self.write_grid_bytes(structure + b"x" * (MAX_GRID_BYTES - len(structure)))
 
         grille = self.lire()
 
         self.assertIsNone(grille.error)
-        self.assertEqual(
-            self.dossier.joinpath("exemple.md").stat().st_size, MAX_GRID_BYTES
-        )
+        self.assertEqual(path.stat().st_size, MAX_GRID_BYTES)
 
     def test_taille_maximale_depassee_refusee(self) -> None:
-        structure = "# T\n\n## Case ?\n"
-        bourre = "x" * (MAX_GRID_BYTES - len(structure.encode("utf-8")))
-        self.ecrire(structure + "x" + bourre)
+        structure = b"# T\n\n## Case ?\n"
+        path = self.write_grid_bytes(
+            structure + b"x" * (MAX_GRID_BYTES - len(structure) + 1)
+        )
 
         grille = self.lire()
 
+        self.assertEqual(path.stat().st_size, MAX_GRID_BYTES + 1)
         self.assertIsNotNone(grille.error)
         self.assertEqual(grille.error.rule, RULE_SIZE_LIMIT)
         self.assertIsNone(grille.error.line)

@@ -254,10 +254,15 @@ class RecuperationTest(unittest.TestCase):
         return sortie.getvalue()
 
     def donnees_neuves(self) -> Path:
-        """Nouveau dossier de données, pour isoler les cas d'un même test."""
+        """Nouveau dossier de données, pour isoler les cas d'un même test.
+
+        Chemin résolu, comme dans `setUp` : la récupération résout le `run.json`
+        avant de le citer dans ses refus, et sous Windows le dossier temporaire
+        peut être rendu en chemin court (8.3, `RUNNER~1`).
+        """
         temporaire = tempfile.TemporaryDirectory()
         self.addCleanup(temporaire.cleanup)
-        return Path(temporaire.name) / "data-projet"
+        return Path(temporaire.name).resolve() / "data-projet"
 
     def ecrire_processus(
         self, consignateur: ConsignateurExecution, **champs: Any

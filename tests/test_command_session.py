@@ -38,7 +38,11 @@ from transcription_bench.command_session import (
     run_session,
 )
 from transcription_bench.composition import DataServices
-from transcription_bench.instance import InstanceDejaActive, VerrouInstance
+from transcription_bench.instance import (
+    NOM_FICHIER_VERROU,
+    InstanceDejaActive,
+    VerrouInstance,
+)
 from transcription_bench.resultats import ETAT_ABANDONNEE, SCHEMA
 from transcription_bench.supervision import SignalFlag
 
@@ -229,12 +233,27 @@ def vivant(pid: int) -> bool:
         return False
 
 
-def arborescence(base: Path) -> dict[str, bytes | None]:
-    """Chemins et contenus de `data/`, pour prouver l'absence d'écriture."""
-    return {
-        str(chemin.relative_to(base)): None if chemin.is_dir() else chemin.read_bytes()
-        for chemin in sorted(base.rglob("*"))
-    }
+def arborescence(base: Path) -> dict[str, bytes | tuple[int, int] | None]:
+    """Chemins et contenus de `data/`, pour prouver l'absence d'écriture.
+
+    Le fichier de verrou d'instance est listé et comparé par ses métadonnées
+    (taille et date de modification), sans être lu : sous Windows, le verrou
+    `msvcrt.locking` est obligatoire et la lecture de l'octet verrouillé d'un
+    fichier tenu par un autre processus échouerait (`PermissionError`), alors
+    qu'un `stat` reste possible. Toute autre lecture de contenu reste stricte.
+    """
+    lock_path = base / NOM_FICHIER_VERROU
+    snapshot: dict[str, bytes | tuple[int, int] | None] = {}
+    for path in sorted(base.rglob("*")):
+        key = str(path.relative_to(base))
+        if path.is_dir():
+            snapshot[key] = None
+        elif path == lock_path:
+            info = path.stat()
+            snapshot[key] = (info.st_size, info.st_mtime_ns)
+        else:
+            snapshot[key] = path.read_bytes()
+    return snapshot
 
 
 class SessionTestCase(unittest.TestCase):

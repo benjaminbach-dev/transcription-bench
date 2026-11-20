@@ -189,7 +189,18 @@ COMMANDES_NOM_CLE_IDENTIFIANT: tuple[tuple[str, list[str], tuple[str, ...]], ...
         ["run", "start", "--model", REFERENCE_FACTICE, "--audio", HOSTILE],
         ("hors de la liste du dossier d'entrée",),
     ),
-    ("results show, identifiant", ["results", "show", HOSTILE], ("chemin refusé", "chemin absolu refusé")),
+    # Un chemin absolu Windows est refusé par son séparateur avant même le
+    # motif de chemin absolu : le refus reste celui de la même couche
+    # (`_parties_relatives`), pas un « introuvable » d'accès suivi.
+    (
+        "results show, identifiant",
+        ["results", "show", HOSTILE],
+        (
+            "chemin refusé",
+            "chemin absolu refusé",
+            "nom refusé : séparateur Windows",
+        ),
+    ),
     (
         "compare, empreinte",
         ["compare", HOSTILE, f"{IDENTIFIANT}:1", f"{IDENTIFIANT_AUTRE}:1"],
