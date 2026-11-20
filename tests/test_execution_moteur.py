@@ -48,6 +48,8 @@ from engines.protocole import (
     TYPE_AUDIO,
     TYPE_AUDIO_ERREUR,
     TYPE_CHARGEMENT,
+    TYPE_EXTRACTION,
+    TYPE_EXTRACTION_ERREUR,
     TYPE_FIN,
 )
 from engines.registre import creer_registre_fourni
@@ -72,6 +74,7 @@ from transcription_bench.execution_moteur import (
     ETAT_INTERROMPUE,
     ETAT_TERMINEE,
     FORMAT_AUDIO_BRUT,
+    MOTIF_EXTRACTION_HORS_TACHE,
     NOMBRE_LIGNES_STDERR_MAX,
     VERSION_JOB,
     ExecutionImpossible,
@@ -257,6 +260,90 @@ print("##TB-EVENT## pas un objet JSON")
 print(
     '##TB-EVENT## {"type":"chargement","duree_s":0.1,'
     '"pic_memoire_octets":1,"factice":false,"mesures_simulees":false}'
+)
+chemin_job, chemin_runner = sys.argv[1], sys.argv[2]
+sys.argv = ["runner.py", chemin_job]
+runpy.run_path(chemin_runner, run_name="__main__")
+"""
+
+# Contre-revue : des lignes d'événement INVALIDES ou refusées portant une
+# sentinelle. Aucune ne doit être recopiée, ni au journal de l'opération ni dans
+# run.log — seul un motif fixe (et le type annoncé, quand il se décode) est écrit.
+CODE_EVENEMENTS_INVALIDES = """
+import runpy
+import sys
+
+print("bavardage de bibliothèque sans préfixe")
+print(
+    '##TB-EVENT## {"type": "extraction", "index": 0,'
+    ' "nom": "SENTINELLE-FUITE", "conforme": false}'
+)
+print('##TB-EVENT## {"type": "extraction", "nom": "SENTINELLE-FUITE", "tru')
+print('##TB-EVENT## {"type": "chargement", "duree_s": ' + "9" * 5000 + "}")
+print(
+    '##TB-EVENT## {"type": "audio", "index": 5, "nom": "a.wav",'
+    ' "texte": "SENTINELLE-FUITE", "segments": [], "duree_audio_s": 1.0,'
+    ' "duree_transcription_s": 1.0, "temps_cpu_s": 1.0, "rtf": 1.0,'
+    ' "fenetre_s": 30.0, "decoupage": "fenetres-fixes", "nb_fenetres": 1,'
+    ' "pic_memoire_octets": 1, "reglages_effectifs": {},'
+    ' "langue_imposee": null, "threads_demandes": 2,'
+    ' "threads_appliques": null, "factice": true, "mesures_simulees": true}'
+)
+print(
+    '##TB-EVENT## {"type":"extraction","index":0,"nom":"a.wav",'
+    '"conforme":false,"motif":"hors tache","valeur":null,'
+    '"sortie_brute":"SENTINELLE-FUITE","tokens_entree":null,'
+    '"tokens_sortie":null,"delai_premier_token_s":null,'
+    '"duree_generation_s":null,"duree_extraction_s":null,'
+    '"vitesse_generation_tps":null,"vitesse_lecture_estimee_tps":null,'
+    '"temps_cpu_s":null,"pic_memoire_octets":1,"fin":"arret",'
+    '"factice":true,"mesures_simulees":true}'
+)
+chemin_job, chemin_runner = sys.argv[1], sys.argv[2]
+sys.argv = ["runner.py", chemin_job]
+runpy.run_path(chemin_runner, run_name="__main__")
+"""
+
+# Contre-revue : une ligne d'événement au marqueur nu, SANS l'espace de
+# séparation. Elle n'est pas un événement analysable, mais elle commence par le
+# marqueur : le journal la masque au même motif fixe, sans jamais la recopier.
+CODE_EVENEMENT_MARQUEUR_NU = """
+import runpy
+import sys
+
+print('##TB-EVENT##{"nom": "SENTINELLE-FUITE"}')
+chemin_job, chemin_runner = sys.argv[1], sys.argv[2]
+sys.argv = ["runner.py", chemin_job]
+runpy.run_path(chemin_runner, run_name="__main__")
+"""
+
+# Contre-revue : une ligne d'événement imbriquée au-delà de la limite de
+# récursion du décodeur. Elle est ignorée proprement, sans exception — dans
+# l'analyse comme dans la précision de type journalisée.
+CODE_EVENEMENT_IMBRIQUE = """
+import runpy
+import sys
+
+print('##TB-EVENT## ' + "[" * 100000 + "]" * 100000)
+chemin_job, chemin_runner = sys.argv[1], sys.argv[2]
+sys.argv = ["runner.py", chemin_job]
+runpy.run_path(chemin_runner, run_name="__main__")
+"""
+
+# Événement d'extraction valide au protocole, émis dans une exécution de transcription
+# avec la provenance du moteur factice : seul son type doit le faire écarter.
+CODE_EXTRACTION_HORS_TACHE = """
+import runpy
+import sys
+
+print(
+    '##TB-EVENT## {"type":"extraction","index":0,"nom":"a.wav","conforme":false,'
+    '"motif":"sortie non conforme","valeur":null,"sortie_brute":null,'
+    '"tokens_entree":null,"tokens_sortie":null,"delai_premier_token_s":null,'
+    '"duree_generation_s":null,"duree_extraction_s":null,'
+    '"vitesse_generation_tps":null,"vitesse_lecture_estimee_tps":null,'
+    '"temps_cpu_s":null,"pic_memoire_octets":987654321,"fin":"arret",'
+    '"factice":true,"mesures_simulees":true}'
 )
 chemin_job, chemin_runner = sys.argv[1], sys.argv[2]
 sys.argv = ["runner.py", chemin_job]
@@ -683,6 +770,100 @@ class ExecutionCompleteTest(SocleExecutionTest):
         journal = "\n".join(self.creneau.instantane().journal)
         self.assertIn("Sortie du moteur ignorée", journal)
         self.assertIn("provenance incohérente", journal)
+
+    def test_ligne_evenement_refusee_jamais_recopiee(self) -> None:
+        # Contre-revue : une ligne d'événement refusée, valide ou non au JSON,
+        # peut contenir la sortie d'un modèle. Son contenu n'est jamais recopié,
+        # ni au journal de l'opération ni dans run.log : seuls un motif fixe et,
+        # si l'objet se décode, son type annoncé sont écrits. Une ligne sans
+        # préfixe n'est pas une ligne d'événement : sa sortie parasite, qui
+        # n'est jamais celle du modèle, reste résumée.
+        self.ecrire_audio("a.wav")
+        service = self.creer_service(
+            construire_commande=commande_enveloppee(CODE_EVENEMENTS_INVALIDES)
+        )
+        resultat = self.executer(self.demande(("a.wav",)), service=service)
+
+        self.assertTerminee(resultat)
+        self.assertEqual(resultat.lignes_parasites, 6)
+        journal = "\n".join(self.creneau.instantane().journal)
+        self.assertIn(
+            "Ligne d'événement ignorée : format non conforme au protocole "
+            "(type annoncé : extraction)",
+            journal,
+        )
+        self.assertTrue(
+            any(
+                ligne.endswith(
+                    "Ligne d'événement ignorée : format non conforme au protocole"
+                )
+                for ligne in self.creneau.instantane().journal
+            ),
+            "une ligne d'événement illisible est journalisée sans son type",
+        )
+        self.assertIn(
+            f"Ligne d'événement ignorée : {MOTIF_EXTRACTION_HORS_TACHE}", journal
+        )
+        self.assertIn("Ligne d'événement ignorée : index d'audio hors du job", journal)
+        self.assertIn(
+            "Sortie du moteur ignorée (format non conforme au protocole) : "
+            "bavardage de bibliothèque sans préfixe",
+            journal,
+        )
+        self.assertIsNotNone(resultat.identifiant_resultat)
+        run_log = (
+            self.dossier_data
+            / "results"
+            / str(resultat.identifiant_resultat)
+            / "run.log"
+        ).read_text(encoding="utf-8")
+        for sortie in (journal, run_log):
+            self.assertNotIn("SENTINELLE-FUITE", sortie)
+
+    def test_ligne_marqueur_nu_masquee_sans_recopie(self) -> None:
+        # Contre-revue : une ligne qui commence par le marqueur nu
+        # `##TB-EVENT##`, sans l'espace de séparation, n'est pas un événement
+        # analysable ; elle est journalisée comme masquée, au même motif fixe,
+        # jamais recopiée — ni au journal de l'opération ni dans run.log.
+        self.ecrire_audio("a.wav")
+        service = self.creer_service(
+            construire_commande=commande_enveloppee(CODE_EVENEMENT_MARQUEUR_NU)
+        )
+        resultat = self.executer(self.demande(("a.wav",)), service=service)
+
+        self.assertTerminee(resultat)
+        self.assertEqual(resultat.lignes_parasites, 1)
+        journal = "\n".join(self.creneau.instantane().journal)
+        self.assertIn(
+            "Ligne d'événement ignorée : format non conforme au protocole", journal
+        )
+        self.assertNotIn("SENTINELLE-FUITE", journal)
+        self.assertIsNotNone(resultat.identifiant_resultat)
+        run_log = (
+            self.dossier_data
+            / "results"
+            / str(resultat.identifiant_resultat)
+            / "run.log"
+        ).read_text(encoding="utf-8")
+        self.assertNotIn("SENTINELLE-FUITE", run_log)
+
+    def test_ligne_imbriquee_profonde_ignoree_sans_exception(self) -> None:
+        # Contre-revue : un JSON imbriqué au-delà de la limite de récursion du
+        # décodeur lève `RecursionError`, aussi dans le décodage de la
+        # précision de type : la ligne est ignorée proprement, sans exception
+        # dans le fil de lecture, et le moteur n'est jamais pénalisé.
+        self.ecrire_audio("a.wav")
+        service = self.creer_service(
+            construire_commande=commande_enveloppee(CODE_EVENEMENT_IMBRIQUE)
+        )
+        resultat = self.executer(self.demande(("a.wav",)), service=service)
+
+        self.assertTerminee(resultat)
+        self.assertEqual(resultat.lignes_parasites, 1)
+        journal = "\n".join(self.creneau.instantane().journal)
+        self.assertIn(
+            "Ligne d'événement ignorée : format non conforme au protocole", journal
+        )
 
     def test_exception_de_decodage_ne_bloque_pas_les_suivants(self) -> None:
         self.ecrire_audio("a.wav")
@@ -1494,6 +1675,28 @@ class ResultatsExecutionTest(SocleExecutionTest):
         )
         self.assertFalse(run["mesures"]["pic_memoire_partiel"])
         self.assertCacheNettoye()
+
+    def test_evenement_extraction_hors_tache_ignore_sans_pic_memoire(self) -> None:
+        self.ecrire_audio("a.wav")
+        service = self.creer_service(
+            construire_commande=commande_enveloppee(CODE_EXTRACTION_HORS_TACHE)
+        )
+
+        resultat = self.executer(self.demande(("a.wav",)), service=service)
+
+        self.assertTerminee(resultat)
+        types = [evenement["type"] for evenement in resultat.evenements]
+        self.assertNotIn(TYPE_EXTRACTION, types)
+        self.assertNotIn(TYPE_EXTRACTION_ERREUR, types)
+        journal = "\n".join(self.creneau.instantane().journal)
+        self.assertIn("type d'extraction hors tâche de transcription", journal)
+        # La ligne n'est pas recopiée, et son pic mémoire n'est pas retenu.
+        self.assertNotIn("sortie non conforme", journal)
+        run = self.lire_json(self.dossier_resultat(resultat) / "run.json")
+        self.assertNotEqual(run["mesures"]["pic_memoire_octets"], 987654321)
+        self.assertEqual(
+            run["mesures"]["pic_memoire_octets"], PIC_MEMOIRE_SIMULE_OCTETS
+        )
 
     def test_echec_d_ecriture_des_mesures_du_chargement_arrete_le_moteur(
         self,

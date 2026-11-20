@@ -280,7 +280,8 @@ sans lire ni écrire dans `data/`.
 | `audios list` | audios du dossier d'entrée |
 | `data check` | état des dossiers de données |
 | `grids list`, `grids show NOM` | grilles d'extraction : liste et interprétation avant lancement |
-| `engines list`, `engines install ID`, `engines log ID [--limit N]` | moteurs : états, installation, journal d'installation |
+| `engines list`, `engines install ID`, `engines log ID [--limit N]` | moteurs : états, installation, journal d’installation |
+| `extract options`, `extract check`, `extract start --model REF --grid NOM --source ID:ORDRE... [--threads N] [--setting NOM=VALEUR]...` | extractions : préparation, vérification à blanc, lancement |
 | `models list`, `models check/download REPO --engine E [--revision R] [--file F]`, `models delete ENGINE KEY` | modèles : inventaire, vérification, téléchargement, suppression |
 | `run options`, `run check/start --model REF --audio NAME... [--threads N] [--setting NOM=VALEUR]...` | exécutions : préparation, vérification à blanc, lancement |
 | `results list [--sort temps\|ram\|cpu\|recent]`, `results show ID`, `results history`, `results explain` | résultats en lecture seule |

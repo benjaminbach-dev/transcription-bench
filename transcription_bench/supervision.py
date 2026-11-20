@@ -51,6 +51,7 @@ from contextlib import contextmanager
 from types import FrameType
 from typing import Any
 
+from transcription_bench.execution_extraction import ExtractionExecution
 from transcription_bench.execution_moteur import ARRET_SURVIVANT, ExecutionMoteur
 from transcription_bench.instance import VerrouInstance
 from transcription_bench.moteurs import InstallationMoteurs
@@ -273,10 +274,12 @@ class NettoyageArret:
         installation: InstallationMoteurs | None = None,
         delai_operation: float = DELAI_OPERATION_S,
         journal: Callable[[str], None] = signaler,
+        extraction: ExtractionExecution | None = None,
     ) -> None:
         self._verrou = verrou
         self._creneau = creneau
         self._execution = execution
+        self._extraction = extraction
         self._installation = installation
         self._delai_operation = delai_operation
         self._journal = journal
@@ -327,22 +330,26 @@ class NettoyageArret:
         return True
 
     def _arreter_moteur(self) -> None:
-        """Termine et collecte le moteur d'exécution éventuellement en cours."""
-        if self._execution is None:
-            return
-        try:
-            issue = self._execution.arreter_execution(arret_serveur=True)
-        except Exception as erreur:  # l'arrêt ne doit jamais empêcher la clôture
-            self._journal(
-                "arrêt du moteur impossible : "
-                f"{type(erreur).__name__} ; le créneau reste occupé."
-            )
-            return
-        if issue == ARRET_SURVIVANT:
-            self._journal(
-                "le processus moteur survit au signal de forçage : attente de sa "
-                "fin réelle, le verrou d'instance reste détenu."
-            )
+        """Termine et collecte le moteur d'exécution éventuellement en cours.
+
+        Le moteur d'extraction, qui partage le créneau, est arrêté de la même façon.
+        """
+        for moteur in (self._execution, self._extraction):
+            if moteur is None:
+                continue
+            try:
+                issue = moteur.arreter_execution(arret_serveur=True)
+            except Exception as erreur:  # l'arrêt ne doit jamais empêcher la clôture
+                self._journal(
+                    "arrêt du moteur impossible : "
+                    f"{type(erreur).__name__} ; le créneau reste occupé."
+                )
+                continue
+            if issue == ARRET_SURVIVANT:
+                self._journal(
+                    "le processus moteur survit au signal de forçage : attente de sa "
+                    "fin réelle, le verrou d'instance reste détenu."
+                )
 
     def _arreter_installation(self) -> None:
         """Termine le sous-processus d'installation (`uv`) éventuellement en cours."""

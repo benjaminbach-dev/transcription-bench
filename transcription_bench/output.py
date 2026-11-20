@@ -64,11 +64,13 @@ from transcription_bench.executions import (
     ModelePropose,
     PreparationExecution,
 )
+from transcription_bench.execution_extraction import ExtractionResult
 from transcription_bench.execution_moteur import (
     AudioPrepare,
     ResultatAudio,
     ResultatExecution,
 )
+from transcription_bench.extractions import ExtractionRequest, ExtractionSource
 from transcription_bench.gestion_modeles import ModeleLocal
 from transcription_bench.moteurs import EtatMoteur
 from transcription_bench.operations import InstantaneCreneau
@@ -592,6 +594,78 @@ def serialize_preparation(view: PreparationExecution) -> dict[str, Any]:
         "reinitialisation": view.reinitialisation,
         "applicable": view.applicable,
         "reference": view.reference,
+    }
+
+
+def serialize_extraction_source(view: ExtractionSource) -> dict[str, Any]:
+    """Source d'extraction : provenance et empreintes, jamais le texte source."""
+    return {
+        "reference": view.reference,
+        "identifiant": view.identifiant,
+        "ordre": view.ordre,
+        "nom": view.nom,
+        "empreinte_audio": to_json_value(view.empreinte_audio),
+        "empreinte_texte": view.empreinte_texte,
+        "caracteres": view.caracteres,
+        "moteur": to_json_value(view.moteur),
+        "modele": to_json_value(view.modele),
+        "factice": view.factice,
+    }
+
+
+def serialize_extraction_request(view: ExtractionRequest) -> dict[str, Any]:
+    """Demande d'extraction validée : modèle, grille, sources et réglages effectifs."""
+    modele = view.modele
+    grille = view.grille
+    return {
+        "reference": modele.reference,
+        "moteur": view.moteur,
+        "cle": modele.cle,
+        "identifiant": modele.identifiant,
+        "id_resolu": modele.id_resolu,
+        "commit": modele.commit,
+        "famille": modele.famille,
+        "fichier_gguf": to_json_value(modele.fichier_gguf),
+        "synthetique": view.synthetique,
+        "grid": {
+            "name": grille.nom,
+            "title": grille.titre,
+            "sha256": grille.sha256,
+            "field_count": grille.nombre_cases,
+            "version_consignes": grille.version_consignes,
+        },
+        "sources": [serialize_extraction_source(source) for source in view.sources],
+        "threads": view.threads,
+        "reglages": [
+            {"nom": reglage.nom, "valeur": to_json_value(reglage.valeur)}
+            for reglage in view.reglages
+        ],
+    }
+
+
+def serialize_extraction_result(view: ExtractionResult) -> dict[str, Any]:
+    """Issue d'une extraction : compte et état de chaque source, sans texte ni sortie.
+
+    `dossier_travail_conserve` signale un reste de purge (D7) : diagnostic
+    uniquement, sans chemin, qui ne change ni l'état ni le code de sortie.
+    """
+    return {
+        "etat": view.etat,
+        "factice": view.factice,
+        "moteur": view.moteur,
+        "famille": view.famille,
+        "modele_identifiant": view.modele_identifiant,
+        "nombre_sources": view.nombre_sources,
+        "erreur": to_json_value(view.erreur),
+        "code_sortie": to_json_value(view.code_sortie),
+        "pid": to_json_value(view.pid),
+        "arret_demande": view.arret_demande,
+        "identifiant_resultat": to_json_value(view.identifiant_resultat),
+        "duree_operation_s": to_json_value(view.duree_operation_s),
+        "duree_processus_s": to_json_value(view.duree_processus_s),
+        "summary": to_json_value(view.summary),
+        "sources": to_json_value(view.sources),
+        "dossier_travail_conserve": view.dossier_travail_conserve,
     }
 
 

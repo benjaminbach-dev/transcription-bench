@@ -32,6 +32,10 @@ from transcription_bench.command_session import (
     CODE_INTERRUPTED,
     CODE_SUCCESS,
 )
+from transcription_bench.execution_extraction import (
+    ExtractionExecution,
+    ExtractionResult,
+)
 from transcription_bench.execution_moteur import (
     ARRET_SURVIVANT,
     ExecutionMoteur,
@@ -83,7 +87,7 @@ class OperationWatch:
         signal_flag: SignalFlag,
         output: CommandOutput,
         *,
-        execution: ExecutionMoteur | None = None,
+        execution: ExecutionMoteur | ExtractionExecution | None = None,
         installation: InstallationMoteurs | None = None,
         poll_interval: float = POLL_INTERVAL_S,
         close_timeout: float = CLOSE_TIMEOUT_S,
@@ -178,5 +182,22 @@ def execution_exit_code(result: ResultatExecution | None) -> int:
     if result.etat == ETAT_EXECUTION_INTERROMPUE:
         return CODE_INTERRUPTED
     if result.etat != ETAT_EXECUTION_TERMINEE or result.audios_en_erreur:
+        return CODE_ECHEC
+    return CODE_SUCCESS
+
+
+def extraction_exit_code(result: ExtractionResult | None) -> int:
+    """Code de sortie d'une extraction, déduit de son résultat (design D7).
+
+    `interrompue` donne 3. Une extraction `terminee` ne donne 0 que si toutes ses
+    sources sont conformes ; une source non conforme ou en erreur, une source non
+    traitée, un échec (grammaire, chargement) ou l'absence de résultat donnent 1.
+    """
+    if result is None:
+        return CODE_ECHEC
+    if result.etat == ETAT_EXECUTION_INTERROMPUE:
+        return CODE_INTERRUPTED
+    conformes = result.summary.get("conformes")
+    if result.etat != ETAT_EXECUTION_TERMINEE or conformes != result.nombre_sources:
         return CODE_ECHEC
     return CODE_SUCCESS

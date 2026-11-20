@@ -36,6 +36,10 @@ NOM_DOSSIER_RESULTATS = "results"
 #: du serveur. Les restes d'un arrêt brutal relèvent de la clôture des
 #: exécutions abandonnées (tâche 6.5).
 NOM_DOSSIER_CACHE = "cache"
+#: Dossier des extractions (tâche 3.4, D7). Comme `cache`, il est créé
+#: paresseusement au premier lancement d'une extraction, jamais au démarrage ;
+#: volontairement absent de `DOSSIERS_DATA`.
+NOM_DOSSIER_EXTRACTIONS = "extractions"
 DOSSIERS_DATA = (
     NOM_DOSSIER_AUDIO,
     NOM_DOSSIER_MODELES,

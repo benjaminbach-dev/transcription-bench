@@ -55,7 +55,7 @@ from transcription_bench.command_session import (
     CommandGroup,
 )
 from transcription_bench.commands import COMMANDS
-from transcription_bench.executions import CLE_MODELE_FACTICE
+from transcription_bench.executions import CLE_MODELE_FACTICE, CLE_MODELE_FACTICE_EXTRACTION
 from transcription_bench.instance import VerrouInstance
 
 #: Racine du dépôt, pour lire `pyproject.toml`, `uv.lock` et les modules.
@@ -63,6 +63,9 @@ RACINE = Path(__file__).resolve().parents[1]
 
 #: Référence du modèle synthétique du moteur factice, exécutable sans moteur réel.
 REFERENCE_FACTICE = f"factice/{CLE_MODELE_FACTICE}"
+
+#: Référence du modèle synthétique d'extraction du moteur factice (aucun fichier).
+REFERENCE_EXTRACTION = f"factice/{CLE_MODELE_FACTICE_EXTRACTION}"
 
 #: Modèle d'essai observé, comme les fixtures des commandes « results ».
 MODELE_REEL = "org/modele-simule"
@@ -83,6 +86,9 @@ COMMANDES_LECTURE: tuple[list[str], ...] = (
     ["models", "list"],
     ["run", "options"],
     ["run", "check", "--model", REFERENCE_FACTICE, "--audio", "a.wav"],
+    ["extract", "options"],
+    ["extract", "check", "--model", REFERENCE_EXTRACTION, "--grid", "consultation-generale",
+     "--source", f"{IDENTIFIANT}:1"],
     ["results", "list"],
     ["results", "history"],
     ["results", "explain"],
@@ -153,6 +159,30 @@ COMMANDES_NOM_CLE_IDENTIFIANT: tuple[tuple[str, list[str], tuple[str, ...]], ...
         "run start, modèle",
         ["run", "start", "--model", HOSTILE, "--audio", "a.wav"],
         ("référence de modèle invalide",),
+    ),
+    (
+        "extract check, modèle",
+        ["extract", "check", "--model", HOSTILE, "--grid", "consultation-generale",
+         "--source", f"{IDENTIFIANT}:1"],
+        ("référence de modèle invalide",),
+    ),
+    (
+        "extract check, grille",
+        ["extract", "check", "--model", REFERENCE_EXTRACTION, "--grid", HOSTILE,
+         "--source", f"{IDENTIFIANT}:1"],
+        ("nom non conforme",),
+    ),
+    (
+        "extract check, source",
+        ["extract", "check", "--model", REFERENCE_EXTRACTION, "--grid", "consultation-generale",
+         "--source", f"{HOSTILE}:1"],
+        ("forme 'identifiant d'exécution:ordre d'audio' attendue",),
+    ),
+    (
+        "extract start, source",
+        ["extract", "start", "--model", REFERENCE_EXTRACTION, "--grid", "consultation-generale",
+         "--source", f"{HOSTILE}:1"],
+        ("forme 'identifiant d'exécution:ordre d'audio' attendue",),
     ),
     (
         "run start, audio",

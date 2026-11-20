@@ -2,7 +2,8 @@
 `ajouter-bench-extraction`), « audios list », « data check » (tâche 2.1),
 « engines list » et « engines log » (tâche 2.2), « models list » (tâche 2.3),
 « run options » (tâche 2.4), puis « results list », « results history » et
-« results explain » (tâche 2.5), puis « results show » et « compare » (tâche 2.6).
+« results explain » (tâche 2.5), puis « results show » et « compare » (tâche 2.6),
+enfin « extract options », « extract check » et « extract start » (tâche 3.5).
 
 Chaque commande est l'équivalent CLI d'une route de la page web (design D7) et
 réutilise les mêmes services sans dupliquer le métier :
@@ -83,6 +84,19 @@ réutilise les mêmes services sans dupliquer le métier :
 - `results explain` imprime l'aide des indicateurs depuis la source unique
   partagée avec le gabarit web (`web/results_help.py`, design D7) : aucune
   copie dédiée à la CLI.
+- `extract options` (tâche 3.5) est en lecture seule : modèles d'extraction
+  exécutables ou non avec leur motif, réglages et défauts, grilles (valides, ou
+  invalides avec leur motif), transcriptions proposables comme sources
+  (`identifiant:ordre`, revalidées comme une demande) et threads par défaut.
+- `extract check --model REF --grid NOM --source ID:ORDRE... [--threads N]
+  [--setting NOM=VALEUR]...` valide la demande par `ExtractionConfiguration.valider`
+  et affiche la demande normalisée (modèle, grille, sources, threads, réglages),
+  sans lancer ni écrire. Un refus donne le code 2 avec son motif.
+- `extract start` (mêmes options) passe par `launch_extraction` dans le créneau
+  unique, avec le journal en direct. Code 0 si toutes les sources sont conformes,
+  1 si une source est non conforme, en erreur ou non traitée, ou si l'extraction
+  échoue, 2 pour un refus avant admission, 3 après un signal. La ligne finale
+  donne l'état de chaque source.
 
 - `results show ID` appelle `detail` : détail d'une exécution avec, pour chaque
   audio, la transcription complète, les mesures du moteur et le contexte de
@@ -153,10 +167,15 @@ from transcription_bench.consultation_resultats import (
     TRI_RECENT,
     analyser_selection,
 )
+from transcription_bench.execution_extraction import (
+    MOTIF_DOSSIER_CONSERVE,
+    ExtractionResult,
+)
 from transcription_bench.execution_launch import (
     EngineNotReady,
     ExecutionAlreadyReserved,
     launch_execution,
+    launch_extraction,
     validate_execution_fields,
 )
 from transcription_bench.execution_moteur import (
@@ -173,6 +192,12 @@ from transcription_bench.executions import (
     VALEUR_FAUSSE,
     VALEUR_VRAIE,
     refuser_champs_repetes,
+    threads_par_defaut,
+)
+from transcription_bench.extractions import (
+    ExtractionRequest,
+    ExtractionSource,
+    sources_proposables,
 )
 from transcription_bench.grilles import Field, GridSummary
 from transcription_bench.gestion_modeles import (
@@ -193,7 +218,11 @@ from transcription_bench.moteurs import (
     EtatMoteur,
     InstallationIndisponible,
 )
-from transcription_bench.operation_watch import OperationWatch, execution_exit_code
+from transcription_bench.operation_watch import (
+    OperationWatch,
+    execution_exit_code,
+    extraction_exit_code,
+)
 from transcription_bench.operations import (
     ETAT_TERMINEE,
     LIBELLES_ETATS,
@@ -209,6 +238,9 @@ from transcription_bench.output import (
     serialize_comparison,
     serialize_engine_state,
     serialize_execution_listing,
+    serialize_extraction_request,
+    serialize_extraction_result,
+    serialize_extraction_source,
     serialize_hash_group,
     serialize_local_model,
     serialize_model_option,
@@ -222,6 +254,12 @@ from transcription_bench.paths import (
     DOSSIERS_DATA,
     NOM_DOSSIER_AUDIO,
     ValeurRefusee,
+)
+from transcription_bench.resultats_extraction import (
+    SOURCE_COMPLIANT,
+    SOURCE_ERROR,
+    SOURCE_NON_COMPLIANT,
+    SOURCE_NOT_PROCESSED,
 )
 from transcription_bench.supervision import SignalFlag
 from transcription_bench.verification_modeles import ResultatVerification
@@ -1537,6 +1575,361 @@ RUN = CommandGroup(
     commands=(RUN_OPTIONS, RUN_CHECK, RUN_START),
 )
 
+#: « extract start » : libellés français des états d'une source dans le résumé.
+SOURCE_STATE_TEXTS = {
+    SOURCE_COMPLIANT: "conforme",
+    SOURCE_NON_COMPLIANT: "non conforme",
+    SOURCE_ERROR: "en erreur",
+    SOURCE_NOT_PROCESSED: "non traitée",
+}
+NO_EXTRACTION_MODEL_MESSAGE = "Aucun modèle d'extraction proposable."
+NO_SOURCE_MESSAGE = "Aucune transcription exploitable comme source."
+#: Champ de la demande d'extraction dont la valeur est unique (refus des doublons).
+FORM_FIELD_GRID = "grille"
+
+
+def configure_extract_request(parser: argparse.ArgumentParser) -> None:
+    """Options de « extract check » et « extract start ».
+
+    `--model`, `--grid` et `--source` sont obligatoires. `--model`, `--grid`,
+    `--threads` et `--setting` sont acceptés plusieurs fois **pour que** les
+    services voient le doublon et le refusent : un argument écrasé en silence
+    serait une perte. `--source` garde l'ordre reçu, qui fixe le traitement.
+    """
+    parser.add_argument(
+        "--model",
+        metavar="REF",
+        action="append",
+        required=True,
+        help="référence du modèle d'extraction prêt (<moteur>/<clé>), une seule fois",
+    )
+    parser.add_argument(
+        "--grid",
+        metavar="NOM",
+        action="append",
+        required=True,
+        help="nom de la grille de grilles/, sans extension, une seule fois",
+    )
+    parser.add_argument(
+        "--source",
+        metavar="ID:ORDRE",
+        action="append",
+        required=True,
+        help="transcription source (identifiant de l'exécution:ordre de l'audio) ; "
+        "répétable, l'ordre reçu est l'ordre de traitement",
+    )
+    parser.add_argument(
+        "--threads",
+        metavar="N",
+        action="append",
+        default=None,
+        help="nombre de threads, une seule fois ; par défaut celui de « extract options »",
+    )
+    parser.add_argument(
+        "--setting",
+        metavar="NOM=VALEUR",
+        action="append",
+        type=setting_pair,
+        default=None,
+        help="réglage de la famille du modèle (contexte, sortie_max) ; répétable, "
+        "un même nom est refusé",
+    )
+
+
+def extraction_arguments(arguments: argparse.Namespace) -> dict[str, Any]:
+    """Arguments de `launch_extraction`, après refus des options répétées.
+
+    Lève `ValeurRefusee` avant toute validation de service si `--model`,
+    `--grid`, `--threads` ou un `--setting` est donné plusieurs fois.
+    """
+    refuser_champs_repetes(
+        [(FORM_FIELD_MODEL, value) for value in arguments.model]
+        + [(FORM_FIELD_THREADS, value) for value in arguments.threads or ()]
+        + [
+            (PREFIXE_CHAMP_REGLAGE + name, value)
+            for name, value in arguments.setting or ()
+        ]
+    )
+    if len(arguments.grid) > 1:
+        raise ValeurRefusee(f"champ fourni plusieurs fois : {FORM_FIELD_GRID}")
+    return {
+        "modele": arguments.model[0],
+        "grille": arguments.grid[0],
+        "sources": list(arguments.source),
+        "threads": arguments.threads[0] if arguments.threads else None,
+        "reglages": dict(arguments.setting or ()),
+    }
+
+
+def _sources_proposables(services: DataServices) -> tuple[ExtractionSource, ...]:
+    """Transcriptions proposables, lues par la consultation des résultats.
+
+    Les entrées viennent de `groupes_par_empreinte` (même service que la page
+    Résultats) ; chacune est revalidée par `sources_proposables`. Des résultats
+    illisibles donnent une liste vide, comme la consultation sans erreur.
+    """
+    try:
+        entrees = [
+            entree
+            for groupe in services.results.groupes_par_empreinte()
+            for entree in groupe.entrees
+        ]
+    except LectureResultatsImpossible:
+        return ()
+    return sources_proposables(services.data_dir, entrees)
+
+
+def _run_extract_options(
+    arguments: argparse.Namespace,
+    services: DataServices,
+    signal_flag: SignalFlag,
+) -> int:
+    """Présente ce qu'une extraction peut utiliser, sans rien lancer ni écrire.
+
+    Modèles d'extraction (exécutables ou non, avec leur motif, réglages et défauts),
+    grilles (valides, ou invalides avec leur motif), transcriptions proposables
+    comme sources et nombre de threads par défaut.
+    """
+    output = output_from_arguments(arguments)
+    models = services.extraction_preparation.modeles_proposables()
+    grids = grilles.discover_grids()
+    sources = _sources_proposables(services)
+    threads = threads_par_defaut()
+    output.result(
+        {
+            "models": [serialize_model_option(model) for model in models],
+            "grids": [serialize_grid_summary(summary) for summary in grids],
+            "sources": [serialize_extraction_source(source) for source in sources],
+            "default_threads": threads,
+        },
+        extract_options_text_lines(models, grids, sources, threads),
+    )
+    return CODE_SUCCESS
+
+
+def extract_options_text_lines(
+    models: Sequence[ModelePropose],
+    grids: Sequence[GridSummary],
+    sources: Sequence[ExtractionSource],
+    threads: int,
+) -> list[str]:
+    """Lignes de texte de « extract options » : modèles, grilles, sources, threads."""
+    lines = ["Modèles d'extraction :"]
+    if not models:
+        lines.append(f"  {NO_EXTRACTION_MODEL_MESSAGE}")
+    for model in models:
+        lines.append(model_option_line(model))
+        lines.extend(
+            setting_lines([(reglage, reglage.defaut) for reglage in model.reglages])
+        )
+    lines.append("Grilles :")
+    lines.extend(f"  {line}" for line in grids_list_text_lines(grids))
+    lines.append("Sources proposables :")
+    if not sources:
+        lines.append(f"  {NO_SOURCE_MESSAGE}")
+    for source in sources:
+        lines.append(f"  {extraction_source_text(source)}")
+    lines.append(f"Threads par défaut : {threads}")
+    return lines
+
+
+def extraction_source_text(source: ExtractionSource) -> str:
+    """Une source : référence, audio, longueur du texte et marque factice."""
+    marque = "transcription factice" if source.factice else "transcription réelle"
+    return (
+        f"{source.reference} : audio {source.nom}, {source.caracteres} caractère(s), "
+        f"{marque} (moteur {source.moteur or 'inconnu'})"
+    )
+
+
+def _run_extract_check(
+    arguments: argparse.Namespace,
+    services: DataServices,
+    signal_flag: SignalFlag,
+) -> int:
+    """Valide une demande d'extraction sans rien lancer ni écrire.
+
+    `ExtractionConfiguration.valider` applique les refus du service : modèle
+    d'extraction prêt (un modèle de transcription est refusé en le nommant),
+    grille valide, sources utilisables, threads et réglages déclarés. Un refus
+    donne le code 2 avec le motif, rien sur la sortie standard.
+    """
+    output = output_from_arguments(arguments)
+    try:
+        request = services.extraction_preparation.valider(**extraction_arguments(arguments))
+    except ValeurRefusee as error:
+        output.diagnostic(str(error))
+        return CODE_REFUS
+    output.result(
+        {"request": serialize_extraction_request(request)},
+        extraction_check_text_lines(request),
+    )
+    return CODE_SUCCESS
+
+
+def extraction_check_text_lines(request: ExtractionRequest) -> list[str]:
+    """Lignes de texte de « extract check » : demande normalisée, sources comprises."""
+    modele = request.modele
+    grille = request.grille
+    lines = [
+        "Demande valide : aucune extraction lancée, aucun résultat écrit.",
+        f"Modèle : {modele.identifiant} (référence {modele.reference}), "
+        f"moteur {modele.moteur}, famille {modele.famille}",
+    ]
+    if modele.fichier_gguf is not None:
+        lines.append(f"Variante GGUF : {modele.fichier_gguf}")
+    if request.synthetique:
+        lines.append(SIMULATED_RUN_MESSAGE)
+    lines.append(
+        f"Grille : « {grille.titre} » ({grille.nom}), {grille.nombre_cases} case(s), "
+        f"empreinte {grille.sha256}, consignes version {grille.version_consignes}"
+    )
+    lines.append("Sources, dans l'ordre de traitement :")
+    for rang, source in enumerate(request.sources, start=1):
+        lines.append(
+            f"  {rang}. {source.reference} : audio {source.nom}, "
+            f"empreinte audio {source.empreinte_audio or 'non consignée'}, "
+            f"texte {source.empreinte_texte} ({source.caracteres} caractère(s)), "
+            f"transcription {source.moteur or 'inconnue'} / "
+            f"{source.modele or 'inconnu'}, "
+            + ("marque factice" if source.factice else "marque réelle")
+        )
+    lines.append(f"Threads : {request.threads}")
+    if not request.reglages:
+        lines.append("Réglages : aucun")
+    for reglage in request.reglages:
+        lines.append(f"Réglage {reglage.nom} : {setting_value_text(reglage.valeur)}")
+    return lines
+
+
+def _run_extract_start(
+    arguments: argparse.Namespace,
+    services: DataServices,
+    signal_flag: SignalFlag,
+) -> int:
+    """Lance l'extraction dans le créneau unique et suit son journal jusqu'à sa fin.
+
+    `launch_extraction` valide, contrôle le moteur, réserve puis admet : un refus
+    avant admission donne le code 2 avec le motif du service, sans opération. Le
+    code final vient du résultat (`extraction_exit_code`) : 0 si toutes les sources
+    sont conformes, 1 si une source est non conforme ou en erreur, non traitée, ou
+    si l'extraction échoue, 3 après un signal. La ligne finale donne l'état de
+    l'opération, l'identifiant du résultat et l'état de chaque source ; un
+    dossier de travail resté en place y est signalé par la notice fixe (D7),
+    sans changer l'état ni le code.
+    """
+    output = output_from_arguments(arguments)
+    try:
+        launch_extraction(
+            services.extraction_preparation,
+            services.extraction_execution,
+            services.operations,
+            **extraction_arguments(arguments),
+        )
+    except (
+        ValeurRefusee,
+        EngineNotReady,
+        ExecutionAlreadyReserved,
+        CreneauOccupe,
+        ServiceArrete,
+    ) as error:
+        output.diagnostic(str(error))
+        return CODE_REFUS
+
+    watch = OperationWatch(
+        services.operations,
+        signal_flag,
+        output,
+        execution=services.extraction_execution,
+    )
+    code = watch.wait(
+        lambda _snapshot: extraction_exit_code(
+            services.extraction_execution.derniere_execution()
+        )
+    )
+    operation = services.operations.instantane()
+    result = services.extraction_execution.derniere_execution()
+    identifier = services.extraction_execution.identifiant_resultat(operation.generation)
+    output.result(
+        {
+            "operation": operation.etat,
+            "error": operation.erreur,
+            "identifiant_resultat": identifier,
+            "extraction": None if result is None else serialize_extraction_result(result),
+        },
+        extract_start_text_lines(operation, result, identifier),
+    )
+    return code
+
+
+def extract_start_text_lines(
+    operation: InstantaneCreneau,
+    result: ExtractionResult | None,
+    identifier: str | None,
+) -> list[str]:
+    """Lignes de texte de « extract start » : opération, résultat, état par source."""
+    lines = [f"Opération « extraction » : {LIBELLES_ETATS[operation.etat]}"]
+    if operation.erreur is not None:
+        lines.append(f"Motif : {operation.erreur}")
+    if result is None:
+        return lines
+    if result.factice:
+        lines.append(SIMULATED_RUN_MESSAGE)
+    if identifier is not None:
+        lines.append(f"Résultat enregistré : {identifier}")
+    lines.append("Sources :")
+    for source in result.sources:
+        ligne = (
+            f"  {source['rang']}. {source['nom']} : "
+            f"{SOURCE_STATE_TEXTS[source['etat']]}"
+        )
+        if source["motif"] is not None:
+            ligne += f" ({source['motif']})"
+        lines.append(ligne)
+    if result.dossier_travail_conserve:
+        # D7 : le reste est visible en fin de commande, sans chemin complet —
+        # même notice fixe que `run.log`, pour qu'un agent qui lit la fin de la
+        # commande voie le dossier de travail restant.
+        lines.append(f"{MOTIF_DOSSIER_CONSERVE}.")
+    return lines
+
+
+EXTRACT_OPTIONS = CommandSpec(
+    name="options",
+    help_text=(
+        "modèles d'extraction, grilles, sources proposables et threads par défaut "
+        "(lecture seule)"
+    ),
+    configure=configure_no_arguments,
+    run=_run_extract_options,
+)
+
+EXTRACT_CHECK = CommandSpec(
+    name="check",
+    help_text=(
+        "valide une demande d'extraction sans rien lancer ni écrire, et affiche la "
+        "demande normalisée"
+    ),
+    configure=configure_extract_request,
+    run=_run_extract_check,
+)
+
+EXTRACT_START = CommandSpec(
+    name="start",
+    help_text=(
+        "lance une extraction sur une ou plusieurs transcriptions, avec le journal "
+        "en direct ; code 1 si une source n'est pas conforme"
+    ),
+    configure=configure_extract_request,
+    run=_run_extract_start,
+)
+
+EXTRACT = CommandGroup(
+    name="extract",
+    help_text="extraction de grilles à partir des transcriptions enregistrées",
+    commands=(EXTRACT_OPTIONS, EXTRACT_CHECK, EXTRACT_START),
+)
+
 #: « results list » : regroupement par empreinte et sélection par essai.
 NO_GROUP_MESSAGE = (
     "Aucune transcription à regrouper par audio pour l'instant."
@@ -2340,7 +2733,7 @@ GRIDS = CommandGroup(
 )
 
 #: Enregistrement public : groupes « audios », « data », « engines »,
-#: « grids », « models », « results » et « run », et commande racine « compare », sans
+#: « extract », « grids », « models », « results » et « run », et commande racine « compare », sans
 #: commande future vide. `cli` y ajoute `serve` et refuse les doublons.
 COMMANDS: tuple[CommandSpec | CommandGroup, ...] = (
     AUDIOS,
@@ -2349,6 +2742,7 @@ COMMANDS: tuple[CommandSpec | CommandGroup, ...] = (
     MODELS,
     RESULTS,
     RUN,
+    EXTRACT,
     COMPARE,
     GRIDS,
 )

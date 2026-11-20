@@ -17,6 +17,7 @@ import contextlib
 import io
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -30,6 +31,9 @@ from unittest import mock
 import psutil
 
 from transcription_bench import recuperation
+from transcription_bench.execution_extraction import (
+    MOTIF_DOSSIER_CONSERVE as MOTIF_DOSSIER_CONSERVE_EXTRACTION,
+)
 from transcription_bench.execution_moteur import (
     PREFIXE_DOSSIER_TRAVAIL as PREFIXE_DOSSIER_TRAVAIL_MOTEUR,
     AudioPrepare,
@@ -651,6 +655,30 @@ class RecuperationTest(unittest.TestCase):
 
         self.assertTrue(orphelin.is_dir())
 
+    def test_run_json_lie_sortant_ignore_sans_lecture(self) -> None:
+        # Contre-revue : un lien symbolique posé sur le `run.json` d'une
+        # exécution en cours et pointant hors du dossier des résultats n'est
+        # jamais lu : l'exécution reste ignorée, en l'état, sans clôture ni
+        # purge. La cible est un JSON qui n'est pas un objet : sa lecture aurait
+        # refusé le démarrage — preuve qu'elle n'a pas eu lieu.
+        consignateur = self.ouvrir_consignation(("a.wav",))
+        run_json = self.run_json(consignateur)
+        cible = self.donnees.parent / "run-piege.json"
+        cible.write_text("[1]", encoding="utf-8")
+        try:
+            run_json.unlink()
+            run_json.symlink_to(cible)
+        except (OSError, NotImplementedError):
+            self.skipTest("les liens symboliques ne sont pas disponibles ici")
+
+        sortie = self.recuperer()
+
+        # Le lien est intact, la cible n'a été ni lue ni réécrite : l'exécution
+        # reste ignorée, en l'état, sans message de clôture.
+        self.assertTrue(run_json.is_symlink())
+        self.assertEqual(self.lire(run_json), [1])
+        self.assertNotIn("close en abandonnée", sortie)
+
     def test_sans_dossier_de_resultats_aucune_creation(self) -> None:
         self.recuperer()
 
@@ -838,6 +866,13 @@ class RecuperationTest(unittest.TestCase):
         # Sans importer `execution_moteur` dans la récupération (numpy, moteurs).
         self.assertEqual(PREFIXE_DOSSIER_TRAVAIL, PREFIXE_DOSSIER_TRAVAIL_MOTEUR)
 
+    def test_motif_dossier_conserve_identique_au_service(self) -> None:
+        # Sans importer `execution_extraction` dans la récupération (moteurs).
+        self.assertEqual(
+            recuperation.MOTIF_DOSSIER_TRAVAIL_CONSERVE,
+            MOTIF_DOSSIER_CONSERVE_EXTRACTION,
+        )
+
     def test_seuls_les_dossiers_de_travail_sont_supprimes(self) -> None:
         cache = self.donnees / "cache"
         reste = cache / "execution-abandonnee" / "audio-0.f32"
@@ -874,6 +909,37 @@ class RecuperationTest(unittest.TestCase):
             self.assertTrue(
                 lien_fichier.is_symlink(), "un lien de fichier a été supprimé"
             )
+
+    def test_purge_impossible_signalee_a_chaque_demarrage(self) -> None:
+        # Contre-revue D7 : un dossier de travail que la récupération ne peut
+        # pas supprimer n'est plus un succès silencieux. Il est signalé à chaque
+        # démarrage tant qu'il existe, par la notice fixe du service, sans
+        # chemin absolu ni contenu du job.
+        cache = self.donnees / "cache"
+        reste = cache / "execution-impregnable"
+        (reste / "sous-dossier").mkdir(parents=True)
+        (reste / "job.json").write_text(
+            '{"sources": ["TEXTE-SOURCE-99"]}', encoding="utf-8"
+        )
+        suppression_reelle = shutil.rmtree
+
+        def rmtree_refuse(chemin: Any, *args: Any, **kwargs: Any) -> None:
+            if Path(chemin).name.startswith(PREFIXE_DOSSIER_TRAVAIL):
+                raise OSError(1, "suppression simulée impossible")
+            return suppression_reelle(chemin, *args, **kwargs)
+
+        with mock.patch.object(recuperation.shutil, "rmtree", side_effect=rmtree_refuse):
+            journal = self.recuperer()
+            self.assertIn(recuperation.MOTIF_DOSSIER_TRAVAIL_CONSERVE, journal)
+            self.assertIn(reste.name, journal)
+            self.assertNotIn(str(self.donnees), journal)
+            self.assertNotIn("TEXTE-SOURCE-99", journal)
+            self.assertTrue(reste.exists())
+
+            # Tant que le reste existe, chaque démarrage le signale à nouveau.
+            journal_reprise = self.recuperer()
+            self.assertIn(recuperation.MOTIF_DOSSIER_TRAVAIL_CONSERVE, journal_reprise)
+            self.assertIn(reste.name, journal_reprise)
 
     def test_cache_lien_symbolique_n_est_pas_purge(self) -> None:
         cible = self.donnees / "ailleurs"

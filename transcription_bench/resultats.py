@@ -92,10 +92,10 @@ from engines.mesures_systeme import (
 from engines.protocole import TYPE_CHARGEMENT, TYPE_FIN
 from transcription_bench.operations import horodatage_iso
 from transcription_bench.paths import (
+    NOM_DOSSIER_RESULTATS,
     RACINE_PROJET,
     ValeurRefusee,
     resoudre_dans_racine,
-    resoudre_resultat,
 )
 from transcription_bench.stockage import (
     VERROU_STOCKAGE,
@@ -248,17 +248,32 @@ def creer_dossier_resultat(
 ) -> tuple[str, Path]:
     """Crée un dossier de résultat neuf sous `data/results`, sans écrasement.
 
-    L'identifiant suit `AAAAMMJJ-HHMMSS-<8 hexadécimaux>`. La création est
-    exclusive (`mkdir` sans `exist_ok`) et se fait sous le verrou commun de
-    stockage : un identifiant déjà pris, y compris par un dossier vide, est
-    remplacé par un autre tirage. `base` et `court_id` ne sont fournis que par
-    les tests. Le chemin renvoyé est résolu et vérifié comme restant sous
-    `data/results` par `paths.resoudre_resultat`.
+    Voir `create_timestamped_dir` ; `base` et `court_id` ne sont fournis que par
+    les tests.
+    """
+    return create_timestamped_dir(
+        Path(donnees) / NOM_DOSSIER_RESULTATS, base=base, court_id=court_id
+    )
+
+
+def create_timestamped_dir(
+    racine: Path | str,
+    *,
+    base: str | None = None,
+    court_id: str | None = None,
+) -> tuple[str, Path]:
+    """Crée un dossier `AAAAMMJJ-HHMMSS-<8 hexadécimaux>` neuf sous `racine`.
+
+    La création est exclusive (`mkdir` sans `exist_ok`) et se fait sous le verrou
+    commun de stockage : un identifiant déjà pris, y compris par un dossier vide,
+    est remplacé par un autre tirage. Le chemin renvoyé est résolu et vérifié
+    comme restant sous `racine` (`paths.resoudre_dans_racine`). Partagée par les
+    résultats de transcription et par les extractions (tâche 3.4).
     """
     base_valide = _valider_base(base)
     for tentative in range(NOMBRE_ESSAIS_IDENTIFIANT):
         identifiant = f"{base_valide}-{_court_id(court_id if tentative == 0 else None)}"
-        chemin = resoudre_resultat(identifiant, donnees)
+        chemin = resoudre_dans_racine(Path(racine), identifiant)
         with VERROU_STOCKAGE:
             try:
                 chemin.parent.mkdir(parents=True, exist_ok=True)
@@ -1070,13 +1085,16 @@ def _statut_resultat_audio(
     """Statut consigné dans le `result.json` d'un audio, ou `None` s'il manque.
 
     Un `result.json` absent, illisible ou incohérent n'est jamais réécrit : il
-    est traité comme non exploitable et l'audio reste non traité.
+    est traité comme non exploitable et l'audio reste non traité. Le dossier
+    de l'audio puis le fichier sont résolus confinés : un `result.json` qui
+    sortirait par un lien symbolique n'est jamais lu.
     """
     if not isinstance(nom_dossier, str) or not nom_dossier:
         return None
     try:
-        chemin = resoudre_dans_racine(dossier_resultat, nom_dossier)
-        contenu = lire_json(chemin / NOM_FICHIER_RESULTAT)
+        dossier_audio = resoudre_dans_racine(dossier_resultat, nom_dossier)
+        chemin = resoudre_dans_racine(dossier_audio, NOM_FICHIER_RESULTAT)
+        contenu = lire_json(chemin)
     except (ValeurRefusee, JsonInvalide):
         return None
     if not isinstance(contenu, Mapping):

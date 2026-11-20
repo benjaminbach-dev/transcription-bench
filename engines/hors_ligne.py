@@ -116,6 +116,18 @@ def commande_runner(
     return [str(interpreteur), str(runner), str(Path(chemin_job).resolve())]
 
 
+def extraction_runner_command(
+    interpreteur: str | Path, chemin_job: str | Path
+) -> list[str]:
+    """Commande `interpréteur engines/runner_extraction.py job.json` (tâche 3.4).
+
+    Même règle que `commande_runner` : l'interpréteur et le job sont conservés
+    ou résolus comme pour le runner de transcription.
+    """
+    runner = Path(__file__).resolve().with_name("runner_extraction.py")
+    return [str(interpreteur), str(runner), str(Path(chemin_job).resolve())]
+
+
 def options_modele(modele: Mapping[str, Any]) -> dict[str, Any]:
     """Copie les options de modèle en imposant le chargement local sans code distant.
 

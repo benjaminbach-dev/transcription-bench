@@ -29,8 +29,10 @@ from engines.registre import RegistreMoteurs, creer_registre_fourni
 from transcription_bench import paths
 from transcription_bench.audios import AudioListe, lister_audios
 from transcription_bench.consultation_resultats import ConsultationResultats
+from transcription_bench.execution_extraction import ExtractionExecution
 from transcription_bench.execution_moteur import ExecutionMoteur
 from transcription_bench.executions import ConfigurationExecutions
+from transcription_bench.extractions import ExtractionConfiguration
 from transcription_bench.gestion_modeles import GestionModeles
 from transcription_bench.instance import InstanceDejaActive, VerrouInstance
 from transcription_bench.moteurs import InstallationMoteurs
@@ -51,7 +53,9 @@ class DataServices:
     d'une globale. `operations` est l'unique créneau d'opération longue ;
     `engines` le service d'installation, `models` la gestion des modèles,
     `preparation` la préparation des exécutions, `execution` le lancement
-    supervisé et `results` la consultation en lecture seule.
+    supervisé et `results` la consultation en lecture seule. `extraction_preparation`
+    et `extraction_execution` sont les équivalents de la préparation et du lancement
+    pour les extractions (tâche 3.5) ; ils partagent le même créneau.
     """
 
     data_dir: Path
@@ -62,6 +66,8 @@ class DataServices:
     preparation: ConfigurationExecutions
     execution: ExecutionMoteur
     results: ConsultationResultats
+    extraction_preparation: ExtractionConfiguration
+    extraction_execution: ExtractionExecution
 
 
 def assemble_services(
@@ -74,6 +80,8 @@ def assemble_services(
     preparation: ConfigurationExecutions | None = None,
     execution: ExecutionMoteur | None = None,
     results: ConsultationResultats | None = None,
+    extraction_preparation: ExtractionConfiguration | None = None,
+    extraction_execution: ExtractionExecution | None = None,
     lister: Callable[[Path], tuple[AudioListe, ...]] = lister_audios,
 ) -> DataServices:
     """Relie les services dans l'ordre de dépendance.
@@ -108,6 +116,16 @@ def assemble_services(
     resolved_results = (
         ConsultationResultats(data_dir) if results is None else results
     )
+    resolved_extraction_preparation = (
+        ExtractionConfiguration(data_dir, resolved_registry, resolved_models.inventaire)
+        if extraction_preparation is None
+        else extraction_preparation
+    )
+    resolved_extraction_execution = (
+        ExtractionExecution(data_dir, resolved_registry, resolved_engines)
+        if extraction_execution is None
+        else extraction_execution
+    )
     return DataServices(
         data_dir=data_dir,
         operations=operations,
@@ -117,6 +135,8 @@ def assemble_services(
         preparation=resolved_preparation,
         execution=resolved_execution,
         results=resolved_results,
+        extraction_preparation=resolved_extraction_preparation,
+        extraction_execution=resolved_extraction_execution,
     )
 
 
@@ -240,6 +260,7 @@ def open_data_session(
         creneau=operations,
         execution=services.execution,
         installation=services.engines,
+        extraction=services.extraction_execution,
     )
     return DataSession(services, cleanup)
 

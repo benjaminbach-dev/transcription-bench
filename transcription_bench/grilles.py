@@ -455,6 +455,16 @@ def _grid_path(name: str, base: Path | str | None) -> Path:
     return path
 
 
+def grid_path(name: str, base: Path | str | None = None) -> Path:
+    """Chemin confiné d'une grille admise, sans la lire.
+
+    Même contrôle que `read_grid` (nom, confinement, fichier ordinaire). Le
+    service d'extraction s'en sert pour recopier octet pour octet la grille
+    validée dans son dossier de résultat (tâche 3.4, D7).
+    """
+    return _grid_path(name, base)
+
+
 def _read_file(path: Path, name: str) -> tuple[bytes, str]:
     """Lit le fichier borné et rend (octets, empreinte SHA-256 complète).
 

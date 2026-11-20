@@ -21,12 +21,16 @@ import hashlib
 import io
 import json
 import os
+import shutil
 import signal
 import tempfile
 import threading
+import time
 import unittest
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
+from typing import Any
 from unittest import mock
 
 from tests.test_comparaison_resultats import (
@@ -71,6 +75,11 @@ from transcription_bench import (
     paths,
     schema_grilles,
 )
+from transcription_bench.execution_extraction import (
+    MOTIF_DOSSIER_CONSERVE,
+    PREFIXE_DOSSIER_TRAVAIL,
+    ExtractionExecution,
+)
 from transcription_bench.executions import (
     CLE_MODELE_FACTICE,
     CLE_MODELE_FACTICE_EXTRACTION,
@@ -83,6 +92,7 @@ from transcription_bench.gestion_modeles import (
     cle_stockage,
 )
 from transcription_bench.instance import VerrouInstance
+from transcription_bench.paths import RACINE_PROJET
 from transcription_bench.consultation_resultats import CLE_OBSERVATION_AUDIO
 from transcription_bench.command_session import (
     CODE_ECHEC,
@@ -120,6 +130,14 @@ from transcription_bench.verification_modeles import (
     VerificationModeles,
 )
 from transcription_bench.web.app import MESSAGE_RESULTAT_NON_INTERPRETABLE
+from tests.test_service_extraction import (
+    ADAPTER_BODY,
+    TEXT_A,
+    TEXT_F,
+    TEXT_R,
+    WRAPPER_TEMPLATE,
+    write_transcription_run,
+)
 
 #: Clés d'une entrée d'audio, dans l'ordre du sérialiseur (tâche 1.4).
 AUDIO_ENTRY_KEYS = ["nom", "format", "taille_octets", "duree_indicative", "erreur", "readable"]
@@ -201,6 +219,67 @@ COMPARISON_KEYS = [
     "cartes",
     "synthese",
 ]
+#: Clés d'une demande d'extraction validée (« extract check »), tâche 3.5.
+EXTRACTION_REQUEST_KEYS = [
+    "reference",
+    "moteur",
+    "cle",
+    "identifiant",
+    "id_resolu",
+    "commit",
+    "famille",
+    "fichier_gguf",
+    "synthetique",
+    "grid",
+    "sources",
+    "threads",
+    "reglages",
+]
+#: Clés de la grille d'une demande d'extraction, dans l'ordre du sérialiseur (tâche 3.5).
+EXTRACTION_GRID_KEYS = ["name", "title", "sha256", "field_count", "version_consignes"]
+#: Clés d'une source d'extraction (« extract options », « extract check »), tâche 3.5.
+EXTRACTION_SOURCE_KEYS = [
+    "reference",
+    "identifiant",
+    "ordre",
+    "nom",
+    "empreinte_audio",
+    "empreinte_texte",
+    "caracteres",
+    "moteur",
+    "modele",
+    "factice",
+]
+#: Clés de l'issue d'une extraction (« extract start »), tâche 3.5. La clé
+#: finale signale un dossier de travail que la purge n'a pas pu supprimer (D7).
+EXTRACTION_RESULT_KEYS = [
+    "etat",
+    "factice",
+    "moteur",
+    "famille",
+    "modele_identifiant",
+    "nombre_sources",
+    "erreur",
+    "code_sortie",
+    "pid",
+    "arret_demande",
+    "identifiant_resultat",
+    "duree_operation_s",
+    "duree_processus_s",
+    "summary",
+    "sources",
+    "dossier_travail_conserve",
+]
+#: Clés du compte des sources d'une extraction, tâche 3.5.
+EXTRACTION_SUMMARY_KEYS = [
+    "sources_total",
+    "conformes",
+    "non_conformes",
+    "erreurs",
+    "non_traitees",
+]
+#: Clés de l'état d'une source dans le résumé de « extract start », tâche 3.5.
+EXTRACTION_SOURCE_STATE_KEYS = ["rang", "nom", "etat", "motif"]
 #: Clés d'un audio d'exécution, dans l'ordre du sérialiseur (tâche 3.5).
 RUN_AUDIO_KEYS = [
     "index",
@@ -243,6 +322,15 @@ JSON_SNAPSHOT_KEYS = {
         "error",
         "identifiant_resultat",
         "execution",
+    ],
+    ("extract", "options"): ["schema", "models", "grids", "sources", "default_threads"],
+    ("extract", "check"): ["schema", "request"],
+    ("extract", "start"): [
+        "schema",
+        "operation",
+        "error",
+        "identifiant_resultat",
+        "extraction",
     ],
     ("results", "list"): ["schema", "sort", "groups"],
     ("results", "history"): ["schema", "executions"],
@@ -2985,6 +3073,613 @@ class RunStartTest(RunCommandTest):
         self.assertIn("destinée à la tâche 'extraction'", stderr)
         self.assertIn("non à la tâche 'transcription'", stderr)
         self.assert_no_execution_written()
+        self.assert_unlocked()
+
+
+class ExtractCommandTest(CommandTestCase):
+    """« extract options », « extract check » et « extract start » (tâche 3.5).
+
+    Moteur factice et runner réel dans un sous-processus. Les transcriptions
+    sources sont écrites par le vrai écrivain de la tâche 6.4
+    (`write_transcription_run`, comme le service d'extraction). La grille
+    d'exemple est recopiée octet pour octet dans un dépôt temporaire : son
+    empreinte reste celle de `grilles/consultation-generale.md`.
+    """
+
+    EXTRACTION_REFERENCE = f"factice/{CLE_MODELE_FACTICE_EXTRACTION}"
+    TRANSCRIPTION_REFERENCE = f"factice/{CLE_MODELE_FACTICE}"
+    GRID = "consultation-generale"
+    LLAMA_ENGINE = "llama-cpp"
+    LLAMA_REPO = "org/modele-extraction"
+    LLAMA_COMMIT = "7a" * 20
+    LLAMA_FILE = "modele-q4.gguf"
+    GRILLE_INVALIDE = "# Titre\n\n## Qui ?\nTexte.\n\n## Qui\nDoublon.\n"
+    #: Marqueurs des textes sources : ils ne doivent jamais sortir sur la sortie standard.
+    TEXT_MARKERS = ("MARQUEUR_SOURCE_A", "MARQUEUR_SOURCE_F", "MARQUEUR_SOURCE_R")
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.racine = self.base.parent / "depot"
+        dossier = self.racine / grilles.GRID_DIR_NAME
+        dossier.mkdir(parents=True)
+        exemple = Path(__file__).resolve().parents[1] / grilles.GRID_DIR_NAME / f"{self.GRID}.md"
+        (dossier / f"{self.GRID}.md").write_bytes(exemple.read_bytes())
+        patcher = mock.patch.object(grilles, "RACINE_PROJET", self.racine)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        # Sources : a (ok), b (en erreur), c (texte vide), d (ok), e (non traité).
+        self.identifiant = write_transcription_run(
+            self.base,
+            [
+                ("a.wav", TEXT_A, "ok"),
+                ("b.wav", None, "erreur"),
+                ("c.wav", "", "ok"),
+                ("d.wav", TEXT_F, "ok"),
+                ("e.wav", None, "non_traite"),
+            ],
+        )
+        self.identifiant_reel = write_transcription_run(
+            self.base, [("r.wav", TEXT_R, "ok")], factice=False
+        )
+        self.llama_key = self.write_llama_model()
+
+    # -- outillage -----------------------------------------------------------
+
+    def write_llama_model(self) -> str:
+        """Modèle GGUF local prêt sur disque, non qualifié sur PC donc non exécutable."""
+        key = cle_stockage(self.LLAMA_REPO, self.LLAMA_COMMIT, self.LLAMA_FILE)
+        model_dir = self.base / paths.NOM_DOSSIER_MODELES / self.LLAMA_ENGINE / key
+        files_dir = model_dir / NOM_DOSSIER_FICHIERS
+        files_dir.mkdir(parents=True)
+        payload = b"gguf-simule"
+        (files_dir / self.LLAMA_FILE).write_bytes(payload)
+        manifest = {
+            "moteur": self.LLAMA_ENGINE,
+            "cle": key,
+            "identifiant": self.LLAMA_REPO,
+            "id_resolu": self.LLAMA_REPO,
+            "commit": self.LLAMA_COMMIT,
+            "famille": "llm-gguf",
+            "fichier_gguf": self.LLAMA_FILE,
+            "fichiers": [{"nom": self.LLAMA_FILE, "taille": len(payload)}],
+            "date": "2026-11-12",
+        }
+        (model_dir / NOM_MARQUEUR).write_text(json.dumps(manifest), encoding="utf-8")
+        return key
+
+    def source(self, rang: int, identifiant: str | None = None) -> str:
+        return f"{identifiant or self.identifiant}:{rang}"
+
+    def check_argv(
+        self,
+        *sources: str,
+        model: str | None = None,
+        grid: str | None = None,
+        extra: tuple[str, ...] = (),
+    ) -> list[str]:
+        """Options de « extract check » ; `extra` ajoute des options (répétables)."""
+        argv = [
+            "extract", "check",
+            "--model", model or self.EXTRACTION_REFERENCE,
+            "--grid", grid or self.GRID,
+        ]
+        for source in sources:
+            argv += ["--source", source]
+        return argv + list(extra)
+
+    def start_argv(self, *sources: str, extra: tuple[str, ...] = ()) -> list[str]:
+        """Options de « extract start », mêmes options que « extract check »."""
+        return ["extract", "start", *self.check_argv(*sources)[2:], *extra]
+
+    def write_state(self) -> tuple[frozenset[str], ...]:
+        """Noms présents sous les dossiers qu'une extraction pourrait écrire."""
+        return tuple(
+            frozenset(chemin.name for chemin in (self.base / nom).iterdir())
+            if (self.base / nom).is_dir()
+            else frozenset()
+            for nom in (
+                paths.NOM_DOSSIER_RESULTATS,
+                paths.NOM_DOSSIER_CACHE,
+                paths.NOM_DOSSIER_EXTRACTIONS,
+            )
+        )
+
+    def assert_no_extraction_written(self, before: tuple[frozenset[str], ...]) -> None:
+        """Ni résultat, ni dossier de travail, ni extraction nouvelle n'ont été créés."""
+        self.assertEqual(self.write_state(), before)
+
+    def write_wrapper(self, corps: str) -> Callable[[Any, Any], list[str]]:
+        """Commande du runner d'extraction dont le scénario remplace le factice."""
+        chemin = self.base.parent / f"enveloppe-{self.enveloppes_count()}.py"
+        chemin.write_text(
+            WRAPPER_TEMPLATE.format(racine=repr(str(RACINE_PROJET)), corps=corps),
+            encoding="utf-8",
+        )
+
+        def construire(interpreteur: Any, job: Any) -> list[str]:
+            return [str(interpreteur), str(chemin), str(job)]
+
+        return construire
+
+    def enveloppes_count(self) -> int:
+        return len(list(self.base.parent.glob("enveloppe-*.py")))
+
+    def with_extraction_command(self, construire: Callable[[Any, Any], list[str]]):
+        """Service d'extraction réel dont seule la commande du runner est remplacée."""
+        return mock.patch.object(
+            composition,
+            "ExtractionExecution",
+            functools.partial(ExtractionExecution, construire_commande=construire),
+        )
+
+    def split_events(self, stdout: str) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        """Événements du journal puis ligne finale, chacun décodé en JSON."""
+        *events, final = [json.loads(line) for line in stdout.splitlines()]
+        return events, final
+
+    def digest(self, texte: str) -> str:
+        return hashlib.sha256(texte.encode("utf-8")).hexdigest()
+
+    # -- extract options -----------------------------------------------------
+
+    def test_options_json_lists_models_grids_sources_and_defaults(self) -> None:
+        (self.racine / grilles.GRID_DIR_NAME / "invalide.md").write_text(
+            self.GRILLE_INVALIDE, encoding="utf-8"
+        )
+        before = self.write_state()
+
+        code, stdout, stderr = self.run_command(["extract", "options", "--json"])
+
+        self.assertEqual((code, stderr), (CODE_SUCCESS, ""))
+        lines = stdout.splitlines()
+        self.assertEqual(len(lines), 1, "un seul objet JSON, rien d'autre")
+        data = json.loads(lines[0])
+        self.assertEqual(list(data), JSON_SNAPSHOT_KEYS[("extract", "options")])
+        self.assertEqual(data["schema"], 1)
+        self.assertEqual(data["default_threads"], threads_par_defaut())
+
+        # Modèles : l'extraction factice est proposée, la transcription factice ne l'est pas.
+        references = [model["reference"] for model in data["models"]]
+        self.assertIn(self.EXTRACTION_REFERENCE, references)
+        self.assertNotIn(self.TRANSCRIPTION_REFERENCE, references)
+        factice = next(m for m in data["models"] if m["reference"] == self.EXTRACTION_REFERENCE)
+        self.assertEqual(list(factice), MODEL_OPTION_KEYS)
+        self.assertTrue(factice["executable"])
+        self.assertTrue(factice["synthetique"])
+        self.assertEqual(factice["identifiant"], LIBELLE_MODELE_FACTICE)
+        # Le moteur factice ne déclare aucun réglage : la liste est vide, jamais inventée.
+        self.assertEqual(factice["reglages"], [])
+        # Modèle GGUF local : réglages et défauts de llama.cpp, non exécutable avec son motif.
+        llama = next(m for m in data["models"] if m["moteur"] == self.LLAMA_ENGINE)
+        self.assertEqual(llama["reference"], f"{self.LLAMA_ENGINE}/{self.llama_key}")
+        self.assertFalse(llama["executable"])
+        self.assertIn("non qualifiée sur PC", llama["motif_non_executable"])
+        self.assertEqual(
+            [(r["nom"], r["defaut"], r["type_valeur"]) for r in llama["reglages"]],
+            [("contexte", 16384, "entier"), ("sortie_max", 4096, "entier")],
+        )
+
+        # Grilles : la grille d'exemple est valide ; une grille invalide porte son motif.
+        grids = {grid["name"]: grid for grid in data["grids"]}
+        exemple = grids[self.GRID]
+        self.assertEqual(list(exemple), GRID_SUMMARY_KEYS)
+        self.assertTrue(exemple["valid"])
+        self.assertEqual(exemple["sha256"], EMPREINTE_GRILLE_EXEMPLE)
+        self.assertFalse(grids["invalide"]["valid"])
+        self.assertIn("ligne 6", grids["invalide"]["error"])
+
+        # Sources : les transcriptions exploitables seulement, factice et réelle comprises.
+        sources = {source["reference"]: source for source in data["sources"]}
+        self.assertEqual(
+            set(sources),
+            {self.source(1), self.source(4), self.source(1, self.identifiant_reel)},
+        )
+        source = sources[self.source(1)]
+        self.assertEqual(list(source), EXTRACTION_SOURCE_KEYS)
+        self.assertEqual(source["nom"], "a.wav")
+        self.assertEqual(source["empreinte_texte"], self.digest(TEXT_A))
+        self.assertEqual(source["caracteres"], len(TEXT_A))
+        self.assertEqual(source["moteur"], "factice")
+        self.assertTrue(source["factice"])
+        self.assertFalse(sources[self.source(1, self.identifiant_reel)]["factice"])
+        self.assertNotIn("MARQUEUR_SOURCE", stdout)
+        self.assert_no_extraction_written(before)
+        self.assert_unlocked()
+
+    def test_options_text_lists_models_grids_sources_and_threads(self) -> None:
+        before = self.write_state()
+
+        code, stdout, stderr = self.run_command(["extract", "options"])
+
+        self.assertEqual((code, stderr), (CODE_SUCCESS, ""))
+        self.assertIn("Modèles d'extraction :", stdout)
+        self.assertIn(self.EXTRACTION_REFERENCE, stdout)
+        self.assertIn("modèle synthétique (moteur factice)", stdout)
+        self.assertIn("NON EXÉCUTABLE", stdout)
+        self.assertIn("réglage contexte (Contexte) : 16384", stdout)
+        self.assertIn("réglage sortie_max (Sortie maximale) : 4096", stdout)
+        self.assertIn("Grilles :", stdout)
+        self.assertIn(f"{self.GRID} : « Consultation de médecine générale »", stdout)
+        self.assertIn("Sources proposables :", stdout)
+        self.assertIn(self.source(1), stdout)
+        self.assertIn(self.source(1, self.identifiant_reel), stdout)
+        self.assertNotIn(self.source(3), stdout, "texte vide : non proposable")
+        self.assertIn(f"Threads par défaut : {threads_par_defaut()}", stdout)
+        self.assert_no_extraction_written(before)
+        self.assert_unlocked()
+
+    # -- extract check -------------------------------------------------------
+
+    def test_check_json_normalises_request_in_order_without_write(self) -> None:
+        before = self.write_state()
+        with mock.patch(
+            "transcription_bench.execution_extraction.ExtractionExecution.lancer",
+            side_effect=AssertionError("« extract check » ne lance aucune extraction"),
+        ):
+            code, stdout, stderr = self.run_command(
+                self.check_argv(
+                    self.source(4), self.source(1), extra=("--threads", "2", "--json")
+                )
+            )
+
+        self.assertEqual((code, stderr), (CODE_SUCCESS, ""))
+        lines = stdout.splitlines()
+        self.assertEqual(len(lines), 1, "un seul objet JSON, rien d'autre")
+        data = json.loads(lines[0])
+        self.assertEqual(list(data), JSON_SNAPSHOT_KEYS[("extract", "check")])
+        request = data["request"]
+        self.assertEqual(list(request), EXTRACTION_REQUEST_KEYS)
+        self.assertEqual(request["reference"], self.EXTRACTION_REFERENCE)
+        self.assertEqual(request["famille"], "factice-extraction")
+        self.assertTrue(request["synthetique"])
+        self.assertEqual(list(request["grid"]), EXTRACTION_GRID_KEYS)
+        self.assertEqual(request["grid"]["name"], self.GRID)
+        self.assertEqual(request["grid"]["sha256"], EMPREINTE_GRILLE_EXEMPLE)
+        self.assertEqual(request["threads"], 2)
+        self.assertEqual(request["reglages"], [])
+        # Ordre reçu conservé : la source 4 est traitée avant la source 1.
+        sources = request["sources"]
+        self.assertEqual([s["reference"] for s in sources], [self.source(4), self.source(1)])
+        for source in sources:
+            self.assertEqual(list(source), EXTRACTION_SOURCE_KEYS)
+            self.assertEqual(len(source["empreinte_audio"] or ""), 64)
+            self.assertTrue(source["factice"])
+            self.assertEqual(source["moteur"], "factice")
+            self.assertEqual(source["modele"], "modele de test")
+        self.assertEqual(sources[1]["nom"], "a.wav")
+        self.assertEqual(sources[1]["empreinte_texte"], self.digest(TEXT_A))
+        self.assertNotIn("MARQUEUR_SOURCE", stdout)
+        self.assert_no_extraction_written(before)
+        self.assert_unlocked()
+
+    def test_check_text_describes_request_and_marks_simulation(self) -> None:
+        before = self.write_state()
+
+        code, stdout, stderr = self.run_command(self.check_argv(self.source(1)))
+
+        self.assertEqual((code, stderr), (CODE_SUCCESS, ""))
+        lines = stdout.splitlines()
+        self.assertEqual(lines[0], "Demande valide : aucune extraction lancée, aucun résultat écrit.")
+        self.assertIn(commands.SIMULATED_RUN_MESSAGE, lines)
+        self.assertIn(
+            f"Grille : « Consultation de médecine générale » ({self.GRID}), 8 case(s), "
+            f"empreinte {EMPREINTE_GRILLE_EXEMPLE}",
+            stdout,
+        )
+        self.assertIn(f"  1. {self.source(1)} : audio a.wav, empreinte audio ", stdout)
+        self.assertIn(
+            f"texte {self.digest(TEXT_A)} ({len(TEXT_A)} caractère(s))", stdout
+        )
+        self.assertIn("marque factice", stdout)
+        self.assertIn(f"Threads : {threads_par_defaut()}", lines)
+        self.assertIn("Réglages : aucun", lines)
+        self.assertNotIn("MARQUEUR_SOURCE", stdout)
+        self.assert_no_extraction_written(before)
+        self.assert_unlocked()
+
+    def test_check_and_start_refusals_exit_2_with_reason_and_no_write(self) -> None:
+        before = self.write_state()
+        inconnue = "20260101-000000-deadbeef:1"
+        (self.racine / grilles.GRID_DIR_NAME / "invalide.md").write_text(
+            self.GRILLE_INVALIDE, encoding="utf-8"
+        )
+        cas: tuple[tuple[str, list[str], str], ...] = (
+            ("source inexistante", self.check_argv(inconnue), "exécution de transcription inconnue"),
+            ("source en erreur", self.check_argv(self.source(2)), "en erreur"),
+            ("source non traitée", self.check_argv(self.source(5)), "non traité"),
+            ("texte vide", self.check_argv(self.source(3)), "texte transcrit vide"),
+            ("forme de source", self.check_argv("pas-une-source"), "forme 'identifiant d'exécution:ordre d'audio' attendue"),
+            ("source vide", self.check_argv(""), "forme 'identifiant d'exécution:ordre d'audio' attendue"),
+            ("source dupliquée", self.check_argv(self.source(1), self.source(1)), "source en double"),
+            ("grille inconnue", self.check_argv(self.source(1), grid="absente"), "grille inconnue"),
+            ("grille invalide", self.check_argv(self.source(1), grid="invalide"), "grille invalide (invalide) : ligne 6"),
+            ("modèle de transcription", self.check_argv(self.source(1), model=self.TRANSCRIPTION_REFERENCE), "n'est pas un modèle d'extraction"),
+            ("modèle non exécutable", self.check_argv(self.source(1), model=f"{self.LLAMA_ENGINE}/{self.llama_key}"), "non qualifiée sur PC"),
+            ("modèle inconnu", self.check_argv(self.source(1), model=f"factice/{'0' * 64}"), "modèle non prêt ou inconnu"),
+            ("réglage inapplicable", self.check_argv(self.source(1), extra=("--setting", "contexte=1")), "réglage non déclaré par la famille du modèle : contexte"),
+            ("modèle répété", self.check_argv(self.source(1), extra=("--model", self.EXTRACTION_REFERENCE)), "plusieurs fois : modele"),
+            ("grille répétée", self.check_argv(self.source(1), extra=("--grid", self.GRID)), "plusieurs fois : grille"),
+            ("threads répétés", self.check_argv(self.source(1), extra=("--threads", "2", "--threads", "3")), "plusieurs fois : threads"),
+        )
+        for libelle, argv, motif in cas:
+            for commande, options in (("check", argv), ("start", ["extract", "start", *argv[2:]])):
+                with self.subTest(refus=libelle, commande=commande):
+                    code, stdout, stderr = self.run_command(options)
+
+                    self.assertEqual((code, stdout), (CODE_REFUS, ""))
+                    self.assertIn(DIAGNOSTIC_PREFIX, stderr)
+                    self.assertIn(motif, stderr)
+                    self.assertNotIn("Traceback", stderr)
+                    self.assert_no_extraction_written(before)
+                    self.assert_unlocked()
+        # Motif de grille : ligne et règle, comme « grids show ».
+        code, _, stderr = self.run_command(self.check_argv(self.source(1), grid="invalide"))
+        self.assertIn("[règle : cle_dupliquee]", stderr)
+
+    def test_missing_or_malformed_options_fail_at_parsing_without_session(self) -> None:
+        for argv in (
+            ["extract", "check", "--model", self.EXTRACTION_REFERENCE, "--source", self.source(1)],
+            ["extract", "check", "--model", self.EXTRACTION_REFERENCE, "--grid", self.GRID],
+            ["extract", "start", "--grid", self.GRID, "--source", self.source(1)],
+            ["extract", "start", "--model", self.EXTRACTION_REFERENCE, "--grid", self.GRID,
+             "--source", self.source(1), "--setting", "contexte"],
+        ):
+            with self.subTest(argv=argv[1:3]):
+                with self.assertRaises(SystemExit) as exit_error:
+                    self.run_command(argv)
+                self.assertEqual(exit_error.exception.code, 2)
+        self.assertFalse((self.base / paths.NOM_DOSSIER_EXTRACTIONS).exists())
+
+    def test_help_describes_the_exact_arguments(self) -> None:
+        options_partagees = (
+            "--model REF", "--grid NOM", "--source ID:ORDRE", "--threads N",
+            "--setting NOM=VALEUR",
+        )
+        for leaf, attendus in (
+            ("options", ("--json",)),
+            ("check", options_partagees),
+            ("start", options_partagees),
+        ):
+            with self.subTest(commande=leaf):
+                stdout = io.StringIO()
+                with (
+                    contextlib.redirect_stdout(stdout),
+                    contextlib.redirect_stderr(io.StringIO()),
+                    self.assertRaises(SystemExit) as exit_error,
+                ):
+                    cli.main(["extract", leaf, "--help"])
+                self.assertEqual(exit_error.exception.code, 0)
+                for fragment in attendus:
+                    self.assertIn(fragment, stdout.getvalue())
+
+    # -- extract start -------------------------------------------------------
+
+    def test_start_batch_streams_journal_then_summary_per_source_in_json(self) -> None:
+        code, stdout, stderr = self.run_command(
+            self.start_argv(
+                self.source(1), self.source(4), extra=("--threads", "2", "--json")
+            )
+        )
+
+        self.assertEqual((code, stderr), (CODE_SUCCESS, ""))
+        events, final = self.split_events(stdout)
+        self.assertTrue(events, "le journal de l'extraction est écrit en flux")
+        for event in events:
+            self.assertEqual(list(event), JOURNAL_EVENT_KEYS)
+            self.assertEqual(event["event"], LOG_EVENT)
+            self.assertEqual(event["operation"], operations.TYPE_EXECUTION)
+        self.assertEqual(list(final), JSON_SNAPSHOT_KEYS[("extract", "start")])
+        self.assertEqual(final["schema"], 1)
+        self.assertEqual(final["operation"], operations.ETAT_TERMINEE)
+        self.assertIsNone(final["error"])
+        extraction = final["extraction"]
+        self.assertEqual(list(extraction), EXTRACTION_RESULT_KEYS)
+        self.assertEqual(extraction["etat"], "terminee")
+        self.assertEqual(extraction["nombre_sources"], 2)
+        self.assertTrue(extraction["factice"])
+        self.assertEqual(list(extraction["summary"]), EXTRACTION_SUMMARY_KEYS)
+        self.assertEqual(extraction["summary"]["conformes"], 2)
+        self.assertEqual(
+            [(s["rang"], s["nom"], s["etat"], s["motif"]) for s in extraction["sources"]],
+            [(1, "a.wav", "conforme", None), (2, "d.wav", "conforme", None)],
+        )
+        for source in extraction["sources"]:
+            self.assertEqual(list(source), EXTRACTION_SOURCE_STATE_KEYS)
+        # Purge réussie : le champ dédié du reste de travail (D7) reste faux.
+        self.assertIs(extraction["dossier_travail_conserve"], False)
+        # Résultat écrit sous data/extractions/, relu par son run.json.
+        identifier = final["identifiant_resultat"]
+        self.assertEqual(identifier, extraction["identifiant_resultat"])
+        dossier = self.base / paths.NOM_DOSSIER_EXTRACTIONS / identifier
+        run = json.loads((dossier / "run.json").read_text(encoding="utf-8"))
+        self.assertEqual((run["schema"], run["type"], run["etat"]), (1, "extraction", ETAT_TERMINEE))
+        self.assertEqual([plan["etat"] for plan in run["sources"]], ["conforme", "conforme"])
+        self.assertTrue((dossier / run["sources"][0]["dossier"] / "result.json").is_file())
+        # Journal sans texte source, dossier de travail nettoyé, verrou libéré.
+        for marqueur in self.TEXT_MARKERS:
+            self.assertNotIn(marqueur, stdout + stderr)
+        self.assertEqual(self.write_state()[1], frozenset(), "dossier de travail nettoyé")
+        self.assert_unlocked()
+
+    def test_start_text_output_streams_journal_then_state_per_source(self) -> None:
+        code, stdout, stderr = self.run_command(
+            self.start_argv(self.source(4), self.source(1))
+        )
+
+        self.assertEqual((code, stderr), (CODE_SUCCESS, ""))
+        lines = stdout.splitlines()
+        self.assertTrue(
+            lines[0].endswith("Opération « exécution » démarrée : consultation-generale."),
+            lines[0],
+        )
+        final = lines.index("Opération « extraction » : terminée")
+        self.assertEqual(lines[final + 1], commands.SIMULATED_RUN_MESSAGE)
+        self.assertTrue(lines[final + 2].startswith("Résultat enregistré : "))
+        fin = lines.index("Sources :")
+        self.assertEqual(lines[fin + 1 : fin + 3], ["  1. d.wav : conforme", "  2. a.wav : conforme"])
+        self.assertEqual(len(lines), fin + 3, "un résumé par source, rien d'autre")
+        self.assert_unlocked()
+
+    def test_non_compliant_source_gives_code_1_and_state_per_source(self) -> None:
+        construire = self.write_wrapper(
+            "adaptateur.configurer(scenario=[{'brut': {'sortie_brute': 'pas du JSON', "
+            "'tokens_entree': 812, 'tokens_sortie': 4, 'fin': 'arret', "
+            "'delai_premier_token_s': 1.0, 'duree_generation_s': 0.5, 'temps_cpu_s': 1.0}}, {}])\n"
+            + ADAPTER_BODY
+        )
+        with self.with_extraction_command(construire):
+            code, stdout, stderr = self.run_command(
+                self.start_argv(self.source(1), self.source(4), extra=("--json",))
+            )
+
+        self.assertEqual((code, stderr), (CODE_ECHEC, ""))
+        _, final = self.split_events(stdout)
+        self.assertEqual(final["operation"], operations.ETAT_TERMINEE)
+        extraction = final["extraction"]
+        self.assertEqual(extraction["summary"]["non_conformes"], 1)
+        self.assertEqual(extraction["summary"]["conformes"], 1)
+        self.assertEqual(
+            [(s["nom"], s["etat"]) for s in extraction["sources"]],
+            [("a.wav", "non_conforme"), ("d.wav", "conforme")],
+        )
+        self.assertIsNotNone(extraction["sources"][0]["motif"])
+        self.assert_unlocked()
+
+    def test_source_in_error_gives_code_1_and_reason_in_text(self) -> None:
+        construire = self.write_wrapper(
+            "adaptateur.configurer(scenario=[{}, {'tokens_entree': 15000}])\n"
+            + ADAPTER_BODY
+        )
+        with self.with_extraction_command(construire):
+            code, stdout, stderr = self.run_command(
+                self.start_argv(self.source(1), self.source(4))
+            )
+
+        self.assertEqual((code, stderr), (CODE_ECHEC, ""))
+        lines = stdout.splitlines()
+        fin = lines.index("Sources :")
+        self.assertEqual(lines[fin + 1], "  1. a.wav : conforme")
+        self.assertTrue(
+            lines[fin + 2].startswith("  2. d.wav : en erreur (contexte insuffisant"),
+            lines[fin + 2],
+        )
+        self.assert_unlocked()
+
+    def test_grammar_failure_gives_code_1_and_no_source_published(self) -> None:
+        construire = self.write_wrapper(
+            "adaptateur.configurer(echec_charger='grammaire refusée (schéma)')\n"
+            + ADAPTER_BODY
+        )
+        with self.with_extraction_command(construire):
+            code, stdout, stderr = self.run_command(
+                self.start_argv(self.source(1), extra=("--json",))
+            )
+
+        self.assertEqual(code, CODE_ECHEC)
+        for line in stdout.splitlines():
+            json.loads(line)
+        self.assertIn("chargement du modèle impossible", stderr)
+        self.assertNotIn("Traceback", stderr)
+        _, final = self.split_events(stdout)
+        self.assertEqual(final["operation"], operations.ETAT_ECHOUEE)
+        self.assertIn("chargement du modèle impossible", final["error"])
+        self.assertEqual(final["extraction"]["etat"], "echouee")
+        self.assertEqual(final["extraction"]["summary"]["non_traitees"], 1)
+        self.assertEqual(final["extraction"]["sources"][0]["etat"], "non_traitee")
+        self.assert_unlocked()
+
+    def test_busy_instance_refused_with_code_2_and_no_write(self) -> None:
+        before = self.write_state()
+        verrou = VerrouInstance(self.base).acquerir()
+        self.addCleanup(verrou.liberer)
+
+        code, stdout, stderr = self.run_command(
+            self.start_argv(self.source(1), extra=("--json",))
+        )
+
+        self.assertEqual((code, stdout), (CODE_REFUS, ""))
+        self.assertTrue(stderr.strip())
+        self.assertNotIn("Traceback", stderr)
+        self.assert_no_extraction_written(before)
+
+    def test_leftover_workdir_reported_with_success_code(self) -> None:
+        # Contre-revue D7 : un dossier de travail que la purge n'a pas pu
+        # supprimer est signalé sur la ligne de résultat finale (texte et
+        # --json), sans changer l'état (terminée) ni le code de sortie (0).
+        suppression_reelle = shutil.rmtree
+
+        def rmtree_sauf_travail(chemin: Any, *args: Any, **kwargs: Any) -> None:
+            # Simule une purge en échec : le dossier de travail reste en place.
+            if Path(chemin).name.startswith(PREFIXE_DOSSIER_TRAVAIL):
+                return None
+            return suppression_reelle(chemin, *args, **kwargs)
+
+        with mock.patch(
+            "transcription_bench.execution_extraction.shutil.rmtree",
+            side_effect=rmtree_sauf_travail,
+        ):
+            code, stdout, stderr = self.run_command(
+                self.start_argv(self.source(1), extra=("--json",))
+            )
+
+        self.assertEqual((code, stderr), (CODE_SUCCESS, ""))
+        _, final = self.split_events(stdout)
+        self.assertEqual(final["operation"], operations.ETAT_TERMINEE)
+        self.assertIs(final["extraction"]["dossier_travail_conserve"], True)
+        self.assertEqual(final["extraction"]["summary"]["conformes"], 1)
+        self.assertEqual(len(self.write_state()[1]), 1, "le reste subsiste")
+
+        with mock.patch(
+            "transcription_bench.execution_extraction.shutil.rmtree",
+            side_effect=rmtree_sauf_travail,
+        ):
+            code, stdout, stderr = self.run_command(self.start_argv(self.source(1)))
+
+        self.assertEqual(code, CODE_SUCCESS)
+        # Au démarrage de cette seconde commande, la récupération a signalé le
+        # reste de la première : la notice fixe apparaît sur la sortie d'erreur.
+        self.assertIn(MOTIF_DOSSIER_CONSERVE, stderr)
+        self.assertNotIn(str(self.base), stderr)
+        lines = stdout.splitlines()
+        self.assertIn("Opération « extraction » : terminée", lines)
+        self.assertEqual(lines[-1], f"{MOTIF_DOSSIER_CONSERVE}.")
+        self.assertEqual(len(self.write_state()[1]), 2, "les deux restes subsistent")
+        self.assert_unlocked()
+
+    def test_signal_during_extraction_gives_code_3_and_interrupted_result(self) -> None:
+        class SignalAfterStart(ExtractionExecution):
+            """Signal d'arrêt reçu pendant la collecte, comme un Ctrl+C de l'utilisateur."""
+
+            def _collect(self, enfant, processus, travailleur, demande, factice, consignateur):
+                signal.raise_signal(signal.SIGINT)
+                echeance = time.monotonic() + DELAI_TEST
+                while not self._stop_requested() and time.monotonic() < echeance:
+                    time.sleep(0.02)
+                return super()._collect(
+                    enfant, processus, travailleur, demande, factice, consignateur
+                )
+
+        with mock.patch.object(composition, "ExtractionExecution", SignalAfterStart):
+            code, stdout, stderr = self.run_command(
+                self.start_argv(self.source(1), self.source(4), extra=("--json",))
+            )
+
+        self.assertEqual(code, CODE_INTERRUPTED)
+        self.assertIn("arrêt demandé par signal", stderr)
+        self.assertNotIn("Traceback", stderr)
+        _, final = self.split_events(stdout)
+        self.assertEqual(final["operation"], operations.ETAT_INTERROMPUE)
+        self.assertEqual(final["extraction"]["etat"], "interrompue")
+        self.assertEqual(
+            [s["etat"] for s in final["extraction"]["sources"]],
+            ["non_traitee", "non_traitee"],
+        )
+        run = json.loads(
+            (
+                self.base / paths.NOM_DOSSIER_EXTRACTIONS / final["identifiant_resultat"] / "run.json"
+            ).read_text(encoding="utf-8")
+        )
+        self.assertEqual(run["etat"], "interrupted")
         self.assert_unlocked()
 
 

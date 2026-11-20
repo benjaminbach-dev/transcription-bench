@@ -11,6 +11,11 @@ ligne — sortie parasite d'une bibliothèque, ligne préfixée mais illisible o
 type inconnu — est ignorée par `analyser_ligne` : l'appelant la journalise sans
 interrompre le flux.
 
+Les événements `extraction` et `extraction_erreur` sont validés strictement : un
+champ inconnu, un type inattendu ou une combinaison incohérente de `conforme`,
+`valeur` et `motif` les fait refuser. Les événements de transcription gardent la
+validation par champs requis seule, sans changement.
+
 Le préfixe, les types et leurs champs requis forment le contrat : seul
 `engines/runner.py` émet ici, et aucun autre module ne doit analyser ces lignes
 lui-même.
@@ -26,15 +31,111 @@ le code, jamais par le job.
 from __future__ import annotations
 
 import json
+import math
 import sys
+from collections.abc import Callable
 from typing import IO, Any
 
-PREFIXE_EVENEMENT = "##TB-EVENT## "
+#: Marqueur nu d'une ligne d'événement. Seul le préfixe avec espace définit un
+#: événement analysable ; mais toute ligne qui commence par le marqueur nu,
+#: espace ou non, reste une ligne d'événement pour les journaux du serveur :
+#: elle peut contenir une sortie de modèle et n'y est jamais recopiée.
+MARQUEUR_EVENEMENT = "##TB-EVENT##"
+PREFIXE_EVENEMENT = f"{MARQUEUR_EVENEMENT} "
 
 TYPE_CHARGEMENT = "chargement"
 TYPE_AUDIO = "audio"
 TYPE_AUDIO_ERREUR = "audio_erreur"
 TYPE_FIN = "fin"
+# Événements d'extraction (design D5 à D7) : `extraction` pour une source traitée,
+# `extraction_erreur` pour une source en erreur côté moteur.
+TYPE_EXTRACTION = "extraction"
+TYPE_EXTRACTION_ERREUR = "extraction_erreur"
+
+# Longueur maximale du motif d'une source non conforme ou en erreur. Un motif
+# décrit l'échec : il ne recopie jamais le texte source ni la sortie du modèle.
+LONGUEUR_MAX_MOTIF = 200
+FINS_GENERATION: tuple[str, ...] = ("arret", "limite")
+
+
+def _entier(valeur: Any) -> bool:
+    return isinstance(valeur, int) and not isinstance(valeur, bool) and valeur >= 0
+
+
+def _nombre(valeur: Any) -> bool:
+    if not isinstance(valeur, (int, float)) or isinstance(valeur, bool):
+        return False
+    try:
+        # `math.isfinite` lève `OverflowError` pour un entier trop grand pour un
+        # flottant : un tel nombre est invalide, jamais une exception.
+        return math.isfinite(valeur) and valeur >= 0
+    except OverflowError:
+        return False
+
+
+def _booleen(valeur: Any) -> bool:
+    return isinstance(valeur, bool)
+
+
+def _texte(valeur: Any) -> bool:
+    return isinstance(valeur, str)
+
+
+def _motif(valeur: Any) -> bool:
+    return isinstance(valeur, str) and 0 < len(valeur) <= LONGUEUR_MAX_MOTIF
+
+
+def _objet(valeur: Any) -> bool:
+    return isinstance(valeur, dict)
+
+
+def _fin(valeur: Any) -> bool:
+    return valeur in FINS_GENERATION
+
+
+def _ou_nul(verificateur: Callable[[Any], bool]) -> Callable[[Any], bool]:
+    """Vérificateur d'un champ qui vaut `null` quand il est absent (jamais zéro)."""
+    return lambda valeur: valeur is None or verificateur(valeur)
+
+
+# Validation stricte des événements d'extraction : seuls ces champs sont admis,
+# chacun avec son type. `valeur` (objet décodé) n'est renseigné que si la sortie
+# est conforme ; `motif` seulement sinon ; `sortie_brute` vaut `null` si aucun
+# token n'a été généré. La cohérence entre ces champs est contrôlée par
+# `_coherent_extraction`.
+VERIFICATEURS_EXTRACTION: dict[str, Callable[[Any], bool]] = {
+    "index": _entier,
+    "nom": _texte,
+    "conforme": _booleen,
+    "motif": _ou_nul(_motif),
+    "valeur": _ou_nul(_objet),
+    "sortie_brute": _ou_nul(_texte),
+    "tokens_entree": _ou_nul(_entier),
+    "tokens_sortie": _ou_nul(_entier),
+    "delai_premier_token_s": _ou_nul(_nombre),
+    "duree_generation_s": _ou_nul(_nombre),
+    "duree_extraction_s": _ou_nul(_nombre),
+    "vitesse_generation_tps": _ou_nul(_nombre),
+    "vitesse_lecture_estimee_tps": _ou_nul(_nombre),
+    "temps_cpu_s": _ou_nul(_nombre),
+    "pic_memoire_octets": _ou_nul(_entier),
+    "fin": _fin,
+    "factice": _booleen,
+    "mesures_simulees": _booleen,
+}
+VERIFICATEURS_EXTRACTION_ERREUR: dict[str, Callable[[Any], bool]] = {
+    "index": _entier,
+    "nom": _texte,
+    "motif": _motif,
+    "factice": _booleen,
+    "mesures_simulees": _booleen,
+}
+# Types dont la validation est stricte (champs inconnus et types refusés). Les
+# événements de transcription ne sont validés que sur leurs champs requis.
+VERIFICATEURS_STRICTS: dict[str, dict[str, Callable[[Any], bool]]] = {
+    TYPE_EXTRACTION: VERIFICATEURS_EXTRACTION,
+    TYPE_EXTRACTION_ERREUR: VERIFICATEURS_EXTRACTION_ERREUR,
+}
 
 # Champs de provenance présents dans chaque événement : jamais facultatifs,
 # pour qu'aucun consommateur ne puisse ignorer qu'un résultat est simulé.
@@ -48,7 +149,8 @@ CHAMPS_PROVENANCE: tuple[str, ...] = ("factice", "mesures_simulees")
 # aucun et n'est jamais obligatoire : l'absence signifie « non transmis », jamais
 # zéro. Le runner le recopie sans l'agréger, dans l'ordre des appels.
 # Les événements `chargement` et `audio` peuvent aussi porter le champ facultatif
-# `observation_systeme` (tâche 2.1) : l'objet versionné du design D3, avec sa
+# `observation_systeme` (tâche 2.1) ; un `fin` d'extraction le porte pour la fenêtre
+# du lot (tâche 3.2). Il s'agit de l'objet versionné du design D3, avec sa
 # provenance `reelle` ou `simulee`. Il n'est jamais exigé, n'ajoute aucun type
 # d'événement et ne change pas le contrat des adaptateurs : un ancien émetteur
 # l'omet, un ancien consommateur l'ignore. Le serveur ne persiste un tel objet
@@ -83,6 +185,8 @@ CHAMPS_REQUIS: dict[str, tuple[str, ...]] = {
         "audios_ok",
         "audios_erreur",
     ) + CHAMPS_PROVENANCE,
+    TYPE_EXTRACTION: tuple(VERIFICATEURS_EXTRACTION),
+    TYPE_EXTRACTION_ERREUR: tuple(VERIFICATEURS_EXTRACTION_ERREUR),
 }
 
 TYPES_EVENEMENTS: tuple[str, ...] = tuple(CHAMPS_REQUIS)
@@ -109,10 +213,13 @@ def emettre(evenement: dict[str, Any], flux: IO[str] | None = None) -> None:
 def analyser_ligne(ligne: str) -> dict[str, Any] | None:
     """Renvoie l'événement contenu dans une ligne, ou `None`.
 
-    Une ligne non préfixée, un JSON invalide, un objet qui n'est pas un
-    dictionnaire, un type inconnu, un champ requis manquant ou un champ de
-    provenance qui n'est pas un booléen donnent `None` : c'est une sortie
-    parasite à journaliser, jamais une erreur bloquante. Les deux champs de
+    Une ligne non préfixée, un JSON invalide (y compris un entier dépassant la
+    limite de conversion de CPython, qui lève `ValueError` et non
+    `JSONDecodeError`, ou un JSON trop profondément imbriqué pour le décodeur,
+    qui lève `RecursionError`), un objet qui n'est pas un dictionnaire, un type
+    inconnu ou non textuel, un champ requis manquant ou un champ de provenance
+    qui n'est pas un booléen donnent `None` : c'est une sortie parasite à journaliser,
+    jamais une erreur bloquante — ni une exception. Les deux champs de
     provenance sont validés indépendamment : aucune égalité entre eux n'est
     exigée.
     """
@@ -120,13 +227,20 @@ def analyser_ligne(ligne: str) -> dict[str, Any] | None:
         return None
     charge = ligne[len(PREFIXE_EVENEMENT) :].strip()
     try:
+        # `json.loads` lève `JSONDecodeError` (sous-classe de `ValueError`) pour
+        # un JSON invalide, mais aussi `ValueError` pour un entier dépassant la
+        # limite de conversion de CPython (4300 chiffres), `TypeError` pour
+        # une clé non hachable et `RecursionError` pour un JSON trop
+        # profondément imbriqué : la ligne est invalide, jamais une exception.
         evenement = json.loads(charge)
-    except json.JSONDecodeError:
+    except (ValueError, TypeError, RecursionError):
         return None
     if not isinstance(evenement, dict):
         return None
     type_evenement = evenement.get("type")
-    if type_evenement not in CHAMPS_REQUIS:
+    # Un type non textuel (liste, objet) serait de plus non hachable au test
+    # d'appartenance ci-dessous : il est écarté ici, sans exception.
+    if not isinstance(type_evenement, str) or type_evenement not in CHAMPS_REQUIS:
         return None
     if any(champ not in evenement for champ in CHAMPS_REQUIS[type_evenement]):
         return None
@@ -134,4 +248,33 @@ def analyser_ligne(ligne: str) -> dict[str, Any] | None:
         not isinstance(evenement[champ], bool) for champ in CHAMPS_PROVENANCE
     ):
         return None
+    verificateurs = VERIFICATEURS_STRICTS.get(type_evenement)
+    if verificateurs is not None and not _valide_strict(evenement, verificateurs):
+        return None
     return evenement
+
+
+def _valide_strict(
+    evenement: dict[str, Any], verificateurs: dict[str, Callable[[Any], bool]]
+) -> bool:
+    """Vrai si l'événement n'a que les champs prévus, tous bien typés et cohérents."""
+    if set(evenement) - {"type"} != set(verificateurs):
+        return False
+    if not all(
+        verificateur(evenement[champ]) for champ, verificateur in verificateurs.items()
+    ):
+        return False
+    if evenement["type"] != TYPE_EXTRACTION:
+        return True
+    return _coherent_extraction(evenement)
+
+
+def _coherent_extraction(evenement: dict[str, Any]) -> bool:
+    """Vrai si `conforme`, `valeur`, `motif` et `sortie_brute` se correspondent."""
+    if evenement["conforme"]:
+        return (
+            evenement["valeur"] is not None
+            and evenement["motif"] is None
+            and evenement["sortie_brute"] is not None
+        )
+    return evenement["valeur"] is None and evenement["motif"] is not None

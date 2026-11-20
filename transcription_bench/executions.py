@@ -368,11 +368,11 @@ class ConfigurationExecutions:
                 declaration = self._registre.obtenir(modele.moteur)
             except MoteurInconnu:
                 continue
-            famille = _famille_declaree(declaration, modele.famille)
+            famille = famille_declaree(declaration, modele.famille)
             if famille is None:
                 continue
             proposes.append(
-                _proposer(
+                proposer_modele(
                     declaration,
                     famille,
                     cle=modele.cle,
@@ -387,7 +387,7 @@ class ConfigurationExecutions:
                 continue
             for famille in declaration.familles:
                 proposes.append(
-                    _proposer(
+                    proposer_modele(
                         declaration,
                         famille,
                         cle=CLES_MODELE_FACTICE[famille.task],
@@ -506,8 +506,8 @@ class ConfigurationExecutions:
                 f"{moteur!r} fourni, {propose.moteur!r} déclaré par cette référence"
             )
         noms = self._valider_audios(audios)
-        nombre_threads = _valider_threads(threads)
-        valeurs = _valider_reglages(propose.reglages, reglages)
+        nombre_threads = valider_threads(threads)
+        valeurs = valider_reglages(propose.reglages, reglages)
         return DemandeExecution(
             moteur=propose.moteur,
             cle=propose.cle,
@@ -529,7 +529,7 @@ class ConfigurationExecutions:
         Un modèle non prêt, inconnu ou dont la famille n'est pas exécutable est
         refusé : l'interface peut l'afficher, jamais le valider.
         """
-        moteur, cle = _decouper_reference(reference)
+        moteur, cle = decouper_reference(reference)
         for propose in self.modeles_proposables():
             if propose.moteur == moteur and propose.cle == cle:
                 if not propose.executable:
@@ -563,7 +563,7 @@ class ConfigurationExecutions:
         return tuple(noms)
 
 
-def _famille_declaree(
+def famille_declaree(
     declaration: DeclarationAdaptateur, identifiant: str
 ) -> Famille | None:
     """Famille déclarée par un moteur, ou `None` si elle ne l'est pas."""
@@ -573,7 +573,7 @@ def _famille_declaree(
     return None
 
 
-def _proposer(
+def proposer_modele(
     declaration: DeclarationAdaptateur,
     famille: Famille,
     *,
@@ -583,9 +583,15 @@ def _proposer(
     commit: str,
     fichier_gguf: str | None,
     synthetique: bool = False,
+    tache: str = TASK_TRANSCRIPTION,
 ) -> ModelePropose:
-    """Construit une proposition avec la règle d'exécutabilité du runner."""
-    motif = motif_famille_non_executable(declaration, famille)
+    """Construit une proposition avec la règle d'exécutabilité du runner.
+
+    `tache` est celle de la demande : une famille d'une autre tâche est alors
+    affichée non exécutable (refus croisé). Les extractions (tâche 3.4) passent
+    `TASK_EXTRACTION`.
+    """
+    motif = motif_famille_non_executable(declaration, famille, tache)
     return ModelePropose(
         moteur=declaration.identifiant,
         nom_moteur=declaration.nom,
@@ -607,7 +613,7 @@ def _proposer(
     )
 
 
-def _decouper_reference(reference: str) -> tuple[str, str]:
+def decouper_reference(reference: str) -> tuple[str, str]:
     """Sépare `<moteur>/<clé>` et refuse toute autre forme."""
     if not isinstance(reference, str):
         raise ValeurRefusee("référence de modèle attendue sous forme de texte")
@@ -620,7 +626,7 @@ def _decouper_reference(reference: str) -> tuple[str, str]:
     return moteur, cle
 
 
-def _valider_threads(valeur: str | int) -> int:
+def valider_threads(valeur: str | int) -> int:
     """Entier ≥ 1 strictement interprété, sans accepter de valeur approximative."""
     if isinstance(valeur, bool):
         raise ValeurRefusee(
@@ -646,7 +652,7 @@ def _valider_threads(valeur: str | int) -> int:
     return nombre
 
 
-def _valider_reglages(
+def valider_reglages(
     declares: Sequence[Reglage], valeurs: Mapping[str, str]
 ) -> tuple[ReglageValide, ...]:
     """Valeurs effectives des seuls réglages déclarés, défauts compris.

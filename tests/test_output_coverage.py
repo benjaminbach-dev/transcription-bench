@@ -20,6 +20,9 @@ EXCLUDED_MEMBERS = {
     },
     "serialize_audio_prepare": {"fichier_brut"},  # Chemin de travail interne.
     "serialize_run_result": {"evenements"},  # Événements bruts internes.
+    "serialize_extraction_source": {  # Le rang est l'ordre de la liste ; le texte n'est jamais exposé.
+        "rang", "texte",
+    },
 }
 
 

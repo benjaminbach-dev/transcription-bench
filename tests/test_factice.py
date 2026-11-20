@@ -20,6 +20,7 @@ from __future__ import annotations
 import dataclasses
 import io
 import json
+import math
 import os
 import shutil
 import socket
@@ -34,7 +35,10 @@ from unittest import mock
 import numpy as np
 import psutil
 
+import engines.adaptateurs.factice as adaptateur_factice
 from engines.declarations import (
+    TASK_EXTRACTION,
+    TASK_TRANSCRIPTION,
     DeclarationAdaptateur,
     Famille,
     declarations_fournies,
@@ -67,7 +71,19 @@ from engines.runner import (
     charger_job,
     executer,
 )
+from engines.runner_extraction import (
+    CLES_RESULTAT_EXTRACTION,
+    DUREE_EXTRACTION_SIMULEE_S,
+)
+from transcription_bench.consignes_grilles import system_message, user_message
+from transcription_bench.executions import CLE_MODELE_FACTICE_EXTRACTION
+from transcription_bench.grilles import Grid, read_grid
 from transcription_bench.paths import RACINE_PROJET
+from transcription_bench.schema_grilles import (
+    decode_output,
+    grid_schema,
+    validate_output,
+)
 
 MOTEUR_FACTICE = "factice"
 FAMILLE_FACTICE = "factice"
@@ -527,6 +543,377 @@ class ObservationsSimuleesTest(unittest.TestCase):
                     evenement["observation_systeme"]["provenance"],
                     PROVENANCE_SIMULEE,
                 )
+
+
+#: Modèle synthétique d'extraction : le chemin n'existe pas, normal pour le factice.
+MODELE_EXTRACTION_FACTICE = {
+    "identifiant": f"factice/{CLE_MODELE_FACTICE_EXTRACTION}",
+    "revision": "0000",
+    "chemin": "modele-absent",
+}
+
+
+def ecrire_grille_types(dossier: Path) -> Grid:
+    """Grille temporaire couvrant les quatre types D2, lue par le parseur réel."""
+    (dossier / "grilles").mkdir()
+    (dossier / "grilles" / "types-factices.md").write_text(
+        "# Grille de types\n"
+        "\n"
+        "## Texte ?\n"
+        "Consigne simple.\n"
+        "\n"
+        "## Liste ?\n"
+        "Liste.\n"
+        "\n"
+        "## Composee ?\n"
+        "### Libelle ?\n"
+        "### Valeurs ?\n"
+        "Liste.\n"
+        "\n"
+        "## Liste composee ?\n"
+        "Liste :\n"
+        "### Nom ?\n",
+        encoding="utf-8",
+    )
+    return read_grid("types-factices", base=dossier)
+
+
+class AdaptateurFacticeExtractionTest(unittest.TestCase):
+    """Contrat d'extraction de l'adaptateur factice, appelé directement."""
+
+    def setUp(self) -> None:
+        self._temporaire = tempfile.TemporaryDirectory()
+        self.addCleanup(self._temporaire.cleanup)
+        self.dossier = Path(self._temporaire.name)
+        self.grille = read_grid("consultation-generale")
+        self.schema = grid_schema(self.grille)
+        self.messages = [
+            {"role": "system", "content": system_message(self.grille).text},
+            {
+                "role": "user",
+                "content": user_message(
+                    "Le patient décrit une toux depuis trois jours."
+                ),
+            },
+        ]
+
+    def _moteur(self, schema: dict[str, object] | None = None) -> dict[str, object]:
+        return adaptateur_factice.charger(
+            MODELE_EXTRACTION_FACTICE,
+            3,
+            {},
+            self.schema if schema is None else schema,
+        )
+
+    def test_sortie_conforme_au_schema_reel_et_deterministe(self) -> None:
+        moteur = self._moteur()
+        premier = adaptateur_factice.extraire(moteur, self.messages, {})
+        second = adaptateur_factice.extraire(moteur, self.messages, {})
+
+        # Deux exécutions identiques, octet pour octet.
+        self.assertEqual(premier, second)
+        self.assertEqual(
+            premier["sortie_brute"].encode("utf-8"),
+            second["sortie_brute"].encode("utf-8"),
+        )
+        # JSON compact, passant le décodage et la validation réels.
+        self.assertNotIn(": ", premier["sortie_brute"])
+        decodage = decode_output(premier["sortie_brute"])
+        self.assertTrue(decodage.ok, decodage.message)
+        self.assertIsNone(validate_output(decodage.value, self.schema).issue)
+
+    def test_chaque_type_de_case_rempli_comme_decrit(self) -> None:
+        sortie = adaptateur_factice.extraire(self._moteur(), self.messages, {})
+        valeur = json.loads(sortie["sortie_brute"])
+
+        # Texte : chaîne portant la marque factice et la clé.
+        self.assertEqual(valeur["qui"], "[FACTICE] contenu factice de qui")
+        self.assertEqual(
+            valeur["doute_restant"],
+            "[FACTICE] contenu factice de doute_restant",
+        )
+        # Liste de textes : une entrée unique de même forme.
+        self.assertEqual(
+            valeur["symptomes_declares"],
+            ["[FACTICE] contenu factice de symptomes_declares"],
+        )
+        # Liste composée : une entrée unique remplie sous-case par sous-case.
+        self.assertEqual(
+            valeur["prescription"],
+            [
+                {
+                    "medicament": "[FACTICE] contenu factice de medicament",
+                    "posologie": "[FACTICE] contenu factice de posologie",
+                    "duree": "[FACTICE] contenu factice de duree",
+                }
+            ],
+        )
+        # Section réservée : liste vide, conforme.
+        self.assertEqual(valeur["autres_informations"], [])
+        self.assertEqual(list(valeur), list(self.schema["properties"]))
+
+    def test_composee_et_liste_composee_de_la_grille_de_types(self) -> None:
+        grille = ecrire_grille_types(self.dossier)
+        schema = grid_schema(grille)
+        sortie = adaptateur_factice.extraire(self._moteur(schema), self.messages, {})
+        valeur = json.loads(sortie["sortie_brute"])
+
+        self.assertEqual(
+            valeur,
+            {
+                "texte": "[FACTICE] contenu factice de texte",
+                "liste": ["[FACTICE] contenu factice de liste"],
+                "composee": {
+                    "libelle": "[FACTICE] contenu factice de libelle",
+                    "valeurs": ["[FACTICE] contenu factice de valeurs"],
+                },
+                "liste_composee": [
+                    {"nom": "[FACTICE] contenu factice de nom"}
+                ],
+                "autres_informations": [],
+            },
+        )
+        decodage = decode_output(sortie["sortie_brute"])
+        self.assertIsNone(validate_output(decodage.value, schema).issue)
+
+    def test_sortie_independante_du_texte_source(self) -> None:
+        moteur = self._moteur()
+        autres = [
+            self.messages[0],
+            {
+                "role": "user",
+                "content": user_message(
+                    "Autre texte, sans rapport, avec 42 mots nouveaux."
+                ),
+            },
+        ]
+        premiere = adaptateur_factice.extraire(moteur, self.messages, {})
+        seconde = adaptateur_factice.extraire(moteur, autres, {})
+
+        self.assertEqual(premiere["sortie_brute"], seconde["sortie_brute"])
+        self.assertNotIn("toux", premiere["sortie_brute"])
+        self.assertNotIn("42 mots", seconde["sortie_brute"])
+
+    def test_fin_arret_et_contrat_exact_des_sept_cles(self) -> None:
+        resultat = adaptateur_factice.extraire(self._moteur(), self.messages, {})
+
+        self.assertEqual(set(resultat), set(CLES_RESULTAT_EXTRACTION))
+        self.assertEqual(len(resultat), 7)
+        self.assertEqual(resultat["fin"], "arret")
+        self.assertIsInstance(resultat["sortie_brute"], str)
+        self.assertIsInstance(resultat["tokens_entree"], int)
+        self.assertIsInstance(resultat["tokens_sortie"], int)
+        self.assertIsInstance(resultat["delai_premier_token_s"], float)
+        self.assertIsInstance(resultat["duree_generation_s"], float)
+        self.assertIsInstance(resultat["temps_cpu_s"], float)
+
+    def test_mesures_simulees_deterministes_et_derivees_des_comptages(self) -> None:
+        messages = [
+            {"role": "system", "content": "a" * 600},
+            {"role": "user", "content": "b" * 200},
+        ]
+        resultat = adaptateur_factice.extraire(self._moteur(), messages, {})
+
+        # 800 caractères de prompt : 200 tokens simulés, lus à 400 tokens/s.
+        self.assertEqual(resultat["tokens_entree"], 200)
+        self.assertEqual(resultat["delai_premier_token_s"], 0.5)
+        # Sortie comptée à 4 caractères par token, au moins un token.
+        sortie = resultat["sortie_brute"]
+        self.assertEqual(resultat["tokens_sortie"], math.ceil(len(sortie) / 4))
+        self.assertEqual(
+            resultat["duree_generation_s"],
+            round((resultat["tokens_sortie"] - 1) / 20.0, 3),
+        )
+        self.assertEqual(
+            resultat["temps_cpu_s"],
+            round(
+                (resultat["delai_premier_token_s"] + resultat["duree_generation_s"])
+                * 1.5,
+                3,
+            ),
+        )
+        # Aucune mesure réelle : un second appel rend les mêmes valeurs.
+        self.assertEqual(
+            resultat, adaptateur_factice.extraire(self._moteur(), messages, {})
+        )
+
+    def test_reinitialiser_sans_effet_sur_le_moteur_ni_les_resultats(self) -> None:
+        moteur = self._moteur()
+        avant = adaptateur_factice.extraire(moteur, self.messages, {})
+        copie = dict(moteur)
+
+        self.assertIsNone(adaptateur_factice.reinitialiser(moteur))
+        self.assertEqual(moteur, copie)
+        self.assertEqual(adaptateur_factice.extraire(moteur, self.messages, {}), avant)
+
+    def test_charger_sans_schema_garde_le_contexte_de_transcription(self) -> None:
+        contexte = adaptateur_factice.charger(
+            {"identifiant": "factice/placeholder", "chemin": "absent"}, 3, {}
+        )
+        self.assertEqual(
+            contexte, {"modele": "factice/placeholder", "threads_demandes": 3}
+        )
+
+    def test_extraire_sans_schema_refuse(self) -> None:
+        moteur = adaptateur_factice.charger(MODELE_EXTRACTION_FACTICE, 3, {})
+        with self.assertRaises(ValueError):
+            adaptateur_factice.extraire(moteur, self.messages, {})
+
+    def test_jamais_d_erreur_de_contexte(self) -> None:
+        # Le factice n'a pas de vraie limite de contexte : même avec un contexte
+        # minuscule et un prompt énorme, il rend un résultat sans lever d'erreur.
+        messages = [
+            {"role": "system", "content": "a" * 400_000},
+            {"role": "user", "content": user_message("b" * 100_000)},
+        ]
+        resultat = adaptateur_factice.extraire(
+            self._moteur(), messages, {"contexte": 16, "sortie_max": 4096}
+        )
+        self.assertEqual(resultat["fin"], "arret")
+        self.assertGreater(resultat["tokens_entree"], 16)
+
+
+class RegistreFacticeExtractionTest(unittest.TestCase):
+    """Un seul module pour les deux tâches, sans import supplémentaire."""
+
+    def test_registre_charge_le_meme_module_pour_les_deux_taches(self) -> None:
+        registre = creer_registre_fourni()
+        declaration = registre.obtenir("factice")
+
+        self.assertEqual(
+            declaration.module_adaptateur, "engines.adaptateurs.factice"
+        )
+        self.assertEqual(declaration.tasks, (TASK_TRANSCRIPTION, TASK_EXTRACTION))
+        self.assertIs(registre.charger_adaptateur("factice"), adaptateur_factice)
+        for nom in ("charger", "reinitialiser", "extraire", "transcrire"):
+            with self.subTest(fonction=nom):
+                self.assertTrue(callable(getattr(adaptateur_factice, nom)))
+
+    def test_import_du_module_sans_dependance_supplementaire(self) -> None:
+        code = (
+            "import json, sys\n"
+            "import engines.adaptateurs.factice\n"
+            "print(json.dumps(sorted(\n"
+            "    module for module in sys.modules\n"
+            "    if module.split('.')[0] in\n"
+            "    ('engines', 'transcription_bench', 'numpy', 'psutil')\n"
+            ")))\n"
+        )
+        resultat = subprocess.run(
+            [sys.executable, "-c", code],
+            cwd=RACINE_PROJET,
+            env=environnement_sans_heritage(),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=120,
+            check=False,
+        )
+        self.assertEqual(resultat.returncode, 0, resultat.stderr)
+        self.assertEqual(
+            json.loads(resultat.stdout),
+            ["engines", "engines.adaptateurs", "engines.adaptateurs.factice"],
+        )
+
+
+class ExecutionExtractionFacticeTest(unittest.TestCase):
+    """Job d'extraction complet, lancé par le vrai runner en sous-processus."""
+
+    def setUp(self) -> None:
+        self._temporaire = tempfile.TemporaryDirectory()
+        self.addCleanup(self._temporaire.cleanup)
+        self.dossier = Path(self._temporaire.name)
+        self.grille = read_grid("consultation-generale")
+        self.schema = grid_schema(self.grille)
+
+    def _lancer(self, chemin_job: Path) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [
+                sys.executable,
+                str(RACINE_PROJET / "engines" / "runner_extraction.py"),
+                str(chemin_job),
+            ],
+            cwd=self.dossier,
+            env=environnement_sans_heritage(),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=120,
+            check=False,
+        )
+
+    def _job(self) -> Path:
+        contenu = {
+            "version": 1,
+            "tache": "extraction",
+            "moteur": "factice",
+            "famille": "factice-extraction",
+            "modele": MODELE_EXTRACTION_FACTICE,
+            "threads_demandes": 3,
+            "reglages": {},
+            "schema": self.schema,
+            "message_systeme": system_message(self.grille).text,
+            "sources": [
+                {
+                    "texte": "Le patient tousse depuis trois jours.",
+                    "ordre": 0,
+                    "nom": "premiere.wav",
+                },
+                {
+                    "texte": "Aucune douleur signalée, rendez-vous dans un mois.",
+                    "ordre": 1,
+                    "nom": "seconde.wav",
+                },
+            ],
+        }
+        chemin = self.dossier / "job.json"
+        chemin.write_text(json.dumps(contenu), encoding="utf-8")
+        return chemin
+
+    def test_lot_conforme_deterministe_et_mesures_simulees(self) -> None:
+        chemin = self._job()
+        premiere = self._lancer(chemin)
+        seconde = self._lancer(chemin)
+
+        self.assertEqual(premiere.returncode, 0, premiere.stderr)
+        # Deux exécutions : sorties du protocole identiques, octet pour octet.
+        self.assertEqual(premiere.stdout, seconde.stdout)
+        evenements = evenements_de(premiere.stdout)
+        self.assertEqual(
+            [evenement["type"] for evenement in evenements],
+            ["chargement", "extraction", "extraction", "fin"],
+        )
+        self.assertEqual(evenements[-1]["audios_ok"], 2)
+        self.assertEqual(evenements[-1]["audios_erreur"], 0)
+
+        extractions = evenements[1:3]
+        for evenement in evenements:
+            with self.subTest(type_evenement=evenement["type"]):
+                self.assertIs(evenement["factice"], True)
+                self.assertIs(evenement["mesures_simulees"], True)
+        for evenement in extractions:
+            with self.subTest(nom=evenement["nom"]):
+                self.assertIs(evenement["conforme"], True)
+                self.assertIsNone(evenement["motif"])
+                self.assertEqual(evenement["fin"], "arret")
+                self.assertEqual(
+                    evenement["duree_extraction_s"], DUREE_EXTRACTION_SIMULEE_S
+                )
+                self.assertEqual(
+                    evenement["valeur"], json.loads(evenement["sortie_brute"])
+                )
+                self.assertIsNone(
+                    validate_output(evenement["valeur"], self.schema).issue
+                )
+                self.assertGreater(evenement["tokens_entree"], 0)
+                self.assertGreater(evenement["tokens_sortie"], 0)
+        # Sortie dérivée du schéma seul : identique pour deux sources différentes.
+        self.assertEqual(extractions[0]["sortie_brute"], extractions[1]["sortie_brute"])
+        # Le journal et la sortie d'événements ne recopient jamais le texte source.
+        for texte_source in ("tousse depuis trois jours", "rendez-vous dans un mois"):
+            with self.subTest(texte_source=texte_source):
+                self.assertNotIn(texte_source, premiere.stdout)
+                self.assertNotIn(texte_source, premiere.stderr)
 
 
 if __name__ == "__main__":

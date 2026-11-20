@@ -16,9 +16,11 @@ créneau (`CreneauOccupe`, `ServiceArrete`) telles quelles.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 
+from transcription_bench.execution_extraction import ExtractionExecution
 from transcription_bench.execution_moteur import ExecutionImpossible, ExecutionMoteur
+from transcription_bench.extractions import ExtractionConfiguration, ExtractionRequest
 from transcription_bench.executions import (
     ConfigurationExecutions,
     DemandeExecution,
@@ -103,6 +105,53 @@ def launch_execution(
     except BaseException:
         # Admission refusée ou interrompue : la réservation posée ci-dessus est
         # libérée, sans quoi un arrêt ultérieur viserait une exécution fantôme.
+        execution.annuler_reservation()
+        raise
+    return request
+
+
+def launch_extraction(
+    configuration: ExtractionConfiguration,
+    execution: ExtractionExecution,
+    operations: CreneauOperations,
+    *,
+    modele: str,
+    grille: str,
+    sources: Sequence[str],
+    threads: str | int | None = None,
+    reglages: Mapping[str, str] | None = None,
+    moteur: str | None = None,
+) -> ExtractionRequest:
+    """Valide, réserve puis admet l'extraction dans le créneau ; renvoie la demande.
+
+    Même enchaînement que `launch_execution` : la validation (`ValeurRefusee`)
+    précède toute réservation, `EngineNotReady` refuse un moteur non prêt et
+    `ExecutionAlreadyReserved` une réservation existante. Une admission refusée
+    (`CreneauOccupe`, `ServiceArrete`) annule la réservation avant d'être relevée.
+    """
+    request = configuration.valider(
+        modele=modele,
+        grille=grille,
+        sources=sources,
+        threads=threads,
+        reglages=reglages,
+        moteur=moteur,
+    )
+    try:
+        execution.verifier_lancable(request)
+    except ExecutionImpossible as exception:
+        raise EngineNotReady(str(exception)) from exception
+    try:
+        execution.reserver()
+    except ExecutionImpossible as exception:
+        raise ExecutionAlreadyReserved(str(exception)) from exception
+    try:
+        operations.demarrer(
+            TYPE_EXECUTION,
+            lambda worker: execution.lancer(request, worker),
+            cible=request.grille.nom,
+        )
+    except BaseException:
         execution.annuler_reservation()
         raise
     return request

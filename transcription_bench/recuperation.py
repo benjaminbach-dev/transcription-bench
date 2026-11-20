@@ -17,11 +17,31 @@ cours de récupération. Pour chaque `run.json` à l'état `running` :
    `run.log`) ne sont jamais réécrits et aucune inférence n'est reprise ;
 3. **nettoyage des restes** de `data/cache/`, une fois qu'aucun moteur
    enregistré n'est vivant : ces dossiers de travail ne sont plus utilisés.
+   Un reste que la purge n'a pas pu supprimer est signalé à chaque démarrage,
+   tant qu'il existe : jamais un succès silencieux (D7).
+
+Les extractions (tâche 3.4, `data/extractions/`) suivent les mêmes règles : leur
+`run.json` en cours est validé par `resultats_extraction.validate_running_extraction`,
+leurs sources sans `result.json` publié restent non traitées, et leur clôture est
+`abandon_extraction`. Le cache, purgé en commun, contient aussi les fichiers de
+travail des extractions (dont `job.json`, qui contient les textes sources).
+
+Tout `run.json` lu — et le dossier qui le porte — est résolu confiné
+(`resoudre_dans_racine`, même règle que la sélection des sources d'extraction) :
+un lien sortant n'est jamais lu, l'exécution reste ignorée en l'état, sans être
+clôturée ni purgée. Un dossier des extractions qui serait lui-même un lien
+symbolique ou une jonction n'est jamais parcouru : les deux passes (récupération
+des extractions en cours, purge des dossiers sans état) sont sautées et un
+diagnostic fixe le signale au démarrage, sans chemin.
 
 Une exécution déjà finale n'est jamais modifiée, et n'est donc jamais refusée
 pour son schéma : la validation ne vaut que pour les exécutions `running`, qui
-sont les seules interprétées. Un dossier de résultats sans `run.json` (création
-du dossier interrompue avant l'écriture de l'état) est ignoré. Un `run.json`
+sont les seules interprétées. Un dossier de résultats de transcription sans
+`run.json` (création du dossier interrompue avant l'écriture de l'état) reste
+ignoré. Un dossier d'extraction sans `run.json` ne l'est plus : sans copie
+`source.txt`, il est purgé silencieusement (rien n'y a jamais été conservé) ;
+avec des copies, il est clôturé en état abandonné — les textes sont copiés dès
+l'admission, ce cas ne devrait plus exister, il reste défensif. Un `run.json`
 `running` illisible, d'un schéma inconnu ou incohérent est refusé sans être
 réécrit, avec un message explicite. Une erreur système inattendue pendant la
 terminaison (autre qu'un refus explicite) devient elle aussi un refus de
@@ -77,7 +97,7 @@ import math
 import os
 import shutil
 import sys
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -85,16 +105,29 @@ from typing import Any
 import psutil
 
 from transcription_bench import resultats
-from transcription_bench.paths import NOM_DOSSIER_CACHE, NOM_DOSSIER_RESULTATS
+from transcription_bench.paths import (
+    NOM_DOSSIER_CACHE,
+    NOM_DOSSIER_EXTRACTIONS,
+    NOM_DOSSIER_RESULTATS,
+    ValeurRefusee,
+    resoudre_dans_racine,
+)
 from transcription_bench.resultats import (
     ETAT_EN_COURS,
     ETATS_FINAUX,
+    MOTIF_IDENTIFIANT,
     NOM_FICHIER_EXECUTION,
     SCHEMA,
     SOURCE_HEURE_PSUTIL,
     STATUT_ERREUR,
     STATUT_NON_TRAITE,
     STATUT_OK,
+)
+from transcription_bench.resultats_extraction import (
+    FILE_SOURCE,
+    abandon_extraction,
+    abandon_extraction_inachevee,
+    validate_running_extraction,
 )
 
 #: Écart maximal accepté entre l'heure de création consignée (source `psutil`)
@@ -111,6 +144,22 @@ DELAI_TERMINAISON_S = 5.0
 #: `execution_moteur.PREFIXE_DOSSIER_TRAVAIL` par un test, sans importer ce
 #: module (qui chargerait numpy et les moteurs). Seuls ces dossiers sont purgés.
 PREFIXE_DOSSIER_TRAVAIL = "execution-"
+
+#: Motif fixe d'un dossier de travail que la purge de la récupération n'a pas pu
+#: supprimer, tenu égal à `execution_extraction.MOTIF_DOSSIER_CONSERVE` par un
+#: test, sans importer ce module (qui chargerait les moteurs et numpy).
+MOTIF_DOSSIER_TRAVAIL_CONSERVE = (
+    "dossier de travail non supprimé : il contient le job et les textes sources"
+)
+
+#: Diagnostic fixe d'un dossier des extractions qui serait lui-même un lien
+#: symbolique ou une jonction : sa cible n'est jamais parcourue au nom du
+#: programme — ni lue, ni clôturée, ni purgée. Jamais un chemin : le
+#: diagnostic est fixe, il ne cite que le dossier concerné.
+MOTIF_RACINE_EXTRACTIONS_LIEE = (
+    "dossier des extractions ignoré : lien symbolique, aucune récupération "
+    "ni purge n'a lieu dans sa cible"
+)
 
 CLE_ETAT = "etat"
 
@@ -129,14 +178,44 @@ def recuperer_executions_anterieures(
     Lève `EtatAnterieurNonTraitable` — après avoir laissé les fichiers lisibles
     et sans clore l'exécution concernée — si un `run.json` resté en cours est
     illisible, incohérent ou d'un schéma inconnu, si un processus ne peut pas
-    être identifié, ou s'il survit à l'arrêt. Les exécutions déjà finales et les
-    dossiers sans `run.json` ne sont pas modifiés. `delai_terminaison` n'est
-    fourni que par les tests.
+    être identifié, ou s'il survit à l'arrêt. Les exécutions déjà finales ne
+    sont pas modifiées ; un dossier de transcription sans `run.json` reste
+    ignoré, un dossier d'extraction sans `run.json` est purgé (sans copie)
+    ou clôturé en abandonné (avec des copies). Un `run.json` — ou son
+    dossier — qui sortirait par un lien symbolique n'est jamais lu :
+    l'exécution reste ignorée, en l'état ; un dossier des extractions qui
+    serait lui-même un lien est signalé par un diagnostic fixe et ses passes
+    sont sautées. `delai_terminaison` n'est fourni que par les tests.
     """
-    dossier_resultats = Path(donnees) / NOM_DOSSIER_RESULTATS
-    if dossier_resultats.is_dir():
+    racine = Path(donnees)
+    # Transcriptions puis extractions : même règle, validation et clôture propres.
+    for nom_dossier, valider, abandonner in (
+        (NOM_DOSSIER_RESULTATS, _valider_execution_en_cours, resultats.abandonner_execution),
+        (NOM_DOSSIER_EXTRACTIONS, _validate_running_extraction, abandon_extraction),
+    ):
+        dossier_resultats = racine / nom_dossier
+        if not dossier_resultats.is_dir():
+            continue
+        if nom_dossier == NOM_DOSSIER_EXTRACTIONS and (
+            dossier_resultats.is_symlink() or dossier_resultats.is_junction()
+        ):
+            # La cible d'un lien n'est jamais parcourue au nom du programme :
+            # sans ce contrôle, la récupération pourrait y lire des `run.json`,
+            # y clôturer des extractions et y purger des dossiers sans état.
+            _journaliser(MOTIF_RACINE_EXTRACTIONS_LIEE)
+            continue
         for run_json in sorted(dossier_resultats.glob(f"*/{NOM_FICHIER_EXECUTION}")):
-            contenu = _lire_execution(run_json)
+            chemin = _confiner_run_json(dossier_resultats, run_json)
+            if chemin is None:
+                # Confinement refusé (dossier ou run.json lié sortant) :
+                # la cible n'est jamais lue et l'exécution reste en l'état,
+                # mais le refus est rendu visible au lieu d'être silencieux.
+                _journaliser(
+                    f"exécution {run_json.parent.name} laissée en l'état : "
+                    "run.json ou dossier lié sortant, jamais lu"
+                )
+                continue
+            contenu = _lire_execution(chemin, valider)
             if contenu[CLE_ETAT] in ETATS_FINAUX:
                 continue
             try:
@@ -155,16 +234,24 @@ def recuperer_executions_anterieures(
                     "fichier n'a été modifié et l'exécution n'est pas close. "
                     "Vérifiez les processus en cours, puis relancez la commande."
                 ) from None
-            _abandonner(run_json, contenu)
+            _abandonner(run_json, contenu, abandonner)
+        if nom_dossier == NOM_DOSSIER_EXTRACTIONS:
+            # Arrêt entre la création d'un dossier d'extraction et l'écriture de
+            # son `run.json` : la récupération ne l'ignore plus (D7).
+            _recuperer_extractions_sans_etat(dossier_resultats)
     # Aucun moteur enregistré n'est vivant à ce stade (sinon l'appel ci-dessus a
     # refusé le démarrage) : les dossiers de travail restants sont des restes.
-    _purger_cache(Path(donnees))
+    _purger_cache(racine)
 
 
-def _abandonner(run_json: Path, contenu: Mapping[str, Any]) -> None:
+def _abandonner(
+    run_json: Path,
+    contenu: Mapping[str, Any],
+    abandonner: Callable[[Path, Mapping[str, Any]], Any],
+) -> None:
     """Clôt une exécution `running` en `abandoned`, sans toucher à ses résultats."""
     try:
-        resultats.abandonner_execution(run_json.parent, contenu)
+        abandonner(run_json.parent, contenu)
     except (OSError, ValueError, KeyError, TypeError) as erreur:
         raise EtatAnterieurNonTraitable(
             f"démarrage refusé : clôture en état abandonné impossible : {run_json} "
@@ -178,8 +265,31 @@ def _abandonner(run_json: Path, contenu: Mapping[str, Any]) -> None:
 # -- lecture et validation de `run.json` -------------------------------------
 
 
-def _lire_execution(run_json: Path) -> Mapping[str, Any]:
-    """Lit `run.json` ; refuse tout contenu non traitable sans le réécrire."""
+def _confiner_run_json(dossier_resultats: Path, run_json: Path) -> Path | None:
+    """Chemin confiné d'un `run.json` trouvé par le parcours, ou `None`.
+
+    Le dossier de l'exécution puis le fichier sont résolus confinés (même règle
+    que la sélection des sources d'extraction, `resoudre_dans_racine`) : un
+    dossier ou un `run.json` qui sortirait par un lien symbolique n'est jamais
+    lu. `None` dans ce cas : l'exécution reste ignorée, en l'état, sans être
+    clôturée ni purgée, et la récupération suit son cours sur les autres.
+    """
+    try:
+        dossier = resoudre_dans_racine(dossier_resultats, run_json.parent.name)
+        return resoudre_dans_racine(dossier, run_json.name)
+    except ValeurRefusee:
+        return None
+
+
+def _lire_execution(
+    run_json: Path,
+    valider: Callable[[Mapping[str, Any], Path], None],
+) -> Mapping[str, Any]:
+    """Lit `run.json`, déjà résolu confiné ; refuse tout contenu non traitable.
+
+    `valider` vérifie un `run.json` en cours selon son type (transcription ou
+    extraction) ; elle n'est appelée que pour un état `running`.
+    """
     try:
         contenu = json.loads(run_json.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as erreur:
@@ -205,7 +315,7 @@ def _lire_execution(run_json: Path) -> Mapping[str, Any]:
             "résultat manuellement avant de redémarrer."
         )
     if etat == ETAT_EN_COURS:
-        _valider_execution_en_cours(contenu, run_json)
+        valider(contenu, run_json)
     return contenu
 
 
@@ -225,6 +335,30 @@ def _valider_execution_en_cours(
             f"({schema!r}, schéma {SCHEMA} attendu) : {run_json}. Aucun fichier "
             "n'a été modifié ; ce résultat ne doit pas être interprété."
         )
+    _validate_process(contenu, run_json)
+    audios = contenu.get("audios")
+    if not isinstance(audios, list):
+        raise _incoherent(run_json, "clé 'audios' absente ou invalide")
+    for plan in audios:
+        if not isinstance(plan, Mapping):
+            raise _incoherent(run_json, "plan d'audio invalide")
+        dossier = plan.get("dossier")
+        if not isinstance(dossier, str) or not dossier:
+            raise _incoherent(run_json, "plan d'audio sans dossier")
+        if plan.get("statut") not in (STATUT_OK, STATUT_ERREUR, STATUT_NON_TRAITE):
+            raise _incoherent(run_json, "plan d'audio au statut inconnu")
+
+
+def _validate_running_extraction(contenu: Mapping[str, Any], run_json: Path) -> None:
+    """Vérifie une extraction en cours : type, schéma, plans de sources, processus."""
+    motif = validate_running_extraction(contenu)
+    if motif is not None:
+        raise _incoherent(run_json, motif)
+    _validate_process(contenu, run_json)
+
+
+def _validate_process(contenu: Mapping[str, Any], run_json: Path) -> None:
+    """Vérifie le processus moteur consigné, commun aux transcriptions et extractions."""
     processus = contenu.get("processus_moteur")
     if not isinstance(processus, Mapping):
         raise _incoherent(run_json, "clé 'processus_moteur' absente ou invalide")
@@ -244,17 +378,6 @@ def _valider_execution_en_cours(
     lance_a = processus.get("lance_a")
     if lance_a is not None and not isinstance(lance_a, str):
         raise _incoherent(run_json, "heure de lancement consignée invalide")
-    audios = contenu.get("audios")
-    if not isinstance(audios, list):
-        raise _incoherent(run_json, "clé 'audios' absente ou invalide")
-    for plan in audios:
-        if not isinstance(plan, Mapping):
-            raise _incoherent(run_json, "plan d'audio invalide")
-        dossier = plan.get("dossier")
-        if not isinstance(dossier, str) or not dossier:
-            raise _incoherent(run_json, "plan d'audio sans dossier")
-        if plan.get("statut") not in (STATUT_OK, STATUT_ERREUR, STATUT_NON_TRAITE):
-            raise _incoherent(run_json, "plan d'audio au statut inconnu")
 
 
 def _incoherent(run_json: Path, detail: str) -> EtatAnterieurNonTraitable:
@@ -466,9 +589,10 @@ def _purger_cache(donnees: Path) -> None:
     autre contenu déposé par l'utilisateur reste intact. Aucune suppression n'a
     lieu dans un `cache` qui serait un lien symbolique ou une jonction (le
     programme ne connaît pas la cible), ni sur une entrée qui serait elle-même
-    un lien. Une suppression impossible est ignorée : elle ne coûte que de
-    l'espace disque et ne doit pas bloquer le démarrage. Le dossier lui-même est
-    laissé en place, il est recréé paresseusement.
+    un lien. Une suppression impossible ne bloque pas le démarrage, mais elle
+    n'est plus masquée : le reste est signalé à chaque démarrage tant qu'il
+    existe, par la même notice fixe que la fin d'exécution (D7). Le dossier
+    lui-même reste en place, il est recréé paresseusement.
     """
     cache = donnees / NOM_DOSSIER_CACHE
     if not cache.is_dir() or cache.is_symlink() or cache.is_junction():
@@ -480,11 +604,54 @@ def _purger_cache(donnees: Path) -> None:
             continue
         try:
             if reste.is_dir():
-                shutil.rmtree(reste, ignore_errors=True)
+                shutil.rmtree(reste)
             else:
                 reste.unlink()
         except OSError:
+            pass
+        if reste.exists():
+            # Échec de la purge, jamais un succès silencieux : le reste contient
+            # le job et les textes sources, il est signalé tant qu'il subsiste.
+            _journaliser(f"{reste.name} : {MOTIF_DOSSIER_TRAVAIL_CONSERVE}")
+
+
+# -- dossiers d'extraction sans état ------------------------------------------
+
+
+def _recuperer_extractions_sans_etat(racine_extractions: Path) -> None:
+    """Traite les dossiers d'extraction restés sans `run.json` (arrêt brutal).
+
+    Un dossier créé puis interrompu avant la première écriture peut rester sans
+    état. Sans `run.json` **ni** copie `source.txt`, rien n'y a jamais été
+    conservé : il est purgé silencieusement. Sans `run.json` **mais avec** des
+    copies, les textes copiés dès l'admission sont conservés et le dossier est
+    clôturé en état abandonné — cas défensif, `run.json` étant écrit avant
+    toute copie. Seuls les dossiers au nom d'extractions du programme sont
+    traités : tout autre contenu déposé là, ou un lien, reste intact.
+    """
+    for dossier in sorted(racine_extractions.iterdir()):
+        if not MOTIF_IDENTIFIANT.fullmatch(dossier.name):
             continue
+        if dossier.is_symlink() or dossier.is_junction() or not dossier.is_dir():
+            continue
+        if (dossier / NOM_FICHIER_EXECUTION).is_symlink() or (
+            dossier / NOM_FICHIER_EXECUTION
+        ).exists():
+            continue  # déjà traité par la boucle des `run.json` (un run.json
+            # lié, même cassé, n'est jamais "sans état" : ni purge ni clôture)
+        if not any(dossier.rglob(FILE_SOURCE)):
+            shutil.rmtree(dossier, ignore_errors=True)
+            continue
+        try:
+            abandon_extraction_inachevee(dossier)
+        except (OSError, ValueError) as erreur:
+            raise EtatAnterieurNonTraitable(
+                f"démarrage refusé : clôture en état abandonné impossible : "
+                f"{dossier} ({_message(erreur)}). Les copies présentes ne sont "
+                "pas modifiées. Vérifiez les droits d'écriture du dossier des "
+                "extractions puis relancez la commande."
+            ) from None
+        _journaliser(f"exécution {dossier.name} close en abandonnée (sans run.json)")
 
 
 # -- journal ----------------------------------------------------------------

@@ -26,12 +26,15 @@ import numpy as np
 import psutil
 
 from engines.declarations import (
+    TASK_EXTRACTION,
     DeclarationAdaptateur,
     Famille,
     declarations_fournies,
 )
 from engines.hors_ligne import environnement_moteur
 from engines.mesures_systeme import (
+    MOMENT_AUDIO,
+    MOMENT_CHARGEMENT,
     PROVENANCE_REELLE,
     PROVENANCE_SIMULEE,
     SIMULATION_CPU_POURCENTAGE,
@@ -40,20 +43,28 @@ from engines.mesures_systeme import (
     SIMULATION_RELEVE_LE,
     AmorcageCpu,
     ReleveurSysteme,
+    valider_observation_systeme,
 )
 from engines.protocole import (
+    CHAMPS_REQUIS,
+    MARQUEUR_EVENEMENT,
     PREFIXE_EVENEMENT,
     TYPE_AUDIO,
     TYPE_AUDIO_ERREUR,
     TYPE_CHARGEMENT,
+    TYPE_EXTRACTION,
+    TYPE_EXTRACTION_ERREUR,
     TYPE_FIN,
+    TYPES_EVENEMENTS,
     analyser_ligne,
     emettre,
     formater_ligne,
 )
 from engines.registre import RegistreMoteurs, creer_registre_fourni
 from engines.runner import (
+    DUREE_CHARGEMENT_SIMULEE_S,
     FORMAT_AUDIO,
+    PIC_MEMOIRE_SIMULE_OCTETS,
     ErreurAudio,
     ErreurJob,
     ErreurMoteur,
@@ -64,8 +75,23 @@ from engines.runner import (
     executer,
     pic_memoire,
 )
+from engines.runner_extraction import (
+    DUREE_EXTRACTION_SIMULEE_S,
+    MOTIF_LIMITE,
+    charger_job_extraction,
+)
+from engines.runner_extraction import executer as executer_extraction
+from engines.runner_extraction import main as main_extraction
+from tests import adaptateur_extraction_de_test as adaptateur_extraction
 from tests import adaptateur_runner_de_test as adaptateur
+from transcription_bench.consignes_grilles import (
+    SOURCE_END_MARKER,
+    system_message,
+    user_message,
+)
+from transcription_bench.grilles import Field, Grid, read_grid
 from transcription_bench.paths import RACINE_PROJET
+from transcription_bench.schema_grilles import grid_schema
 
 MODULE_ADAPTATEUR = "tests.adaptateur_runner_de_test"
 MOTEUR_DE_TEST = "moteur-de-test"
@@ -317,11 +343,41 @@ class ProtocoleTest(unittest.TestCase):
             f'{PREFIXE_EVENEMENT}{{"type": "inconnu"}}',
             f'{PREFIXE_EVENEMENT}{{"type": "audio"}}',
             f"{PREFIXE_EVENEMENT}[]",
+            # Marqueur nu, sans l'espace de séparation : jamais un événement
+            # analysable — mais une ligne d'événement pour les journaux du
+            # serveur, qui la masquent sans jamais la recopier.
+            f'{MARQUEUR_EVENEMENT}{{"nom": "SENTINELLE-FUITE"}}',
             "",
         ]
         for ligne in parasites:
             with self.subTest(ligne=ligne):
                 self.assertIsNone(analyser_ligne(ligne))
+
+    def test_lignes_hostiles_ignorees_sans_exception(self) -> None:
+        # Contre-revue : un entier JSON de plus de 4300 chiffres fait lever
+        # `ValueError` à `json.loads` (pas une `JSONDecodeError`) et un `type`
+        # non hachable leverait `TypeError` : la ligne est rendue invalide,
+        # jamais une exception.
+        entier_geant = (
+            PREFIXE_EVENEMENT
+            + '{"type": "chargement", "duree_s": '
+            + "9" * 5000
+            + "}"
+        )
+        self.assertIsNone(analyser_ligne(entier_geant))
+        self.assertIsNone(
+            analyser_ligne(PREFIXE_EVENEMENT + '{"type": ["x"], "factice": true}')
+        )
+        self.assertIsNone(
+            analyser_ligne(PREFIXE_EVENEMENT + '{"type": {"cle": 1}, "a": 2}')
+        )
+
+    def test_ligne_imbriquee_profonde_ignoree_sans_exception(self) -> None:
+        # Contre-revue : un JSON imbriqué au-delà de la limite de récursion du
+        # décodeur lève `RecursionError`, pas seulement `JSONDecodeError` : la
+        # ligne est rendue invalide, jamais une exception.
+        profonde = PREFIXE_EVENEMENT + "[" * 100_000 + "]" * 100_000
+        self.assertIsNone(analyser_ligne(profonde))
 
     def test_non_ascii_conserve_et_ligne_unique(self) -> None:
         ligne = formater_ligne(
@@ -354,6 +410,249 @@ class ProtocoleTest(unittest.TestCase):
         )
         self.assertEqual(sortie.getvalue().count("\n"), 1)
         self.assertIsNone(analyser_ligne("parasite"))
+
+
+def _extraction(**modifications: object) -> dict[str, object]:
+    """Événement `extraction` conforme et complet, modifié par les champs donnés."""
+    evenement: dict[str, object] = {
+        "type": TYPE_EXTRACTION,
+        "index": 0,
+        "nom": "consultation",
+        "conforme": True,
+        "motif": None,
+        "valeur": {"motif_consultation": "toux", "autres_informations": []},
+        "sortie_brute": '{"motif_consultation":"toux","autres_informations":[]}',
+        "tokens_entree": 812,
+        "tokens_sortie": 24,
+        "delai_premier_token_s": 1.25,
+        "duree_generation_s": 2.5,
+        "duree_extraction_s": 2.7,
+        "vitesse_generation_tps": 9.2,
+        "vitesse_lecture_estimee_tps": 650.0,
+        "temps_cpu_s": 2.6,
+        "pic_memoire_octets": 4096,
+        "fin": "arret",
+        "factice": False,
+        "mesures_simulees": False,
+    }
+    evenement.update(modifications)
+    return evenement
+
+
+def _extraction_erreur(**modifications: object) -> dict[str, object]:
+    """Événement `extraction_erreur` complet, modifié par les champs donnés."""
+    evenement: dict[str, object] = {
+        "type": TYPE_EXTRACTION_ERREUR,
+        "index": 1,
+        "nom": "consultation",
+        "motif": "contexte insuffisant",
+        "factice": False,
+        "mesures_simulees": False,
+    }
+    evenement.update(modifications)
+    return evenement
+
+
+class ValidationExtractionTest(unittest.TestCase):
+    """Validation stricte des événements d'extraction (tâche 3.1, design D5 à D7)."""
+
+    def test_evenements_complets_valides(self) -> None:
+        non_conforme = _extraction(
+            conforme=False,
+            motif="JSON indécodable",
+            valeur=None,
+            sortie_brute="{\"motif\":",
+            fin="limite",
+        )
+        for evenement in (
+            _extraction(),
+            non_conforme,
+            _extraction_erreur(),
+        ):
+            with self.subTest(type_evenement=evenement["type"]):
+                self.assertEqual(
+                    analyser_ligne(formater_ligne(evenement)), evenement
+                )
+
+    def test_mesures_absentes_admises_sans_zero(self) -> None:
+        absentes = _extraction(
+            conforme=False,
+            motif="limite de sortie atteinte",
+            valeur=None,
+            sortie_brute=None,
+            tokens_entree=None,
+            tokens_sortie=None,
+            delai_premier_token_s=None,
+            duree_generation_s=None,
+            duree_extraction_s=None,
+            vitesse_generation_tps=None,
+            vitesse_lecture_estimee_tps=None,
+            temps_cpu_s=None,
+            pic_memoire_octets=None,
+            fin="limite",
+        )
+        lu = analyser_ligne(formater_ligne(absentes))
+        self.assertEqual(lu, absentes)
+        for champ in ("vitesse_generation_tps", "temps_cpu_s", "pic_memoire_octets"):
+            with self.subTest(champ=champ):
+                self.assertIsNone(lu[champ])
+        # Une seule sortie de token : la vitesse de génération est absente, pas nulle.
+        un_token = _extraction(tokens_sortie=1, vitesse_generation_tps=None)
+        self.assertEqual(analyser_ligne(formater_ligne(un_token)), un_token)
+
+    def test_entier_geant_refuse_sans_exception(self) -> None:
+        # Un entier de 400 chiffres ne tient pas dans un flottant : la ligne est
+        # ignorée (`None`), sans lever `OverflowError`.
+        geant = _extraction(duree_extraction_s=10**399)
+        self.assertIsNone(analyser_ligne(formater_ligne(geant)))
+        self.assertIsNone(
+            analyser_ligne(formater_ligne(_extraction(temps_cpu_s=-(10**399))))
+        )
+
+    def test_champ_requis_manquant_refuse(self) -> None:
+        for type_evenement, evenement in (
+            (TYPE_EXTRACTION, _extraction()),
+            (TYPE_EXTRACTION_ERREUR, _extraction_erreur()),
+        ):
+            for champ in CHAMPS_REQUIS[type_evenement]:
+                with self.subTest(type_evenement=type_evenement, champ=champ):
+                    sans_champ = dict(evenement)
+                    del sans_champ[champ]
+                    self.assertIsNone(analyser_ligne(formater_ligne(sans_champ)))
+
+    def test_champ_inconnu_refuse(self) -> None:
+        for evenement in (
+            _extraction(),
+            _extraction_erreur(),
+        ):
+            for champ in ("champ_inconnu", "timings_natifs", "texte"):
+                with self.subTest(type_evenement=evenement["type"], champ=champ):
+                    self.assertIsNone(
+                        analyser_ligne(formater_ligne({**evenement, champ: 1}))
+                    )
+
+    def test_types_inattendus_refuses(self) -> None:
+        invalides_extraction = [
+            ("index", "0"),
+            ("index", True),
+            ("index", -1),
+            ("index", 1.0),
+            ("nom", 3),
+            ("conforme", "oui"),
+            ("conforme", 1),
+            ("valeur", "texte"),
+            ("valeur", ["x"]),
+            ("sortie_brute", 12),
+            ("tokens_entree", -1),
+            ("tokens_entree", "812"),
+            ("tokens_entree", True),
+            ("tokens_sortie", 1.5),
+            ("delai_premier_token_s", "1.2"),
+            ("delai_premier_token_s", True),
+            ("duree_generation_s", -0.1),
+            ("duree_extraction_s", float("nan")),
+            ("duree_extraction_s", float("inf")),
+            ("vitesse_generation_tps", "9"),
+            ("vitesse_lecture_estimee_tps", False),
+            ("temps_cpu_s", [1]),
+            ("pic_memoire_octets", 1.0),
+            ("fin", "stop"),
+            ("fin", None),
+            ("factice", "true"),
+            ("mesures_simulees", None),
+        ]
+        for champ, valeur in invalides_extraction:
+            with self.subTest(
+                type_evenement=TYPE_EXTRACTION, champ=champ, valeur=valeur
+            ):
+                self.assertIsNone(
+                    analyser_ligne(formater_ligne(_extraction(**{champ: valeur})))
+                )
+        invalides_erreur = [
+            ("index", "0"),
+            ("index", True),
+            ("nom", None),
+            ("motif", 3),
+            ("factice", "true"),
+        ]
+        for champ, valeur in invalides_erreur:
+            with self.subTest(
+                type_evenement=TYPE_EXTRACTION_ERREUR, champ=champ, valeur=valeur
+            ):
+                self.assertIsNone(
+                    analyser_ligne(
+                        formater_ligne(_extraction_erreur(**{champ: valeur}))
+                    )
+                )
+
+    def test_motif_borne(self) -> None:
+        longueur_max = "x" * 200
+        trop_long = "x" * 201
+        self.assertEqual(
+            analyser_ligne(formater_ligne(_extraction_erreur(motif=longueur_max))),
+            _extraction_erreur(motif=longueur_max),
+        )
+        for motif in (trop_long, "", None):
+            with self.subTest(motif=motif[:10] if motif else motif):
+                self.assertIsNone(
+                    analyser_ligne(formater_ligne(_extraction_erreur(motif=motif)))
+                )
+                self.assertIsNone(
+                    analyser_ligne(
+                        formater_ligne(
+                            _extraction(conforme=False, valeur=None, motif=motif)
+                        )
+                    )
+                )
+
+    def test_coherence_conforme_valeur_motif(self) -> None:
+        incoherents = [
+            _extraction(valeur=None),
+            _extraction(motif="x"),
+            _extraction(sortie_brute=None),
+            _extraction(conforme=False, valeur=None, motif=None),
+            _extraction(conforme=False, motif="x"),
+        ]
+        for evenement in incoherents:
+            with self.subTest(
+                conforme=evenement["conforme"],
+                valeur=evenement["valeur"],
+                motif=evenement["motif"],
+            ):
+                self.assertIsNone(analyser_ligne(formater_ligne(evenement)))
+
+    def test_provenance_transportee_comme_pour_audio(self) -> None:
+        evenements = (
+            _extraction(factice=True, mesures_simulees=True),
+            _extraction(factice=True, mesures_simulees=False),
+            _extraction_erreur(factice=True, mesures_simulees=True),
+        )
+        for evenement in evenements:
+            with self.subTest(
+                type_evenement=evenement["type"], factice=evenement["factice"]
+            ):
+                lu = analyser_ligne(formater_ligne(evenement))
+                self.assertEqual(lu, evenement)
+                self.assertIs(lu["factice"], True)
+                self.assertIs(lu["mesures_simulees"], evenement["mesures_simulees"])
+
+    def test_transcription_inchangee(self) -> None:
+        # Les événements de transcription ne sont pas validés strictement : un
+        # champ supplémentaire reste admis, comme avant cette tâche.
+        audio_erreur = {
+            "type": TYPE_AUDIO_ERREUR,
+            "index": 0,
+            "nom": "a.wav",
+            "erreur": "échec",
+            "factice": False,
+            "mesures_simulees": False,
+            "champ_supplementaire": 1,
+        }
+        self.assertEqual(analyser_ligne(formater_ligne(audio_erreur)), audio_erreur)
+
+    def test_types_evenements_inclut_extraction(self) -> None:
+        self.assertIn(TYPE_EXTRACTION, TYPES_EVENEMENTS)
+        self.assertIn(TYPE_EXTRACTION_ERREUR, TYPES_EVENEMENTS)
 
 
 class ValidationTimingsNatifsTest(unittest.TestCase):
@@ -1375,6 +1674,759 @@ class RelevesSystemeTest(unittest.TestCase):
             ],
             1234,
         )
+
+
+# Runner d'extraction (tâche 3.2, design D4 à D7) : adaptateur de test local.
+
+MOTEUR_EXTRACTION_DE_TEST = "moteur-extraction-de-test"
+FAMILLE_EXTRACTION_DE_TEST = "extraction-de-test"
+MODULE_ADAPTATEUR_EXTRACTION = "tests.adaptateur_extraction_de_test"
+GRILLE_DE_TEST = read_grid("consultation-generale")
+SCHEMA_DE_TEST = grid_schema(GRILLE_DE_TEST)
+MESSAGE_SYSTEME_DE_TEST = system_message(GRILLE_DE_TEST).text
+SORTIE_CONFORME = adaptateur_extraction.sortie_conforme(SCHEMA_DE_TEST)
+RESULTAT_VALIDE = {
+    "sortie_brute": SORTIE_CONFORME,
+    "tokens_entree": 812,
+    "tokens_sortie": 24,
+    "fin": "arret",
+    "delai_premier_token_s": 1.25,
+    "duree_generation_s": 2.5,
+    "temps_cpu_s": 2.6,
+}
+
+
+def registre_extraction_de_test(factice: bool = False) -> RegistreMoteurs:
+    """Registre d'un moteur d'extraction de test, pointant vers l'adaptateur de test."""
+    registre = RegistreMoteurs()
+    registre.enregistrer(
+        DeclarationAdaptateur(
+            identifiant=MOTEUR_EXTRACTION_DE_TEST,
+            nom="Moteur d'extraction de test",
+            fichier_requirements=None,
+            regle_compatibilite="aucune",
+            familles=(
+                Famille(
+                    FAMILLE_EXTRACTION_DE_TEST,
+                    "Famille d'extraction de test",
+                    qualifiee=True,
+                    task=TASK_EXTRACTION,
+                ),
+            ),
+            module_adaptateur=MODULE_ADAPTATEUR_EXTRACTION,
+            factice=factice,
+        )
+    )
+    return registre
+
+
+def ecrire_job_extraction(
+    dossier: Path,
+    sources: list[tuple[str, str]],
+    *,
+    moteur: str = MOTEUR_EXTRACTION_DE_TEST,
+    famille: str = FAMILLE_EXTRACTION_DE_TEST,
+    reglages: dict[str, object] | None = None,
+    schema: dict[str, object] | None = None,
+    message_systeme: str = MESSAGE_SYSTEME_DE_TEST,
+) -> Path:
+    """Écrit un job d'extraction ; `sources` donne (nom, texte) dans l'ordre."""
+    contenu = {
+        "version": 1,
+        "tache": "extraction",
+        "moteur": moteur,
+        "famille": famille,
+        "modele": {
+            "identifiant": "test/extraction",
+            "revision": "abc",
+            "chemin": "modele",
+        },
+        "threads_demandes": 4,
+        "reglages": {} if reglages is None else reglages,
+        "schema": SCHEMA_DE_TEST if schema is None else schema,
+        "message_systeme": message_systeme,
+        "sources": [
+            {"texte": texte, "ordre": position, "nom": nom}
+            for position, (nom, texte) in enumerate(sources)
+        ],
+    }
+    chemin_job = dossier / "job.json"
+    chemin_job.write_text(json.dumps(contenu), encoding="utf-8")
+    return chemin_job
+
+
+def executer_extraction_et_lire(
+    chemin_job: Path, registre: RegistreMoteurs
+) -> tuple[str, str, list[str], list[dict[str, object]]]:
+    """Exécute un job d'extraction ; rend stdout, stderr, lignes et événements valides."""
+    sortie = io.StringIO()
+    erreurs = io.StringIO()
+    with redirect_stdout(sortie), redirect_stderr(erreurs):
+        executer_extraction(charger_job_extraction(chemin_job), registre)
+    lignes = [
+        ligne
+        for ligne in sortie.getvalue().splitlines()
+        if ligne.startswith(PREFIXE_EVENEMENT)
+    ]
+    evenements = [
+        evenement
+        for evenement in (analyser_ligne(ligne) for ligne in lignes)
+        if evenement is not None
+    ]
+    return sortie.getvalue(), erreurs.getvalue(), lignes, evenements
+
+
+class ExtractionLectureJobTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self._temporaire = tempfile.TemporaryDirectory()
+        self.addCleanup(self._temporaire.cleanup)
+        self.dossier = Path(self._temporaire.name)
+        adaptateur_extraction.configurer()
+
+    def test_job_valide_et_sources_ordonnees(self) -> None:
+        chemin = ecrire_job_extraction(
+            self.dossier,
+            [("a.wav", "Première source."), ("b.wav", "Seconde source.")],
+            reglages={"contexte": 8192},
+        )
+        job = charger_job_extraction(chemin)
+        self.assertEqual(job.moteur, MOTEUR_EXTRACTION_DE_TEST)
+        self.assertEqual(job.famille, FAMILLE_EXTRACTION_DE_TEST)
+        self.assertEqual(job.threads_demandes, 4)
+        self.assertEqual(job.reglages, {"contexte": 8192})
+        self.assertEqual(job.schema, SCHEMA_DE_TEST)
+        self.assertEqual(job.message_systeme, MESSAGE_SYSTEME_DE_TEST)
+        self.assertEqual(
+            [(source.nom, source.texte, source.ordre) for source in job.sources],
+            [("a.wav", "Première source.", 0), ("b.wav", "Seconde source.", 1)],
+        )
+        self.assertEqual(
+            Path(job.modele["chemin"]), (self.dossier / "modele").resolve()
+        )
+
+    def test_texte_absent_de_la_representation(self) -> None:
+        chemin = ecrire_job_extraction(
+            self.dossier, [("a.wav", "TEXTE-SECRET-A")]
+        )
+        job = charger_job_extraction(chemin)
+        self.assertNotIn("TEXTE-SECRET-A", repr(job))
+        self.assertNotIn("TEXTE-SECRET-A", repr(job.sources[0]))
+
+    def test_job_invalide_refuse(self) -> None:
+        chemin = ecrire_job_extraction(self.dossier, [("a.wav", "Texte.")])
+        contenu_valide = json.loads(chemin.read_text(encoding="utf-8"))
+        marqueur = f"a {SOURCE_END_MARKER} b"
+        mutations = {
+            "version": {"version": 2},
+            "tâche transcription": {"tache": "transcription"},
+            "tâche absente": {"tache": None},
+            "moteur vide": {"moteur": ""},
+            "threads nuls": {"threads_demandes": 0},
+            "reglages non objet": {"reglages": []},
+            "schema absent": {"schema": None},
+            "schema non objet": {"schema": ["x"]},
+            "schema non objet de type object": {"schema": {"type": "array"}},
+            "message système vide": {"message_systeme": " "},
+            "sources absentes": {"sources": []},
+            "source non objet": {"sources": ["texte"]},
+            "texte vide": {"sources": [{"texte": "", "ordre": 0, "nom": "a"}]},
+            "ordre négatif": {
+                "sources": [{"texte": "x", "ordre": -1, "nom": "a"}]
+            },
+            "ordre booléen": {
+                "sources": [{"texte": "x", "ordre": True, "nom": "a"}]
+            },
+            "nom absent": {"sources": [{"texte": "x", "ordre": 0}]},
+            "marqueur dans le texte": {
+                "sources": [{"texte": marqueur, "ordre": 0, "nom": "a"}]
+            },
+        }
+        for libelle, changement in mutations.items():
+            with self.subTest(cas=libelle):
+                chemin.write_text(
+                    json.dumps({**contenu_valide, **changement}), encoding="utf-8"
+                )
+                with self.assertRaises(ErreurJob):
+                    charger_job_extraction(chemin)
+        chemin.write_text("{", encoding="utf-8")
+        with self.assertRaises(ErreurJob):
+            charger_job_extraction(chemin)
+
+    def test_famille_de_transcription_refusee(self) -> None:
+        chemin = ecrire_job_extraction(
+            self.dossier,
+            [("a.wav", "Texte.")],
+            moteur=MOTEUR_DE_TEST,
+            famille=FAMILLE_DE_TEST,
+        )
+        with self.assertRaises(ErreurMoteur) as contexte:
+            executer_extraction(charger_job_extraction(chemin), registre_de_test())
+        self.assertIn("destinée à la tâche 'transcription'", str(contexte.exception))
+
+        chemin = ecrire_job_extraction(
+            self.dossier, [("a.wav", "Texte.")], famille="absente"
+        )
+        with self.assertRaises(ErreurMoteur):
+            executer_extraction(
+                charger_job_extraction(chemin), registre_extraction_de_test()
+            )
+
+
+class ExtractionExecutionTest(unittest.TestCase):
+    """Exécution du runner d'extraction avec l'adaptateur de test (tâche 3.2)."""
+
+    def setUp(self) -> None:
+        self._temporaire = tempfile.TemporaryDirectory()
+        self.addCleanup(self._temporaire.cleanup)
+        self.dossier = Path(self._temporaire.name)
+        adaptateur_extraction.configurer()
+        self.registre = registre_extraction_de_test()
+
+    def _executer(
+        self,
+        sources: list[tuple[str, str]],
+        *,
+        registre: RegistreMoteurs | None = None,
+        reglages: dict[str, object] | None = None,
+    ) -> tuple[str, str, list[str], list[dict[str, object]]]:
+        chemin = ecrire_job_extraction(self.dossier, sources, reglages=reglages)
+        resultat = executer_extraction_et_lire(
+            chemin, self.registre if registre is None else registre
+        )
+        # Aucun événement ne doit être écarté par la validation du protocole.
+        self.assertEqual(len(resultat[2]), len(resultat[3]))
+        return resultat
+
+    def test_chargement_unique_et_sources_dans_l_ordre(self) -> None:
+        _, _, _, evenements = self._executer(
+            [("a.wav", "Première."), ("b.wav", "Seconde."), ("c.wav", "Troisième.")],
+            reglages={"contexte": 16384},
+        )
+
+        self.assertEqual(
+            [evenement["type"] for evenement in evenements],
+            [
+                TYPE_CHARGEMENT,
+                TYPE_EXTRACTION,
+                TYPE_EXTRACTION,
+                TYPE_EXTRACTION,
+                TYPE_FIN,
+            ],
+        )
+        self.assertEqual(adaptateur_extraction.compteur_chargements, 1)
+        consigne = adaptateur_extraction.derniere_consigne
+        self.assertEqual(consigne["schema"], SCHEMA_DE_TEST)
+        self.assertEqual(consigne["reglages"], {"contexte": 16384})
+        self.assertEqual(consigne["threads_demandes"], 4)
+        self.assertEqual(consigne["modele"]["identifiant"], "test/extraction")
+        self.assertIs(consigne["modele"]["local_files_only"], True)
+        self.assertIs(consigne["modele"]["trust_remote_code"], False)
+        self.assertEqual(consigne["hf_hub_offline"], "1")
+        extractions = evenements[1:4]
+        self.assertEqual([e["index"] for e in extractions], [0, 1, 2])
+        self.assertEqual([e["nom"] for e in extractions], ["a.wav", "b.wav", "c.wav"])
+        self.assertEqual(evenements[-1]["audios_ok"], 3)
+        self.assertEqual(evenements[-1]["audios_erreur"], 0)
+
+    def test_reinitialisation_avant_chaque_source(self) -> None:
+        self._executer([("a.wav", "Un."), ("b.wav", "Deux."), ("c.wav", "Trois.")])
+
+        self.assertEqual(
+            adaptateur_extraction.journal,
+            [
+                "charger",
+                "reinitialiser",
+                "generer",
+                "reinitialiser",
+                "generer",
+                "reinitialiser",
+                "generer",
+            ],
+        )
+
+    def test_messages_systeme_et_utilisateur_recus(self) -> None:
+        self._executer([("a.wav", "Toux depuis trois jours.")])
+
+        messages = adaptateur_extraction.appels_generation[0]["messages"]
+        self.assertEqual(
+            messages,
+            [
+                {"role": "system", "content": MESSAGE_SYSTEME_DE_TEST},
+                {"role": "user", "content": user_message("Toux depuis trois jours.")},
+            ],
+        )
+
+    def test_comptage_du_prompt_soumis_transmis_a_l_evenement(self) -> None:
+        adaptateur_extraction.configurer(scenario=[{"tokens_entree": 1234}])
+
+        _, _, _, evenements = self._executer([("a.wav", "Texte.")])
+
+        extraction = evenements[1]
+        self.assertEqual(extraction["tokens_entree"], 1234)
+        self.assertAlmostEqual(extraction["vitesse_lecture_estimee_tps"], 1234 / 1.25)
+
+    def test_contexte_insuffisant_refuse_sans_generation_puis_suite(self) -> None:
+        adaptateur_extraction.configurer(scenario=[{"tokens_entree": 16000}, {}])
+
+        _, _, _, evenements = self._executer(
+            [("long.wav", "Très long."), ("court.wav", "Court.")]
+        )
+
+        self.assertEqual(
+            [evenement["type"] for evenement in evenements],
+            [TYPE_CHARGEMENT, TYPE_EXTRACTION_ERREUR, TYPE_EXTRACTION, TYPE_FIN],
+        )
+        erreur = evenements[1]
+        self.assertEqual(erreur["index"], 0)
+        self.assertEqual(erreur["nom"], "long.wav")
+        self.assertEqual(
+            erreur["motif"],
+            "contexte insuffisant : 20096 tokens requis "
+            "(16000 de prompt + 4096 de sortie) pour un contexte de 16384",
+        )
+        # La source refusée n'a jamais été générée ; la suivante l'a été.
+        self.assertEqual(
+            adaptateur_extraction.journal,
+            ["charger", "reinitialiser", "reinitialiser", "generer"],
+        )
+        self.assertEqual(len(adaptateur_extraction.appels_generation), 1)
+        self.assertEqual(
+            adaptateur_extraction.appels_generation[0]["messages"][1]["content"],
+            user_message("Court."),
+        )
+        self.assertIs(evenements[2]["conforme"], True)
+        self.assertEqual(evenements[-1]["audios_ok"], 1)
+        self.assertEqual(evenements[-1]["audios_erreur"], 1)
+
+    def test_sortie_conforme_decodee(self) -> None:
+        _, _, _, evenements = self._executer([("a.wav", "Texte.")])
+
+        extraction = evenements[1]
+        self.assertIs(extraction["conforme"], True)
+        self.assertIsNone(extraction["motif"])
+        self.assertEqual(extraction["valeur"], json.loads(SORTIE_CONFORME))
+        self.assertEqual(extraction["sortie_brute"], SORTIE_CONFORME)
+        self.assertEqual(extraction["fin"], "arret")
+
+    def test_sorties_non_conformes_gardent_la_sortie_brute(self) -> None:
+        objet = json.loads(SORTIE_CONFORME)
+        cas = {
+            "JSON invalide": ('{"qui": "Marie"', "JSON indécodable"),
+            "clé dupliquée": (
+                SORTIE_CONFORME.replace('"qui": null', '"qui": null, "qui": null', 1),
+                "clé JSON dupliquée",
+            ),
+            "clé de la grille absente": (
+                '{"qui": null}',
+                "clé de la grille absente",
+            ),
+            "clé inconnue": (
+                json.dumps({**objet, "inventee_secrete_42": None}),
+                "clé inconnue de la grille",
+            ),
+            "mauvais type": (
+                json.dumps({**objet, "qui": 3}),
+                "type de valeur non conforme ($.qui)",
+            ),
+            "liste vide": (
+                json.dumps({**objet, "symptomes_declares": []}),
+                "liste vide non admise ($.symptomes_declares)",
+            ),
+            "null hors cas admis": (
+                json.dumps({**objet, "autres_informations": None}),
+                "null non admis à cet endroit ($.autres_informations)",
+            ),
+        }
+        for libelle, (brute, motif_attendu) in cas.items():
+            with self.subTest(cas=libelle):
+                adaptateur_extraction.configurer(
+                    scenario=[{"sortie_brute": brute}]
+                )
+                _, _, _, evenements = self._executer([("a.wav", "Texte.")])
+                extraction = evenements[1]
+                self.assertEqual(extraction["type"], TYPE_EXTRACTION)
+                self.assertIs(extraction["conforme"], False)
+                self.assertIsNone(extraction["valeur"])
+                self.assertTrue(extraction["motif"].startswith(motif_attendu))
+                self.assertLessEqual(len(extraction["motif"]), 200)
+                self.assertEqual(extraction["sortie_brute"], brute)
+
+        # Le motif d'une clé inconnue ne recopie pas la clé produite par le modèle.
+        adaptateur_extraction.configurer(
+            scenario=[
+                {"sortie_brute": json.dumps({**objet, "inventee_secrete_42": None})}
+            ]
+        )
+        _, _, _, evenements = self._executer([("a.wav", "Texte.")])
+        self.assertNotIn("inventee", evenements[1]["motif"])
+
+    def test_motif_de_case_absente_borne_a_la_longueur_du_protocole(self) -> None:
+        # Grille temporaire dont la case a une clé très longue : le chemin de la case
+        # absente la reprend, et le motif dépasserait 200 caractères sans troncature.
+        cle_longue = "case_" + "a" * 175
+        grille = Grid(
+            name="grille-temporaire",
+            sha256=None,
+            title="Grille temporaire",
+            general_instructions=None,
+            fields=(
+                Field(
+                    key=cle_longue,
+                    label=cle_longue,
+                    instructions=None,
+                    line=1,
+                ),
+            ),
+            error=None,
+        )
+        brute = json.dumps({"autres_informations": []})
+        adaptateur_extraction.configurer(scenario=[{"sortie_brute": brute}])
+        chemin = ecrire_job_extraction(
+            self.dossier,
+            [("a.wav", "Texte.")],
+            schema=grid_schema(grille),
+            message_systeme=system_message(grille).text,
+        )
+
+        _, _, lignes, evenements = executer_extraction_et_lire(chemin, self.registre)
+
+        # Aucune ligne d'événement n'est écartée par le protocole.
+        self.assertEqual(len(lignes), len(evenements))
+        extraction = evenements[1]
+        self.assertEqual(extraction["type"], TYPE_EXTRACTION)
+        self.assertIs(extraction["conforme"], False)
+        self.assertIsNone(extraction["valeur"])
+        self.assertTrue(extraction["motif"].startswith("clé de la grille absente"))
+        self.assertLessEqual(len(extraction["motif"]), 200)
+        self.assertEqual(extraction["sortie_brute"], brute)
+        self.assertEqual(evenements[-1]["audios_ok"], 1)
+
+    def test_limite_de_sortie_non_conforme_sans_decodage(self) -> None:
+        # Sortie valide dans sa forme, mais arrêtée à `sortie_max` : non conforme.
+        adaptateur_extraction.configurer(
+            scenario=[
+                {
+                    "fin": "limite",
+                    "sortie_brute": SORTIE_CONFORME,
+                    "tokens_sortie": 4096,
+                }
+            ]
+        )
+
+        _, _, _, evenements = self._executer([("a.wav", "Texte.")])
+
+        extraction = evenements[1]
+        self.assertIs(extraction["conforme"], False)
+        self.assertEqual(extraction["motif"], MOTIF_LIMITE)
+        self.assertIsNone(extraction["valeur"])
+        self.assertEqual(extraction["sortie_brute"], SORTIE_CONFORME)
+        self.assertEqual(extraction["fin"], "limite")
+        self.assertEqual(extraction["tokens_sortie"], 4096)
+
+    def test_erreur_de_l_adaptateur_bornee_sans_texte(self) -> None:
+        adaptateur_extraction.configurer(
+            scenario=[RuntimeError("fuite TEXTE-SENTINELLE-XYZ"), {}]
+        )
+
+        sortie, erreurs, _, evenements = self._executer(
+            [("a.wav", "Texte."), ("b.wav", "Autre.")]
+        )
+
+        self.assertEqual(evenements[1]["type"], TYPE_EXTRACTION_ERREUR)
+        self.assertEqual(evenements[1]["index"], 0)
+        self.assertEqual(evenements[1]["motif"], "erreur du moteur (RuntimeError)")
+        self.assertNotIn("TEXTE-SENTINELLE", sortie + erreurs)
+        self.assertEqual(evenements[2]["type"], TYPE_EXTRACTION)
+        self.assertEqual(evenements[-1]["audios_erreur"], 1)
+
+    def test_resultat_d_adaptateur_invalide_source_en_erreur(self) -> None:
+        sans_temps_cpu = {
+            k: v for k, v in RESULTAT_VALIDE.items() if k != "temps_cpu_s"
+        }
+        cas = {
+            "pas un dict": (
+                ["pas un dict"],
+                "résultat d'adaptateur attendu sous forme de dict",
+            ),
+            "clé inconnue": (
+                {**RESULTAT_VALIDE, "champ": 1},
+                "résultat d'adaptateur avec des clés inconnues ou manquantes",
+            ),
+            "clé manquante": (
+                sans_temps_cpu,
+                "résultat d'adaptateur avec des clés inconnues ou manquantes",
+            ),
+            "cause de fin inconnue": (
+                {**RESULTAT_VALIDE, "fin": "stop"},
+                "cause de fin inconnue : 'stop'",
+            ),
+            "compte négatif": (
+                {**RESULTAT_VALIDE, "tokens_entree": -1},
+                "'tokens_entree' doit être un entier positif ou nul",
+            ),
+            "sortie sans token": (
+                {**RESULTAT_VALIDE, "tokens_sortie": 0},
+                "sortie non vide sans aucun token généré",
+            ),
+            "durée négative": (
+                {**RESULTAT_VALIDE, "duree_generation_s": -1.0},
+                "'duree_generation_s' ne peut pas être négatif",
+            ),
+        }
+        for libelle, (brut, motif_attendu) in cas.items():
+            with self.subTest(cas=libelle):
+                adaptateur_extraction.configurer(scenario=[{"brut": brut}, {}])
+                _, _, _, evenements = self._executer(
+                    [("a.wav", "Texte."), ("b.wav", "Autre.")]
+                )
+                self.assertEqual(
+                    [evenement["type"] for evenement in evenements],
+                    [
+                        TYPE_CHARGEMENT,
+                        TYPE_EXTRACTION_ERREUR,
+                        TYPE_EXTRACTION,
+                        TYPE_FIN,
+                    ],
+                )
+                self.assertEqual(evenements[1]["motif"], motif_attendu)
+
+    def test_mesures_absentes_valent_null(self) -> None:
+        adaptateur_extraction.configurer(
+            scenario=[
+                {
+                    "tokens_sortie": 1,
+                    "delai_premier_token_s": None,
+                    "duree_generation_s": None,
+                    "temps_cpu_s": None,
+                }
+            ]
+        )
+
+        _, _, _, evenements = self._executer([("a.wav", "Texte.")])
+
+        extraction = evenements[1]
+        self.assertIsNone(extraction["delai_premier_token_s"])
+        self.assertIsNone(extraction["duree_generation_s"])
+        self.assertIsNone(extraction["temps_cpu_s"])
+        self.assertIsNone(extraction["vitesse_generation_tps"])
+        self.assertIsNone(extraction["vitesse_lecture_estimee_tps"])
+        self.assertIsInstance(extraction["duree_extraction_s"], float)
+        self.assertGreaterEqual(extraction["duree_extraction_s"], 0.0)
+        self.assertIsInstance(extraction["pic_memoire_octets"], int)
+
+    def test_vitesses_calculees_selon_d6(self) -> None:
+        adaptateur_extraction.configurer(
+            scenario=[
+                {
+                    "tokens_entree": 100,
+                    "tokens_sortie": 5,
+                    "delai_premier_token_s": 0.5,
+                    "duree_generation_s": 2.0,
+                }
+            ]
+        )
+
+        _, _, _, evenements = self._executer([("a.wav", "Texte.")])
+
+        extraction = evenements[1]
+        # (tokens_sortie − 1) / durée de génération ; tokens_entree / délai.
+        self.assertAlmostEqual(extraction["vitesse_generation_tps"], 4 / 2.0)
+        self.assertAlmostEqual(extraction["vitesse_lecture_estimee_tps"], 100 / 0.5)
+
+    def test_vitesse_generation_absente_sous_deux_tokens_et_aucun_token(self) -> None:
+        adaptateur_extraction.configurer(
+            scenario=[
+                {
+                    "tokens_sortie": 1,
+                    "duree_generation_s": 2.0,
+                },
+                {
+                    "sortie_brute": "",
+                    "tokens_sortie": 0,
+                    "duree_generation_s": None,
+                    "delai_premier_token_s": 0.4,
+                },
+            ]
+        )
+
+        _, _, _, evenements = self._executer(
+            [("a.wav", "Un."), ("b.wav", "Deux.")]
+        )
+
+        un_token, aucun_token = evenements[1], evenements[2]
+        self.assertIsNone(un_token["vitesse_generation_tps"])
+        self.assertIs(aucun_token["conforme"], False)
+        self.assertIsNone(aucun_token["sortie_brute"])
+        self.assertIsNone(aucun_token["vitesse_generation_tps"])
+        self.assertAlmostEqual(aucun_token["vitesse_lecture_estimee_tps"], 812 / 0.4)
+
+    def test_observations_systeme_du_chargement_et_du_lot(self) -> None:
+        _, _, _, evenements = self._executer([("a.wav", "Texte.")])
+
+        chargement, extraction, fin = evenements[0], evenements[1], evenements[-1]
+        self.assertIsNotNone(
+            valider_observation_systeme(
+                chargement["observation_systeme"],
+                moment=MOMENT_CHARGEMENT,
+                mesures_simulees=False,
+            )[0]
+        )
+        self.assertIsNotNone(
+            valider_observation_systeme(
+                fin["observation_systeme"],
+                moment=MOMENT_AUDIO,
+                mesures_simulees=False,
+            )[0]
+        )
+        self.assertNotIn("observation_systeme", extraction)
+        self.assertIs(chargement["factice"], False)
+        self.assertIs(fin["mesures_simulees"], False)
+
+    def test_provenance_factice_mesures_simulees(self) -> None:
+        _, _, _, evenements = self._executer(
+            [("a.wav", "Texte.")], registre=registre_extraction_de_test(factice=True)
+        )
+
+        chargement, extraction, fin = evenements[0], evenements[1], evenements[-1]
+        for evenement in (chargement, extraction, fin):
+            with self.subTest(type_evenement=evenement["type"]):
+                self.assertIs(evenement["factice"], True)
+                self.assertIs(evenement["mesures_simulees"], True)
+        self.assertEqual(chargement["duree_s"], DUREE_CHARGEMENT_SIMULEE_S)
+        self.assertEqual(extraction["duree_extraction_s"], DUREE_EXTRACTION_SIMULEE_S)
+        self.assertEqual(extraction["pic_memoire_octets"], PIC_MEMOIRE_SIMULE_OCTETS)
+        self.assertEqual(
+            chargement["observation_systeme"]["provenance"], PROVENANCE_SIMULEE
+        )
+
+    def test_journal_sans_texte_source_ni_sortie_du_modele(self) -> None:
+        adaptateur_extraction.configurer(
+            scenario=[
+                {
+                    "sortie_brute": '{"qui": "SORTIE-SENTINELLE-9"',
+                }
+            ]
+        )
+
+        sortie, erreurs, _, evenements = self._executer(
+            [("a.wav", "TEXTE-SOURCE-SENTINELLE-7 et suite.")]
+        )
+
+        # La sortie brute n'apparaît que dans l'événement, jamais dans le journal.
+        self.assertIn("SORTIE-SENTINELLE-9", sortie)
+        self.assertNotIn("SORTIE-SENTINELLE", erreurs)
+        self.assertNotIn("TEXTE-SOURCE-SENTINELLE", erreurs)
+        self.assertNotIn("SORTIE-SENTINELLE", evenements[1]["motif"])
+        self.assertIn("source 1/1", erreurs)
+        self.assertIn("terminé", erreurs)
+
+
+class ExtractionChargementTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self._temporaire = tempfile.TemporaryDirectory()
+        self.addCleanup(self._temporaire.cleanup)
+        self.dossier = Path(self._temporaire.name)
+        adaptateur_extraction.configurer()
+
+    def test_echec_de_grammaire_sans_generation(self) -> None:
+        adaptateur_extraction.configurer(
+            echec_charger="grammaire refusée : propriété inconnue"
+        )
+        chemin = ecrire_job_extraction(self.dossier, [("a.wav", "Texte.")])
+
+        sortie = io.StringIO()
+        with redirect_stdout(sortie), redirect_stderr(io.StringIO()), self.assertRaises(
+            ErreurMoteur
+        ) as contexte:
+            executer_extraction(
+                charger_job_extraction(chemin), registre_extraction_de_test()
+            )
+
+        self.assertIn("chargement du modèle impossible", str(contexte.exception))
+        self.assertIn("grammaire refusée", str(contexte.exception))
+        self.assertEqual(sortie.getvalue(), "")
+        self.assertEqual(adaptateur_extraction.journal, ["charger"])
+
+    def test_codes_de_sortie_du_point_d_entree(self) -> None:
+        chemin = ecrire_job_extraction(self.dossier, [("a.wav", "Texte.")])
+        registre_test = mock.patch(
+            "engines.runner_extraction.creer_registre_fourni",
+            registre_extraction_de_test,
+        )
+
+        adaptateur_extraction.configurer(echec_charger="grammaire refusée")
+        with registre_test, redirect_stdout(io.StringIO()) as sortie, redirect_stderr(
+            io.StringIO()
+        ) as erreurs:
+            code_echec = main_extraction([str(chemin)])
+        self.assertEqual(code_echec, 3)
+        self.assertIn("moteur indisponible", erreurs.getvalue())
+        self.assertEqual(sortie.getvalue(), "")
+
+        adaptateur_extraction.configurer()
+        with registre_test, redirect_stdout(io.StringIO()), redirect_stderr(
+            io.StringIO()
+        ):
+            self.assertEqual(main_extraction([str(chemin)]), 0)
+
+        with redirect_stderr(io.StringIO()):
+            self.assertEqual(main_extraction([str(self.dossier / "absent.json")]), 2)
+            self.assertEqual(main_extraction([]), 2)
+
+
+class ExtractionIsolementTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self._temporaire = tempfile.TemporaryDirectory()
+        self.addCleanup(self._temporaire.cleanup)
+        self.dossier = Path(self._temporaire.name)
+
+    def test_runner_extraction_sans_paquet_serveur_web(self) -> None:
+        code = (
+            "import sys\n"
+            "import engines.runner_extraction\n"
+            "interdits = ('flask', 'waitress', 'werkzeug', 'jinja2')\n"
+            "charges = [m for m in interdits if m in sys.modules]\n"
+            "print('|'.join(charges) if charges else 'ok')\n"
+        )
+        resultat = subprocess.run(
+            [sys.executable, "-c", code],
+            cwd=RACINE_PROJET,
+            env={**os.environ, "PYTHONIOENCODING": "utf-8"},
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=60,
+            check=False,
+        )
+        self.assertEqual(resultat.returncode, 0, resultat.stderr)
+        self.assertEqual(resultat.stdout.strip(), "ok")
+
+    def test_lancement_avec_registre_fourni_refuse_famille_non_qualifiee(self) -> None:
+        # Le vrai registre est utilisé : llm-gguf n'est pas qualifiée, donc refusée
+        # avant tout import d'adaptateur (aucune bibliothèque de moteur chargée).
+        chemin = ecrire_job_extraction(
+            self.dossier,
+            [("a.wav", "Texte.")],
+            moteur="llama-cpp",
+            famille="llm-gguf",
+        )
+        resultat = subprocess.run(
+            [
+                sys.executable,
+                str(RACINE_PROJET / "engines" / "runner_extraction.py"),
+                str(chemin),
+            ],
+            cwd=self.dossier,
+            env={**os.environ, "PYTHONIOENCODING": "utf-8"},
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=60,
+            check=False,
+        )
+        self.assertEqual(resultat.returncode, 3, resultat.stderr)
+        self.assertEqual(resultat.stdout, "")
+        self.assertIn("non qualifiée", resultat.stderr)
 
 
 if __name__ == "__main__":

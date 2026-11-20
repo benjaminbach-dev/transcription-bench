@@ -133,10 +133,14 @@ import psutil
 
 from engines.hors_ligne import commande_runner, environnement_moteur
 from engines.protocole import (
+    MARQUEUR_EVENEMENT,
     TYPE_AUDIO,
     TYPE_AUDIO_ERREUR,
     TYPE_CHARGEMENT,
+    TYPE_EXTRACTION,
+    TYPE_EXTRACTION_ERREUR,
     TYPE_FIN,
+    TYPES_EVENEMENTS,
     analyser_ligne,
 )
 from engines.registre import MoteurInconnu, RegistreMoteurs
@@ -203,6 +207,10 @@ PAS_SONDAGE_ARRET = 0.02
 NOMBRE_LIGNES_STDERR_MAX = 2000
 #: Nombre maximal de lignes parasites journalisées ; le total reste consigné.
 NOMBRE_LIGNES_PARASITES_JOURNALISEES = 20
+#: Motif fixe d'un événement d'extraction reçu par une exécution de transcription.
+#: Règle générale : aucune ligne préfixée `##TB-EVENT##` refusée n'est recopiée au
+#: journal (voir `_texte_ligne_ignoree`) : elle peut contenir une sortie de modèle.
+MOTIF_EXTRACTION_HORS_TACHE = "type d'extraction hors tâche de transcription"
 
 ETAT_TERMINEE = "terminee"
 ETAT_INTERROMPUE = "interrompue"
@@ -710,7 +718,7 @@ class ExecutionMoteur:
                 )
         except ExecutionImpossible as exception:
             # Dossier de travail impossible : échec prévu, aucun processus lancé.
-            resultat = self._resultat_avant_lancement(demande, _message_erreur(exception))
+            resultat = self._resultat_avant_lancement(demande, message_erreur(exception))
         except BaseException as exception:  # issue imprévue : jamais de résultat ambigu
             resultat = self._resultat_imprevu(demande, exception)
             raise
@@ -733,7 +741,7 @@ class ExecutionMoteur:
                 except Exception as erreur:  # la libération ne doit jamais manquer
                     travailleur.journaliser(
                         "Clôture de la consignation impossible : "
-                        f"{_message_erreur(erreur)}"
+                        f"{message_erreur(erreur)}"
                     )
                     if resultat is not None:
                         resultat = replace(
@@ -741,7 +749,7 @@ class ExecutionMoteur:
                             etat=ETAT_ECHOUEE,
                             erreur=(
                                 "clôture de la consignation impossible : "
-                                f"{_message_erreur(erreur)}"
+                                f"{message_erreur(erreur)}"
                             ),
                         )
             self._liberer_execution(resultat)
@@ -845,7 +853,7 @@ class ExecutionMoteur:
                 factice=factice,
                 audios=audios,
                 etat=ETAT_ECHOUEE,
-                erreur=f"préparation du job impossible : {_message_erreur(erreur)}",
+                erreur=f"préparation du job impossible : {message_erreur(erreur)}",
             )
         # Heure de création et PID consignés dès le lancement : la source dit si
         # l'heure vient du système ou de l'horloge du serveur (repli).
@@ -866,10 +874,10 @@ class ExecutionMoteur:
                 factice=factice,
                 audios=audios,
                 etat=ETAT_INTERROMPUE if arret else ETAT_ECHOUEE,
-                erreur=None if arret else _message_erreur(erreur),
+                erreur=None if arret else message_erreur(erreur),
                 arret_demande=arret,
             )
-        heure_creation, source_heure = _heure_creation_processus(enfant.pid)
+        heure_creation, source_heure = heure_creation_processus(enfant.pid)
         if not consignateur.enregistrer_processus(
             pid=enfant.pid,
             heure_creation=heure_creation,
@@ -905,7 +913,7 @@ class ExecutionMoteur:
         # Le fichier `run.log` de la consignation, lui, reçoit toutes les lignes.
         stderr_moteur: deque[str] = deque(maxlen=NOMBRE_LIGNES_STDERR_MAX)
         fil_stderr = threading.Thread(
-            target=_collecter_stderr,
+            target=collecter_stderr,
             args=(enfant, stderr_moteur, consignateur),
             name="transcription-bench-moteur-stderr",
             daemon=True,
@@ -941,7 +949,7 @@ class ExecutionMoteur:
         mesures.duree_operation_s = time.perf_counter() - mesures.debut
         # `deque.copy()` est atomique vis-à-vis des ajouts d'un fil encore vivant.
         journal_moteur = tuple(stderr_moteur.copy())
-        _journaliser_stderr(journal_moteur, travailleur)
+        journaliser_stderr(journal_moteur, travailleur)
         return self._resultat(
             demande,
             factice=factice,
@@ -960,35 +968,9 @@ class ExecutionMoteur:
 
     def _interpreteur(self, demande: DemandeExecution) -> str | Path:
         """Interpréteur à utiliser : celui du serveur pour le factice, sinon le venv."""
-        try:
-            declaration = self._registre.obtenir(demande.moteur)
-        except MoteurInconnu:
-            raise ExecutionImpossible(f"moteur inconnu : {demande.moteur!r}") from None
-        if declaration.factice:
-            return self._interpreteur_serveur
-        etats = {moteur.identifiant: moteur for moteur in self._moteurs.inventaire()}
-        etat = etats.get(demande.moteur)
-        if etat is None:
-            raise ExecutionImpossible(
-                f"moteur non déclaré par l'inventaire : {demande.moteur!r}"
-            )
-        if etat.etat != ETAT_PRET:
-            libelle = LIBELLES_ETATS_MOTEUR.get(etat.etat, etat.etat)
-            raise ExecutionImpossible(
-                f"moteur non prêt (état : {libelle}) : installation explicite requise "
-                "avant toute exécution"
-            )
-        try:
-            return self._moteurs.interpreteur(demande.moteur)
-        except (
-            InstallationEchouee,
-            InstallationIndisponible,
-            ValeurRefusee,
-            OSError,
-        ) as erreur:
-            raise ExecutionImpossible(
-                f"interpréteur du moteur indisponible : {_message_erreur(erreur)}"
-            ) from None
+        return engine_interpreter(
+            self._registre, self._moteurs, self._interpreteur_serveur, demande.moteur
+        )
 
     def _preparer_audios(
         self,
@@ -1016,7 +998,7 @@ class ExecutionMoteur:
             try:
                 decode = self._decoder(nom, self._donnees)
             except Exception as erreur:  # un audio ne bloque jamais les suivants
-                message = _message_erreur(erreur)
+                message = message_erreur(erreur)
                 resultats.append(
                     ResultatAudio(
                         index=index,
@@ -1039,7 +1021,7 @@ class ExecutionMoteur:
                 # Écriture directe du signal décodé : aucune copie conservée.
                 np.asarray(decode.signal, dtype=TYPE_SIGNAL).tofile(dossier / fichier_brut)
             except OSError as erreur:
-                message = _message_erreur(erreur)
+                message = message_erreur(erreur)
                 resultats.append(
                     ResultatAudio(
                         index=index,
@@ -1162,7 +1144,9 @@ class ExecutionMoteur:
 
         Toute autre ligne (sortie parasite, événement illisible, index hors du
         job, provenance `factice` incohérente avec la déclaration, événement en
-        double) est comptée et journalisée sans provoquer d'échec. Après une
+        double) est comptée et journalisée sans provoquer d'échec. Une ligne
+        préfixée `##TB-EVENT##` refusée n'est jamais recopiée : seul son motif
+        fixe — et son type annoncé, s'il se décode — est journalisé. Après une
         demande d'arrêt, les lignes suivantes sont drainées sans être
         interprétées.
 
@@ -1192,7 +1176,7 @@ class ExecutionMoteur:
                 parasites += 1
                 if parasites <= NOMBRE_LIGNES_PARASITES_JOURNALISEES:
                     travailleur.journaliser(
-                        f"Sortie du moteur ignorée ({motif}) : {_resume_ligne(ligne)}"
+                        _texte_ligne_ignoree(motif, ligne)
                     )
                 continue
             vus.add(_cle_evenement(evenement))
@@ -1218,7 +1202,7 @@ class ExecutionMoteur:
         elif type_evenement == TYPE_AUDIO_ERREUR:
             travailleur.journaliser(
                 f"Audio « {evenement.get('nom')} » en erreur côté moteur : "
-                f"{_resume_ligne(str(evenement.get('erreur', '')))}"
+                f"{resume_ligne(str(evenement.get('erreur', '')))}"
             )
         elif type_evenement == TYPE_FIN:
             travailleur.journaliser(
@@ -1281,7 +1265,7 @@ class ExecutionMoteur:
             )
         except OSError as erreur:
             raise ExecutionImpossible(
-                f"dossier de travail impossible : {_message_erreur(erreur)}"
+                f"dossier de travail impossible : {message_erreur(erreur)}"
             ) from None
 
     def _clore_processus(
@@ -1500,12 +1484,55 @@ class ExecutionMoteur:
         resultat = self._resultat_avant_lancement(
             demande,
             "exécution interrompue par une erreur interne : "
-            f"{_message_erreur(exception)}",
+            f"{message_erreur(exception)}",
         )
         return replace(resultat, arret_demande=self._arret_demande_actif())
 
 
-def _heure_creation_processus(pid: int) -> tuple[float | None, str | None]:
+def engine_interpreter(
+    registre: RegistreMoteurs,
+    moteurs: InstallationMoteurs,
+    interpreteur_serveur: str | Path,
+    moteur: str,
+) -> str | Path:
+    """Interpréteur d'un moteur prêt : celui du serveur pour le factice, sinon le venv.
+
+    Partagé par les exécutions de transcription et d'extraction (tâche 3.4) : un
+    moteur non déclaré, non prêt ou dont l'interpréteur est indisponible lève
+    `ExecutionImpossible`, sans lancer de processus.
+    """
+    try:
+        declaration = registre.obtenir(moteur)
+    except MoteurInconnu:
+        raise ExecutionImpossible(f"moteur inconnu : {moteur!r}") from None
+    if declaration.factice:
+        return interpreteur_serveur
+    etats = {candidat.identifiant: candidat for candidat in moteurs.inventaire()}
+    etat = etats.get(moteur)
+    if etat is None:
+        raise ExecutionImpossible(
+            f"moteur non déclaré par l'inventaire : {moteur!r}"
+        )
+    if etat.etat != ETAT_PRET:
+        libelle = LIBELLES_ETATS_MOTEUR.get(etat.etat, etat.etat)
+        raise ExecutionImpossible(
+            f"moteur non prêt (état : {libelle}) : installation explicite requise "
+            "avant toute exécution"
+        )
+    try:
+        return moteurs.interpreteur(moteur)
+    except (
+        InstallationEchouee,
+        InstallationIndisponible,
+        ValeurRefusee,
+        OSError,
+    ) as erreur:
+        raise ExecutionImpossible(
+            f"interpréteur du moteur indisponible : {message_erreur(erreur)}"
+        ) from None
+
+
+def heure_creation_processus(pid: int) -> tuple[float | None, str | None]:
     """Heure de création du processus moteur, brute, lue par le système.
 
     `psutil.Process(pid).create_time()` renvoie un horodatage epoch en secondes,
@@ -1535,7 +1562,7 @@ def _cle_evenement(evenement: Mapping[str, Any]) -> tuple[str, int | None]:
     return (type_evenement, None)
 
 
-def _collecter_stderr(
+def collecter_stderr(
     enfant: subprocess.Popen[str],
     journal: deque[str],
     consignateur: ConsignateurExecution,
@@ -1561,7 +1588,7 @@ def _collecter_stderr(
         return
 
 
-def _journaliser_stderr(
+def journaliser_stderr(
     journal_moteur: Sequence[str], travailleur: Travailleur
 ) -> None:
     """Journalise un résumé de la sortie d'erreur, sans la recopier en entier."""
@@ -1576,7 +1603,7 @@ def _journaliser_stderr(
     )
     if derniere is not None:
         travailleur.journaliser(
-            f"Dernière ligne d'erreur du moteur : {_resume_ligne(derniere)}"
+            f"Dernière ligne d'erreur du moteur : {resume_ligne(derniere)}"
         )
 
 
@@ -1645,13 +1672,16 @@ def _motif_ligne_ignoree(
     """Motif pour lequel une ligne n'est pas un événement exploitable, ou `None`.
 
     Une ligne non préfixée, illisible ou d'un type inconnu est déjà écartée par
-    `analyser_ligne`. Sont écartés ici : un index d'audio hors du job, une
-    provenance `factice` différente de la déclaration du moteur (qui rendrait
-    une mesure simulée indiscernable d'une mesure réelle) et un événement déjà
-    reçu (`vus`), dont seul le premier est conservé.
+    `analyser_ligne`. Sont écartés ici : un événement d'extraction, hors tâche
+    pour une transcription (son pic mémoire ne doit pas être retenu), un index
+    d'audio hors du job, une provenance `factice` différente de la déclaration du
+    moteur (qui rendrait une mesure simulée indiscernable d'une mesure réelle) et
+    un événement déjà reçu (`vus`), dont seul le premier est conservé.
     """
     if evenement is None:
-        return "ligne non conforme au protocole"
+        return "format non conforme au protocole"
+    if evenement.get("type") in (TYPE_EXTRACTION, TYPE_EXTRACTION_ERREUR):
+        return MOTIF_EXTRACTION_HORS_TACHE
     if evenement.get("type") in (TYPE_AUDIO, TYPE_AUDIO_ERREUR):
         if not _position_valide(evenement.get("index"), len(indices_job)):
             return "index d'audio hors du job"
@@ -1671,13 +1701,55 @@ def _position_valide(position: Any, taille: int) -> bool:
     )
 
 
-def _resume_ligne(ligne: str, limite: int = 200) -> str:
+def _texte_ligne_ignoree(motif: str, ligne: str) -> str:
+    """Ligne du journal pour une sortie ignorée ; un événement refusé n'est jamais recopié.
+
+    Une ligne qui commence par le marqueur nu `##TB-EVENT##` — avec ou sans
+    l'espace de séparation — refusée parce qu'illisible, d'un type inconnu,
+    hors tâche, d'index hors du job, de provenance incohérente ou en double,
+    peut contenir la sortie d'un modèle (une extraction invalide, par exemple) :
+    seuls un motif fixe et, si l'objet se décode, son type annoncé sont
+    journalisés, jamais son contenu. La ligne sans espace n'est pas un
+    événement valide : elle est journalisée comme masquée, au même motif fixe.
+    Une ligne sans marqueur n'est pas une ligne d'événement : sa sortie parasite
+    reste résumée, comme diagnostic d'une bibliothèque.
+    """
+    if ligne.startswith(MARQUEUR_EVENEMENT):
+        return f"Ligne d'événement ignorée : {motif}{_type_ligne_evenement(ligne)}"
+    return f"Sortie du moteur ignorée ({motif}) : {resume_ligne(ligne)}"
+
+
+def _type_ligne_evenement(ligne: str) -> str:
+    """Précision de type pour une ligne d'événement refusée, ou texte vide.
+
+    Le type n'est précisé que s'il appartient au vocabulaire fixe du protocole
+    (`TYPES_EVENEMENTS`) : un type inconnu serait du contenu arbitraire, jamais
+    recopié. Un JSON illisible, un objet non décodable en dictionnaire, un JSON
+    trop profondément imbriqué pour le décodeur ou un champ `type` inconnu ne
+    donnent aucune précision : le motif fixe suffit.
+    """
+    try:
+        # Mêmes exceptions que `analyser_ligne` : un entier démesuré lève
+        # `ValueError`, une clé non hachable `TypeError`, un JSON trop
+        # profondément imbriqué `RecursionError` — aucune précision alors.
+        charge = json.loads(ligne[len(MARQUEUR_EVENEMENT) :].strip())
+    except (ValueError, TypeError, RecursionError):
+        return ""
+    if not isinstance(charge, dict):
+        return ""
+    type_annonce = charge.get("type")
+    if isinstance(type_annonce, str) and type_annonce in TYPES_EVENEMENTS:
+        return f" (type annoncé : {type_annonce})"
+    return ""
+
+
+def resume_ligne(ligne: str, limite: int = 200) -> str:
     """Tronque une ligne de sortie du moteur pour le journal."""
     texte = " ".join(ligne.split())
     return texte if len(texte) <= limite else texte[:limite] + "…"
 
 
-def _message_erreur(erreur: BaseException) -> str:
+def message_erreur(erreur: BaseException) -> str:
     """Texte court d'une erreur, sans type vide ni message absent."""
     texte = str(erreur).strip()
     return texte if texte else type(erreur).__name__
