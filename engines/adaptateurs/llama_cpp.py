@@ -70,15 +70,16 @@ chaînes et de tokens spéciaux, versionné par `VERSION_FORMAT`.
   comparaison structurelle 5/5) :
   `<s>[SYSTEM_PROMPT]{système}[/SYSTEM_PROMPT][INST]{utilisateur}[/INST]`,
   sans espacement ajouté ;
-- `qwen35` : ChatML du gabarit de Qwen/Qwen3.5-4B lu comme texte dans
-  `tokenizer_config.json` (consultation publique du 2026-11-20, sans poids) ;
+- `qwen35` : ChatML des `chat_template.jinja` publics de Qwen/Qwen3.5-4B
+  et Qwen/Qwen3.5-9B, lus comme texte (2026-11-20, sans poids) ;
   contenu trimé par le gabarit, aucun BOS émis, préfixe de génération
-  `<|im_start|>assistant\\n` — **à vérifier à la qualification 6.3** ;
-- `granite` : gabarit ChatML de granite-4.2 lu comme texte dans les
-  métadonnées du dépôt ibm-granite/granite-4.2-8b-GGUF (API Hugging Face,
-  consultation publique du 2026-11-20, sans poids) ; contenu du message
-  utilisateur non trimé par ce gabarit, aucun BOS émis — **à vérifier à la
-  qualification 6.3** ;
+  `<|im_start|>assistant\\n<think>\\n\\n</think>\\n\\n` sans raisonnement —
+  **à vérifier à la qualification 6.3** ;
+- `granite` : `chat_template.jinja` public de ibm-granite/granite-4.2-8b
+  lu comme texte (2026-11-20, sans poids) ; contenu du message
+  utilisateur non trimé par ce gabarit, aucun BOS émis, préfixe de génération
+  `<|im_start|>assistant\\n<think></think>` sans raisonnement — **à vérifier à
+  la qualification 6.3** ;
 - `gemma4` : gabarit canonique « Google Gemma 4 Canonical Chat Template »
   (publication du 2026-07-09) lu comme texte dans les métadonnées du dépôt
   ggml-org/gemma-4-E4B-it-GGUF (API Hugging Face, consultation publique du
@@ -114,7 +115,7 @@ _RAPPEL_JOURNAL_ACTIF: list[Any] = []
 
 #: Version des formats de conversation locaux (design D3) : incrémentée à
 #: toute modification d'un format.
-VERSION_FORMAT = 1
+VERSION_FORMAT = 2
 
 #: Clé de métadonnée GGUF portant l'architecture.
 CLE_ARCHITECTURE = "general.architecture"
@@ -141,7 +142,7 @@ def _format_qwen35(systeme: str, utilisateur: str) -> str:
     return (
         f"<|im_start|>system\n{systeme.strip()}<|im_end|>\n"
         f"<|im_start|>user\n{utilisateur.strip()}<|im_end|>\n"
-        "<|im_start|>assistant\n"
+        "<|im_start|>assistant\n<think>\n\n</think>\n\n"
     )
 
 
@@ -150,7 +151,7 @@ def _format_granite(systeme: str, utilisateur: str) -> str:
     return (
         f"<|im_start|>system\n{systeme}<|im_end|>\n"
         f"<|im_start|>user\n{utilisateur}<|im_end|>\n"
-        "<|im_start|>assistant\n"
+        "<|im_start|>assistant\n<think></think>"
     )
 
 

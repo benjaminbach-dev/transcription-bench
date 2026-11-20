@@ -430,7 +430,7 @@ class LlamaCppAdaptateurTest(unittest.TestCase):
                 "mode_chargement_poids": "mmap",
                 "architecture": "mistral3",
                 "sha256_gabarit_embarque": meta["sha256_gabarit_embarque"],
-                "version_format": 1,
+                "version_format": 2,
                 "decodage": "glouton",
                 "graine": None,
             },
@@ -642,13 +642,13 @@ class LlamaCppAdaptateurTest(unittest.TestCase):
             rendus["qwen35"],
             "<|im_start|>system\nS<|im_end|>\n"
             "<|im_start|>user\nU<|im_end|>\n"
-            "<|im_start|>assistant\n",
+            "<|im_start|>assistant\n<think>\n\n</think>\n\n",
         )
         self.assertEqual(
             rendus["granite"],
             "<|im_start|>system\n S <|im_end|>\n"
             "<|im_start|>user\n U <|im_end|>\n"
-            "<|im_start|>assistant\n",
+            "<|im_start|>assistant\n<think></think>",
         )
         self.assertEqual(
             rendus["gemma4"],
