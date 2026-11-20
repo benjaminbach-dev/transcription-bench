@@ -59,6 +59,7 @@ from engines.protocole import (
     analyser_ligne,
     emettre,
     formater_ligne,
+    valider_meta_moteur,
 )
 from engines.registre import RegistreMoteurs, creer_registre_fourni
 from engines.runner import (
@@ -650,9 +651,129 @@ class ValidationExtractionTest(unittest.TestCase):
         }
         self.assertEqual(analyser_ligne(formater_ligne(audio_erreur)), audio_erreur)
 
+    def test_comptes_natifs_facultatifs_verifies(self) -> None:
+        # Facultatif : absent d'un événement, il reste valide ; présent, il est
+        # l'objet exact — `null` est refusé, l'absence s'écrit par l'absence de
+        # la clé, jamais par zéro ni par une valeur vide.
+        self.assertNotIn("comptes_natifs", CHAMPS_REQUIS[TYPE_EXTRACTION])
+        for evenement in (
+            _extraction(),
+            _extraction(comptes_natifs=COMPTES_DE_TEST),
+            _extraction(fin="limite", comptes_natifs=COMPTES_DE_TEST),
+        ):
+            with self.subTest(comptes=evenement.get("comptes_natifs"), fin=evenement["fin"]):
+                self.assertEqual(analyser_ligne(formater_ligne(evenement)), evenement)
+        invalides = [
+            None,
+            {"tokens_lecture": 812},
+            {**COMPTES_DE_TEST, "temps_cpu_s": 1.0},
+            {"tokens_lecture": -1, "tokens_generation": 24},
+            {"tokens_lecture": 812, "tokens_generation": True},
+            {"tokens_lecture": 812.0, "tokens_generation": 24},
+            [812, 24],
+            "812",
+            0,
+        ]
+        for valeur in invalides:
+            with self.subTest(valeur=valeur):
+                self.assertIsNone(
+                    analyser_ligne(formater_ligne(_extraction(comptes_natifs=valeur)))
+                )
+        # Une source en erreur n'a pas de comptes, et une cause de fin hors génération non plus.
+        self.assertIsNone(
+            analyser_ligne(
+                formater_ligne(
+                    {**_extraction_erreur(), "comptes_natifs": COMPTES_DE_TEST}
+                )
+            )
+        )
+        self.assertIsNone(
+            analyser_ligne(
+                formater_ligne(
+                    _extraction(fin="erreur", comptes_natifs=COMPTES_DE_TEST)
+                )
+            )
+        )
+
     def test_types_evenements_inclut_extraction(self) -> None:
         self.assertIn(TYPE_EXTRACTION, TYPES_EVENEMENTS)
         self.assertIn(TYPE_EXTRACTION_ERREUR, TYPES_EVENEMENTS)
+
+
+class ValidationMetaMoteurTest(unittest.TestCase):
+    """Contrat `meta_moteur` (événement `chargement`) : clés exactes, motifs sans valeur."""
+
+    def test_meta_conforme_copiee_et_nuls_admis(self) -> None:
+        admises = (
+            META_MOTEUR_DE_TEST,
+            {**META_MOTEUR_DE_TEST, "sha256_gabarit_embarque": None, "graine": "42"},
+        )
+        for meta in admises:
+            with self.subTest(meta=meta):
+                self.assertEqual(valider_meta_moteur(meta), (meta, None))
+
+    def test_meta_non_conforme_refusee_avec_motif_sans_valeur(self) -> None:
+        sentinelle = "SENTINELLE-META-7"
+        sans_decodage = {
+            cle: valeur for cle, valeur in META_MOTEUR_DE_TEST.items() if cle != "decodage"
+        }
+        cas = {
+            "non objet": (sentinelle, "métadonnées du moteur non conformes"),
+            "clé absente": (
+                sans_decodage,
+                "clés des métadonnées du moteur non conformes",
+            ),
+            "clé inconnue": (
+                {**META_MOTEUR_DE_TEST, "inventee": sentinelle},
+                "clés des métadonnées du moteur non conformes",
+            ),
+            "threads nuls": (
+                {**META_MOTEUR_DE_TEST, "threads_appliques": 0},
+                "métadonnée du moteur non conforme : threads_appliques",
+            ),
+            "threads booléens": (
+                {**META_MOTEUR_DE_TEST, "threads_appliques": True},
+                "métadonnée du moteur non conforme : threads_appliques",
+            ),
+            "mode vide": (
+                {**META_MOTEUR_DE_TEST, "mode_chargement_poids": "  "},
+                "métadonnée du moteur non conforme : mode_chargement_poids",
+            ),
+            "architecture nulle": (
+                {**META_MOTEUR_DE_TEST, "architecture": None},
+                "métadonnée du moteur non conforme : architecture",
+            ),
+            "sha256 en majuscules": (
+                {**META_MOTEUR_DE_TEST, "sha256_gabarit_embarque": "D" * 64},
+                "métadonnée du moteur non conforme : sha256_gabarit_embarque",
+            ),
+            "sha256 trop court": (
+                {**META_MOTEUR_DE_TEST, "sha256_gabarit_embarque": "a" * 63},
+                "métadonnée du moteur non conforme : sha256_gabarit_embarque",
+            ),
+            "sha256 texte": (
+                {**META_MOTEUR_DE_TEST, "sha256_gabarit_embarque": sentinelle},
+                "métadonnée du moteur non conforme : sha256_gabarit_embarque",
+            ),
+            "version de format nulle": (
+                {**META_MOTEUR_DE_TEST, "version_format": 0},
+                "métadonnée du moteur non conforme : version_format",
+            ),
+            "décodage vide": (
+                {**META_MOTEUR_DE_TEST, "decodage": ""},
+                "métadonnée du moteur non conforme : decodage",
+            ),
+            "graine entière": (
+                {**META_MOTEUR_DE_TEST, "graine": 42},
+                "métadonnée du moteur non conforme : graine",
+            ),
+        }
+        for libelle, (valeur, motif_attendu) in cas.items():
+            with self.subTest(cas=libelle):
+                objet, motif = valider_meta_moteur(valeur)
+                self.assertIsNone(objet)
+                self.assertEqual(motif, motif_attendu)
+                self.assertNotIn(sentinelle, motif)
 
 
 class ValidationTimingsNatifsTest(unittest.TestCase):
@@ -1694,6 +1815,18 @@ RESULTAT_VALIDE = {
     "duree_generation_s": 2.5,
     "temps_cpu_s": 2.6,
 }
+#: Métadonnées de chargement conformes au contrat `meta_moteur` (valeurs fictives).
+META_MOTEUR_DE_TEST = {
+    "threads_appliques": 4,
+    "mode_chargement_poids": "mmap",
+    "architecture": "mistral3",
+    "sha256_gabarit_embarque": "d" * 64,
+    "version_format": 1,
+    "decodage": "glouton",
+    "graine": None,
+}
+#: Comptes natifs conformes d'une source terminée.
+COMPTES_DE_TEST = {"tokens_lecture": 812, "tokens_generation": 24}
 
 
 def registre_extraction_de_test(factice: bool = False) -> RegistreMoteurs:
@@ -2319,6 +2452,80 @@ class ExtractionExecutionTest(unittest.TestCase):
         self.assertNotIn("SORTIE-SENTINELLE", evenements[1]["motif"])
         self.assertIn("source 1/1", erreurs)
         self.assertIn("terminé", erreurs)
+
+    def test_meta_moteur_recopie_au_chargement_sans_invention(self) -> None:
+        adaptateur_extraction.configurer(meta=META_MOTEUR_DE_TEST)
+        _, _, _, evenements = self._executer([("a.wav", "Texte.")])
+        self.assertEqual(evenements[0]["type"], TYPE_CHARGEMENT)
+        self.assertEqual(evenements[0]["meta_moteur"], META_MOTEUR_DE_TEST)
+
+        # Moteur sans métadonnées (factice) : la clé est absente, jamais inventée.
+        adaptateur_extraction.configurer()
+        _, _, _, evenements = self._executer([("a.wav", "Texte.")])
+        self.assertNotIn("meta_moteur", evenements[0])
+
+    def test_meta_moteur_non_conforme_ecartee_sans_arreter_le_run(self) -> None:
+        sentinelle = "SENTINELLE-META-8"
+        invalides = (
+            {**META_MOTEUR_DE_TEST, "sha256_gabarit_embarque": sentinelle},
+            {**META_MOTEUR_DE_TEST, "threads_appliques": 0},
+            sentinelle,
+        )
+        for meta in invalides:
+            with self.subTest(meta="non conforme" if meta != sentinelle else "texte"):
+                adaptateur_extraction.configurer(meta=meta)
+                sortie, erreurs, _, evenements = self._executer(
+                    [("a.wav", "Texte.")]
+                )
+                self.assertEqual(
+                    [evenement["type"] for evenement in evenements],
+                    [TYPE_CHARGEMENT, TYPE_EXTRACTION, TYPE_FIN],
+                )
+                self.assertNotIn("meta_moteur", evenements[0])
+                self.assertIn("Métadonnées du moteur ignorées", erreurs)
+                self.assertNotIn(sentinelle, sortie + erreurs)
+
+    def test_comptes_natifs_recopies_seulement_s_ils_sont_presents(self) -> None:
+        adaptateur_extraction.configurer(
+            scenario=[{"comptes_natifs": COMPTES_DE_TEST}, {}]
+        )
+        _, _, _, evenements = self._executer(
+            [("a.wav", "Un."), ("b.wav", "Deux.")]
+        )
+        self.assertEqual(evenements[1]["comptes_natifs"], COMPTES_DE_TEST)
+        self.assertNotIn("comptes_natifs", evenements[2])
+        self.assertEqual(evenements[-1]["audios_ok"], 2)
+
+    def test_comptes_natifs_non_conformes_source_en_erreur(self) -> None:
+        cas = {
+            "non objet": ([812, 24], "'comptes_natifs' doit être un objet"),
+            "clé inconnue": (
+                {**COMPTES_DE_TEST, "temps_natif_s": 0.1},
+                "'comptes_natifs' avec des clés inconnues ou manquantes",
+            ),
+            "clé manquante": (
+                {"tokens_lecture": 812},
+                "'comptes_natifs' avec des clés inconnues ou manquantes",
+            ),
+            "compte négatif": (
+                {"tokens_lecture": -1, "tokens_generation": 24},
+                "'tokens_lecture' doit être un entier positif ou nul",
+            ),
+        }
+        for libelle, (comptes, motif_attendu) in cas.items():
+            with self.subTest(cas=libelle):
+                adaptateur_extraction.configurer(
+                    scenario=[{"brut": {**RESULTAT_VALIDE, "comptes_natifs": comptes}}, {}]
+                )
+                _, _, _, evenements = self._executer(
+                    [("a.wav", "Texte."), ("b.wav", "Autre.")]
+                )
+                self.assertEqual(
+                    [evenement["type"] for evenement in evenements],
+                    [TYPE_CHARGEMENT, TYPE_EXTRACTION_ERREUR, TYPE_EXTRACTION, TYPE_FIN],
+                )
+                self.assertEqual(evenements[1]["motif"], motif_attendu)
+                self.assertNotIn("comptes_natifs", evenements[1])
 
 
 class ExtractionChargementTest(unittest.TestCase):

@@ -12,7 +12,8 @@ Arborescence écrite, sans base de données et hors Git (sous `data/`) :
       run.log           états, motifs et mesures seulement : ni texte source ni sortie du modèle
       grille.md         copie exacte de la grille validée
       schema.json       schéma de sortie généré (D2)
-      consignes.json    message système exact et version des consignes (D3)
+      consignes.json    message système exact et version des consignes (D3) ;
+                        `version_format` ajouté au chargement, si le moteur le fournit
       <n>-<libellé>/    une par source, dans l'ordre de la demande :
         source.txt        copie du texte source, écrite dès l'admission
         sortie_brute.txt  sortie du modèle, si au moins un token a été généré
@@ -63,6 +64,7 @@ from engines.protocole import (
     TYPE_EXTRACTION,
     TYPE_EXTRACTION_ERREUR,
     TYPE_FIN,
+    valider_meta_moteur,
 )
 from transcription_bench.operations import ETAT_ECHOUEE as ETAT_EXECUTION_ECHOUEE
 from transcription_bench.operations import horodatage_iso
@@ -183,6 +185,11 @@ class ExtractionRecorder:
         #: ici : elle n'a pas de place dans `MesuresExecution`, partagée avec les
         #: transcriptions.
         self._lot_observation: dict[str, Any] | None = None
+        #: Métadonnées du chargement, validées (`meta_moteur`) : `None` tant qu'il
+        #: n'y en a pas, ce qui reste vrai pour le moteur factice.
+        self._architecture: str | None = None
+        self._sha256_gabarit: str | None = None
+        self._version_format: int | None = None
         self._process: dict[str, Any] = {
             "pid": None,
             "heure_creation": None,
@@ -322,13 +329,7 @@ class ExtractionRecorder:
             ecrire_texte_atomique(
                 dossier / FILE_SCHEMA, schema_to_json(dict(grille.schema)) + "\n"
             )
-            ecrire_json_atomique(
-                dossier / FILE_INSTRUCTIONS,
-                {
-                    "version_consignes": grille.version_consignes,
-                    "message_systeme": grille.message_systeme,
-                },
-            )
+            self._ecrire_consignes(dossier)
             for plan, source in zip(self._sources, self._request.sources, strict=True):
                 dossier_source = dossier / plan["dossier"]
                 dossier_source.mkdir(parents=True, exist_ok=False)
@@ -337,6 +338,21 @@ class ExtractionRecorder:
             self._set_error(
                 f"écriture de l'admission de l'extraction impossible : {_message(erreur)}"
             )
+
+    def _ecrire_consignes(self, dossier: Path, version_format: int | None = None) -> None:
+        """`consignes.json` : message système et version des consignes, puis format.
+
+        L'admission écrit les deux premières clés ; le chargement réécrit le fichier
+        avec `version_format` quand le moteur le fournit (écriture atomique).
+        """
+        grille = self._request.grille
+        contenu: dict[str, Any] = {
+            "version_consignes": grille.version_consignes,
+            "message_systeme": grille.message_systeme,
+        }
+        if version_format is not None:
+            contenu["version_format"] = version_format
+        ecrire_json_atomique(dossier / FILE_INSTRUCTIONS, contenu)
 
     def enregistrer_processus(
         self,
@@ -464,7 +480,7 @@ class ExtractionRecorder:
     # -- événements ----------------------------------------------------------
 
     def _record_loading(self, evenement: Mapping[str, Any]) -> bool:
-        """Mesures du chargement et observation système validée, puis `run.json`."""
+        """Mesures du chargement, observation et métadonnées validées, puis `run.json`."""
         self._refuse_if_finalized()
         duree = evenement.get("duree_s")
         if self.measures.duree_chargement_s is None and _is_finite_number(duree):
@@ -475,7 +491,40 @@ class ExtractionRecorder:
         )
         if self.erreur is not None or self._dossier is None:
             return False
+        if not self._enregistrer_meta(evenement):
+            return False
         return self._write_run(etat=ETAT_EN_COURS)
+
+    def _enregistrer_meta(self, evenement: Mapping[str, Any]) -> bool:
+        """Retient les métadonnées du chargement conformes et réécrit `consignes.json`.
+
+        Sans `meta_moteur`, ou avec un objet non conforme (écarté, ligne de journal
+        sans contenu), rien ne change : le run reste valide. Renvoie `False` seulement
+        si la réécriture de `consignes.json` échoue.
+        """
+        if "meta_moteur" not in evenement:
+            return True
+        meta, motif = valider_meta_moteur(evenement["meta_moteur"])
+        if meta is None:
+            self.ecrire_journal(f"Métadonnées du chargement ignorées : {motif}.")
+            return True
+        self._effective["threads_appliques"] = meta["threads_appliques"]
+        self._effective["mode_chargement_poids"] = meta["mode_chargement_poids"]
+        self._effective["reglages_effectifs"].update(
+            {"decodage": meta["decodage"], "graine": meta["graine"]}
+        )
+        self._architecture = meta["architecture"]
+        self._sha256_gabarit = meta["sha256_gabarit_embarque"]
+        self._version_format = meta["version_format"]
+        try:
+            self._ecrire_consignes(self._dossier, self._version_format)
+        except (OSError, ValueError) as erreur:
+            self._set_error(
+                f"écriture des consignes de l'extraction impossible : {_message(erreur)}"
+            )
+            return False
+        self.ecrire_journal("métadonnées du chargement enregistrées.")
+        return True
 
     def _record_end(self, evenement: Mapping[str, Any]) -> bool:
         """Pic de fin et observation du lot ; l'état final reste à `clore`."""
@@ -511,6 +560,10 @@ class ExtractionRecorder:
                 etat = SOURCE_COMPLIANT if evenement["conforme"] else SOURCE_NON_COMPLIANT
                 motif = evenement["motif"]
                 measures = _source_measures(evenement)
+                comptes = evenement.get("comptes_natifs")
+                if comptes is not None:
+                    # Sous leur nom, à part des mesures D6 (design D6).
+                    measures["comptes_natifs"] = dict(comptes)
                 fin = evenement["fin"]
                 if evenement["sortie_brute"] is not None:
                     ecrire_texte_atomique(
@@ -561,6 +614,8 @@ class ExtractionRecorder:
             return False
         plan.update({"etat": etat, "motif": motif, "mesures": measures, "fin": fin})
         self._retain_peak(evenement, de_fin=False)
+        if evenement.get("comptes_natifs") is not None:
+            self.ecrire_journal(f"compteurs natifs source {rang} enregistrés.")
         return self._write_run(etat=ETAT_EN_COURS)
 
     def _observation_of(self, evenement: Mapping[str, Any], moment: str) -> dict[str, Any] | None:
@@ -627,6 +682,7 @@ class ExtractionRecorder:
             "schema_sortie": {"fichier": FILE_SCHEMA},
             "consignes": {
                 "version_consignes": grille.version_consignes,
+                "version_format": self._version_format,
                 "fichier": FILE_INSTRUCTIONS,
             },
             "modele": {
@@ -636,8 +692,9 @@ class ExtractionRecorder:
                 "cle": demande.modele.cle,
                 "famille": demande.modele.famille,
                 "fichier_gguf": demande.modele.fichier_gguf,
-                # Non lue depuis l'inventaire : l'adaptateur réel la fournira (tâche 3.3).
-                "architecture": None,
+                # Lues au chargement (`meta_moteur`), jamais inventées : None sans elles.
+                "architecture": self._architecture,
+                "sha256_gabarit_embarque": self._sha256_gabarit,
             },
             "moteur": dict(self._moteur),
             "machine": dict(self._machine),

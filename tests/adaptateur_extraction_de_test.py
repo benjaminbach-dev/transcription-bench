@@ -11,6 +11,10 @@ tokenise : le nombre de tokens du prompt est fixé par le scénario de chaque
 source, et la génération n'est jamais journalisée pour une source refusée. Le
 journal `journal` rend donc la séquence observable : `charger`, `reinitialiser`,
 `generer`, dans l'ordre des appels.
+
+Le dict rendu par `charger` ne porte `meta_chargement` que si le scénario le demande
+(`configurer(meta=...)`) ; sans lui, la clé est absente, comme pour le moteur
+factice. Les comptes natifs passent par le scénario d'une source (`comptes_natifs`).
 """
 
 from __future__ import annotations
@@ -22,10 +26,14 @@ from typing import Any
 from engines.declarations import DEFAUT_CONTEXTE_LLAMA, DEFAUT_SORTIE_MAX_LLAMA
 from engines.runner_extraction import ErreurContexteInsuffisant
 
+#: Valeur de `meta` signifiant « pas de `meta_chargement` » (distincte de `None`).
+AUCUNE_META = object()
+
 ETAT: dict[str, Any] = {
     "echec_charger": None,
     "scenario": [],
     "tokens_entree": 812,
+    "meta": AUCUNE_META,
 }
 
 compteur_chargements = 0
@@ -39,6 +47,7 @@ def configurer(
     echec_charger: str | None = None,
     scenario: list[Any] | None = None,
     tokens_entree: int = 812,
+    meta: Any = AUCUNE_META,
 ) -> None:
     """Remet le module dans un état connu avant chaque test.
 
@@ -51,6 +60,7 @@ def configurer(
     ETAT["echec_charger"] = echec_charger
     ETAT["scenario"] = list(scenario or [])
     ETAT["tokens_entree"] = tokens_entree
+    ETAT["meta"] = meta
     compteur_chargements = 0
     derniere_consigne = None
     journal.clear()
@@ -85,7 +95,10 @@ def charger(
     }
     if ETAT["echec_charger"] is not None:
         raise ValueError(ETAT["echec_charger"])
-    return {"schema": schema}
+    moteur: dict[str, Any] = {"schema": schema}
+    if ETAT["meta"] is not AUCUNE_META:
+        moteur["meta_chargement"] = ETAT["meta"]
+    return moteur
 
 
 def reinitialiser(moteur: dict[str, Any]) -> None:

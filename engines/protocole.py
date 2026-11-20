@@ -32,9 +32,46 @@ from __future__ import annotations
 
 import json
 import math
+import re
 import sys
 from collections.abc import Callable
 from typing import IO, Any
+
+
+class ErreurSource(RuntimeError):
+    """Résultat d'adaptateur inexploitable : source en erreur, lot poursuivi.
+
+    Cette exception traverse la frontière adaptateur→runner, comme
+    `ErreurContexteInsuffisant` : elle vit donc ici, dans le module importé
+    normalement des deux côtés. Le runner d'extraction est lancé comme
+    **script** (`python engines/runner_extraction.py job.json`) : il s'exécute
+    alors sous le nom `__main__`, et une classe définie dans son fichier aurait
+    une seconde identité (`engines.runner_extraction`) du côté de l'adaptateur —
+    `except` ne l'attraperait plus et le motif perdrait ses nombres.
+    `engines.runner_extraction` la réexporte sous son nom historique.
+    """
+
+
+class ErreurContexteInsuffisant(RuntimeError):
+    """Prompt plus sortie maximale au-delà du contexte : refus sans génération (D4).
+
+    Levée par `extraire` de l'adaptateur, qui seul tokenise le prompt. Le runner
+    la traduit en `extraction_erreur` avec les nombres ci-dessous dans le motif.
+    Définie ici pour la même raison d'identité que `ErreurSource` : le runner
+    s'exécute comme `__main__` et l'adaptateur importe ce module, pas le fichier
+    du runner.
+    """
+
+    def __init__(self, tokens_entree: int, sortie_max: int, contexte: int) -> None:
+        self.tokens_entree = tokens_entree
+        self.sortie_max = sortie_max
+        self.contexte = contexte
+        super().__init__(
+            "contexte insuffisant : "
+            f"{tokens_entree + sortie_max} tokens requis "
+            f"({tokens_entree} de prompt + {sortie_max} de sortie) "
+            f"pour un contexte de {contexte}"
+        )
 
 #: Marqueur nu d'une ligne d'événement. Seul le préfixe avec espace définit un
 #: événement analysable ; mais toute ligne qui commence par le marqueur nu,
@@ -56,6 +93,21 @@ TYPE_EXTRACTION_ERREUR = "extraction_erreur"
 # décrit l'échec : il ne recopie jamais le texte source ni la sortie du modèle.
 LONGUEUR_MAX_MOTIF = 200
 FINS_GENERATION: tuple[str, ...] = ("arret", "limite")
+#: Clés exactes des comptes natifs d'une source terminée (D6) : comptes de tokens,
+#: jamais de temps natifs.
+CLES_COMPTES_NATIFS: tuple[str, ...] = ("tokens_lecture", "tokens_generation")
+#: Clés exactes de `meta_moteur`, métadonnées du chargement d'un moteur d'extraction
+#: (événement `chargement`, facultatif). Absentes pour le moteur factice.
+CLES_META_MOTEUR: tuple[str, ...] = (
+    "threads_appliques",
+    "mode_chargement_poids",
+    "architecture",
+    "sha256_gabarit_embarque",
+    "version_format",
+    "decodage",
+    "graine",
+)
+_SHA256_HEXA = re.compile(r"[0-9a-f]{64}")
 
 
 def _entier(valeur: Any) -> bool:
@@ -98,6 +150,27 @@ def _ou_nul(verificateur: Callable[[Any], bool]) -> Callable[[Any], bool]:
     return lambda valeur: valeur is None or verificateur(valeur)
 
 
+def _comptes_natifs(valeur: Any) -> bool:
+    """Objet exact `{tokens_lecture, tokens_generation}` de comptes entiers ≥ 0."""
+    return (
+        _objet(valeur)
+        and set(valeur) == set(CLES_COMPTES_NATIFS)
+        and all(_entier(valeur[cle]) for cle in CLES_COMPTES_NATIFS)
+    )
+
+
+def _entier_positif(valeur: Any) -> bool:
+    return _entier(valeur) and valeur >= 1
+
+
+def _texte_non_vide(valeur: Any) -> bool:
+    return _texte(valeur) and valeur.strip() != ""
+
+
+def _sha256(valeur: Any) -> bool:
+    return isinstance(valeur, str) and _SHA256_HEXA.fullmatch(valeur) is not None
+
+
 # Validation stricte des événements d'extraction : seuls ces champs sont admis,
 # chacun avec son type. `valeur` (objet décodé) n'est renseigné que si la sortie
 # est conforme ; `motif` seulement sinon ; `sortie_brute` vaut `null` si aucun
@@ -119,6 +192,10 @@ VERIFICATEURS_EXTRACTION: dict[str, Callable[[Any], bool]] = {
     "vitesse_lecture_estimee_tps": _ou_nul(_nombre),
     "temps_cpu_s": _ou_nul(_nombre),
     "pic_memoire_octets": _ou_nul(_entier),
+    # Présent, il est l'objet exact — jamais `null` : le champ est facultatif
+    # (absent tant que l'émetteur ne le fournit pas), l'absence s'écrit par
+    # l'absence de la clé, comme pour tout champ facultatif strict.
+    "comptes_natifs": _comptes_natifs,
     "fin": _fin,
     "factice": _booleen,
     "mesures_simulees": _booleen,
@@ -141,6 +218,13 @@ VERIFICATEURS_STRICTS: dict[str, dict[str, Callable[[Any], bool]]] = {
 # pour qu'aucun consommateur ne puisse ignorer qu'un résultat est simulé.
 CHAMPS_PROVENANCE: tuple[str, ...] = ("factice", "mesures_simulees")
 
+# Champs facultatifs des événements stricts : absents tant que l'émetteur ne les
+# fournit pas, jamais remplacés par zéro. Un événement qui ne les porte pas reste
+# valide ; s'ils sont présents, ils sont vérifiés comme les autres champs.
+CHAMPS_FACULTATIFS: dict[str, tuple[str, ...]] = {
+    TYPE_EXTRACTION: ("comptes_natifs",),
+}
+
 # Champs dont la présence est exigée pour chaque type. Les valeurs peuvent être
 # `null` (mesure indisponible) : le contrat distingue « absente » de « zéro ».
 # Un événement `audio` peut porter en plus le champ facultatif `timings_natifs` :
@@ -155,6 +239,11 @@ CHAMPS_PROVENANCE: tuple[str, ...] = ("factice", "mesures_simulees")
 # d'événement et ne change pas le contrat des adaptateurs : un ancien émetteur
 # l'omet, un ancien consommateur l'ignore. Le serveur ne persiste un tel objet
 # que s'il est conforme ; sinon il l'écarte et le signale au journal.
+# Le `chargement` d'extraction peut porter en plus `meta_moteur` (métadonnées du
+# chargement, `valider_meta_moteur`) ; l'événement `extraction` peut porter
+# `comptes_natifs` (comptes natifs vérifiés d'une source terminée, jamais les temps
+# natifs). Ces deux champs sont facultatifs, absents pour le moteur factice ; le
+# runner les valide avant émission, le serveur à réception.
 CHAMPS_REQUIS: dict[str, tuple[str, ...]] = {
     TYPE_CHARGEMENT: (
         "duree_s",
@@ -185,7 +274,11 @@ CHAMPS_REQUIS: dict[str, tuple[str, ...]] = {
         "audios_ok",
         "audios_erreur",
     ) + CHAMPS_PROVENANCE,
-    TYPE_EXTRACTION: tuple(VERIFICATEURS_EXTRACTION),
+    TYPE_EXTRACTION: tuple(
+        champ
+        for champ in VERIFICATEURS_EXTRACTION
+        if champ not in CHAMPS_FACULTATIFS.get(TYPE_EXTRACTION, ())
+    ),
     TYPE_EXTRACTION_ERREUR: tuple(VERIFICATEURS_EXTRACTION_ERREUR),
 }
 
@@ -257,12 +350,18 @@ def analyser_ligne(ligne: str) -> dict[str, Any] | None:
 def _valide_strict(
     evenement: dict[str, Any], verificateurs: dict[str, Callable[[Any], bool]]
 ) -> bool:
-    """Vrai si l'événement n'a que les champs prévus, tous bien typés et cohérents."""
-    if set(evenement) - {"type"} != set(verificateurs):
+    """Vrai si l'événement n'a que les champs prévus, tous bien typés et cohérents.
+
+    Les champs requis doivent tous être présents ; les champs facultatifs
+    (`CHAMPS_FACULTATIFS`) peuvent manquer. Aucun champ inconnu n'est admis.
+    """
+    cles = set(evenement) - {"type"}
+    facultatifs = set(CHAMPS_FACULTATIFS.get(evenement["type"], ()))
+    if not (set(verificateurs) - facultatifs) <= cles:
         return False
-    if not all(
-        verificateur(evenement[champ]) for champ, verificateur in verificateurs.items()
-    ):
+    if not cles <= set(verificateurs):
+        return False
+    if not all(verificateurs[champ](evenement[champ]) for champ in cles):
         return False
     if evenement["type"] != TYPE_EXTRACTION:
         return True
@@ -270,7 +369,15 @@ def _valide_strict(
 
 
 def _coherent_extraction(evenement: dict[str, Any]) -> bool:
-    """Vrai si `conforme`, `valeur`, `motif` et `sortie_brute` se correspondent."""
+    """Vrai si `conforme`, `valeur`, `motif` et `sortie_brute` se correspondent.
+
+    Des comptes natifs ne sont admis que pour une source terminée (`arret` ou
+    `limite`) : jamais pour une source en erreur, qui n'a pas d'événement
+    `extraction`. La règle raisonne sur la **présence** de la clé — la valeur
+    est déjà contrôlée exacte par le vérificateur de champ.
+    """
+    if "comptes_natifs" in evenement and evenement["fin"] not in FINS_GENERATION:
+        return False
     if evenement["conforme"]:
         return (
             evenement["valeur"] is not None
@@ -278,3 +385,32 @@ def _coherent_extraction(evenement: dict[str, Any]) -> bool:
             and evenement["sortie_brute"] is not None
         )
     return evenement["valeur"] is None and evenement["motif"] is not None
+
+
+#: Vérificateurs des clés de `meta_moteur`, dans l'ordre de `CLES_META_MOTEUR`.
+VERIFICATEURS_META_MOTEUR: dict[str, Callable[[Any], bool]] = {
+    "threads_appliques": _entier_positif,
+    "mode_chargement_poids": _texte_non_vide,
+    "architecture": _texte_non_vide,
+    "sha256_gabarit_embarque": _ou_nul(_sha256),
+    "version_format": _entier_positif,
+    "decodage": _texte_non_vide,
+    "graine": _ou_nul(_texte),
+}
+
+
+def valider_meta_moteur(valeur: Any) -> tuple[dict[str, Any] | None, str | None]:
+    """Métadonnées du chargement conformes (`meta_moteur`), ou `(None, motif)`.
+
+    Clés exactes et types du contrat ; `sha256_gabarit_embarque` et `graine`
+    admettent `None`. La copie renvoyée ne contient que les clés du contrat. Un
+    motif ne nomme qu'une clé du contrat : il ne recopie jamais une valeur reçue.
+    """
+    if not isinstance(valeur, dict):
+        return None, "métadonnées du moteur non conformes"
+    if set(valeur) != set(CLES_META_MOTEUR):
+        return None, "clés des métadonnées du moteur non conformes"
+    for cle in CLES_META_MOTEUR:
+        if not VERIFICATEURS_META_MOTEUR[cle](valeur[cle]):
+            return None, f"métadonnée du moteur non conforme : {cle}"
+    return {cle: valeur[cle] for cle in CLES_META_MOTEUR}, None

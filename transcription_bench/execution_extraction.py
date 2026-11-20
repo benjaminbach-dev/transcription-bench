@@ -22,7 +22,9 @@ et exécute une extraction complète, dans le thread de fond du créneau :
    résumé dans `run.log` par son type et son motif, jamais par la ligne brute ;
 6. **publication incrémentale** : chaque événement de source est publié aussitôt
    (`sortie_brute.txt`, `extraction.json` si conforme, puis `result.json` en
-   dernier) ; `chargement` et `fin` mettent à jour les mesures du run ;
+   dernier) ; `chargement` et `fin` mettent à jour les mesures du run, et
+   `chargement` les métadonnées du moteur (`meta_moteur`, validées par
+   `resultats_extraction`) ;
 7. **issue** : arrêt demandé → `interrompue` (source en cours non publiée, donc
    non traitée) ; échec du chargement ou sortie du runner en erreur sans
    événement de chargement → `echouee` avec le motif lu sur la sortie d'erreur ;

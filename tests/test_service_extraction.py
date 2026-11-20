@@ -39,6 +39,7 @@ from transcription_bench.consignes_grilles import (
     VERSION_CONSIGNES,
     system_message,
 )
+from transcription_bench import resultats_extraction
 from transcription_bench.execution_extraction import (
     MOTIF_DOSSIER_CONSERVE,
     PREFIXE_DOSSIER_TRAVAIL,
@@ -54,6 +55,7 @@ from transcription_bench.execution_launch import (
 )
 from transcription_bench.execution_moteur import (
     ARRET_DEMANDE,
+    LONGUEUR_LIGNE_STDERR_MAX,
     AudioPrepare,
     ResultatAudio,
     ResultatExecution,
@@ -181,6 +183,21 @@ launch_extraction(configuration, execution, creneau, modele={modele!r}, grille="
 creneau.attendre_thread(60)
 sys.exit(0)
 """
+
+#: Métadonnées de chargement conformes (`meta_moteur`), valeurs fictives.
+META_MOTEUR = {
+    "threads_appliques": 4,
+    "mode_chargement_poids": "mmap",
+    "architecture": "mistral3",
+    "sha256_gabarit_embarque": "d" * 64,
+    "version_format": 1,
+    "decodage": "glouton",
+    "graine": None,
+}
+#: Comptes natifs conformes d'une source terminée.
+COMPTES_NATIFS = {"tokens_lecture": 812, "tokens_generation": 24}
+#: Clés de `consignes.json` à l'admission, puis après le chargement.
+CLES_CONSIGNES_ADMISSION = {"version_consignes", "message_systeme"}
 
 _attempts = [0]
 
@@ -1423,6 +1440,185 @@ factice.extraire = extraire
             '{"sources": "MARQUEUR_TRAVAIL_9"}',
         )
         self.assertEqual(list(cible.iterdir()), [piege])
+
+
+class ExtractionMetaTest(ExtractionBench):
+    """Métadonnées du chargement, compteurs natifs et `run.log` borné (D6, D7)."""
+
+    def consignateur(self) -> ExtractionRecorder:
+        """Consignation admise sans moteur, pour alimenter le chargement directement."""
+        consignateur = ExtractionRecorder(
+            self.donnees,
+            self.request_for(self.lot),
+            MOTEUR_FACTICE,
+            debut=time.perf_counter(),
+            machine=MACHINE,
+            programme=PROGRAMME,
+            base=BASE_STAMP,
+            court_id=_short_id(),
+        )
+        self.assertTrue(consignateur.ouvrir(), consignateur.erreur)
+        return consignateur
+
+    def test_meta_et_compteurs_persistes_dans_run_et_resultats(self) -> None:
+        construire = self.wrapper_command(
+            f"adaptateur.configurer(meta={META_MOTEUR!r}, "
+            f"scenario=[{{'comptes_natifs': {COMPTES_NATIFS!r}}}, {{}}, {{}}])\n"
+            + ADAPTER_BODY
+        )
+        resultat = self.run_extraction(self.lot, construire=construire)
+        self.assertEqual(resultat.etat, "terminee")
+        dossier = self.folder_of(resultat)
+        run = self.read_run(dossier)
+        self.assertEqual(run["effectifs"]["threads_appliques"], 4)
+        self.assertEqual(run["effectifs"]["mode_chargement_poids"], "mmap")
+        self.assertEqual(
+            run["effectifs"]["reglages_effectifs"],
+            {"decodage": "glouton", "graine": None},
+        )
+        self.assertEqual(run["modele"]["architecture"], "mistral3")
+        self.assertEqual(run["modele"]["sha256_gabarit_embarque"], "d" * 64)
+        self.assertEqual(run["consignes"]["version_format"], 1)
+        consignes = self.read_json(dossier / "consignes.json")
+        self.assertEqual(set(consignes), CLES_CONSIGNES_ADMISSION | {"version_format"})
+        self.assertEqual(consignes["version_format"], 1)
+        # Comptes sous leur nom, dans les mesures de la seule source qui les porte.
+        self.assertEqual(
+            self.source_plan(dossier, 1)["mesures"]["comptes_natifs"], COMPTES_NATIFS
+        )
+        self.assertNotIn("comptes_natifs", self.source_plan(dossier, 2)["mesures"])
+        self.assertEqual(
+            self.read_json(self.source_folder(dossier, 1) / "result.json")["mesures"][
+                "comptes_natifs"
+            ],
+            COMPTES_NATIFS,
+        )
+        self.assertNotIn(
+            "comptes_natifs",
+            self.read_json(self.source_folder(dossier, 2) / "result.json")["mesures"],
+        )
+        journal = (dossier / "run.log").read_text(encoding="utf-8")
+        self.assertIn("métadonnées du chargement enregistrées", journal)
+        self.assertIn("compteurs natifs source 1 enregistrés", journal)
+        self.assertNotIn("compteurs natifs source 2", journal)
+        for marqueur in SOURCE_MARKERS:
+            self.assertNotIn(marqueur, journal)
+
+    def test_factice_sans_meta_champs_a_none_et_consignes_inchanges(self) -> None:
+        resultat = self.run_extraction(self.lot)
+        dossier = self.folder_of(resultat)
+        run = self.read_run(dossier)
+        self.assertIsNone(run["effectifs"]["threads_appliques"])
+        self.assertIsNone(run["effectifs"]["mode_chargement_poids"])
+        self.assertEqual(run["effectifs"]["reglages_effectifs"], {})
+        self.assertIsNone(run["modele"]["architecture"])
+        self.assertIsNone(run["modele"]["sha256_gabarit_embarque"])
+        self.assertIsNone(run["consignes"]["version_format"])
+        self.assertEqual(
+            set(self.read_json(dossier / "consignes.json")), CLES_CONSIGNES_ADMISSION
+        )
+        self.assertNotIn("comptes_natifs", self.source_plan(dossier, 1)["mesures"])
+
+    def test_meta_non_conforme_ecartee_sans_arreter_le_run(self) -> None:
+        sentinelle = "SENTINELLE-META-9"
+        meta = {**META_MOTEUR, "sha256_gabarit_embarque": sentinelle}
+        construire = self.wrapper_command(
+            f"adaptateur.configurer(meta={meta!r})\n" + ADAPTER_BODY
+        )
+        resultat = self.run_extraction(self.lot, construire=construire)
+        self.assertEqual(resultat.etat, "terminee")
+        dossier = self.folder_of(resultat)
+        run = self.read_run(dossier)
+        self.assertIsNone(run["effectifs"]["threads_appliques"])
+        self.assertIsNone(run["modele"]["architecture"])
+        self.assertEqual(
+            set(self.read_json(dossier / "consignes.json")), CLES_CONSIGNES_ADMISSION
+        )
+        self.assertEqual(run["progression"], {"sources_traitees": 3, "sources_total": 3})
+        journal = (dossier / "run.log").read_text(encoding="utf-8")
+        self.assertIn("Métadonnées du moteur ignorées", journal)
+        contenus = journal + json.dumps(run, ensure_ascii=False)
+        contenus += "\n".join(self.creneau.instantane().journal)
+        self.assertNotIn(sentinelle, contenus)
+
+    def test_meta_moteur_invalide_ecartee_par_le_serveur(self) -> None:
+        # Un émetteur qui contourne le runner : le serveur valide à son tour, et
+        # écarte l'objet entier, sans rien persister de ses valeurs.
+        consignateur = self.consignateur()
+        sentinelle = "SENTINELLE-META-10"
+        evenement = {
+            **loading_event(),
+            "meta_moteur": {**META_MOTEUR, "architecture": sentinelle, "graine": 3},
+        }
+        self.assertTrue(consignateur.record_event(evenement))
+        dossier = consignateur.dossier
+        assert dossier is not None
+        run = self.read_run(dossier)
+        self.assertIsNone(run["modele"]["architecture"])
+        self.assertIsNone(run["effectifs"]["threads_appliques"])
+        self.assertEqual(
+            set(self.read_json(dossier / "consignes.json")), CLES_CONSIGNES_ADMISSION
+        )
+        journal = (dossier / "run.log").read_text(encoding="utf-8")
+        self.assertIn(
+            "Métadonnées du chargement ignorées : "
+            "métadonnée du moteur non conforme : graine.",
+            journal,
+        )
+        self.assertNotIn(sentinelle, journal + json.dumps(run, ensure_ascii=False))
+        self.assertTrue(consignateur.clore(etat="terminee", erreur=None, code_sortie=0))
+
+    def test_echec_d_ecriture_des_consignes_clot_en_echec(self) -> None:
+        consignateur = self.consignateur()
+        ecriture = resultats_extraction.ecrire_json_atomique
+
+        def ecrire_sans_consignes(chemin: Path, contenu: Any) -> None:
+            if chemin.name == "consignes.json" and "version_format" in contenu:
+                raise OSError("disque plein simulé")
+            return ecriture(chemin, contenu)
+
+        evenement = {**loading_event(), "meta_moteur": META_MOTEUR}
+        with mock.patch.object(
+            resultats_extraction, "ecrire_json_atomique", ecrire_sans_consignes
+        ):
+            self.assertFalse(consignateur.record_event(evenement))
+        self.assertIsNotNone(consignateur.erreur)
+        self.assertTrue(consignateur.clore(etat="terminee", erreur=None, code_sortie=0))
+        assert consignateur.dossier is not None
+        self.assertEqual(self.read_run(consignateur.dossier)["etat"], "failed")
+        self.assertEqual(
+            set(self.read_json(consignateur.dossier / "consignes.json")),
+            CLES_CONSIGNES_ADMISSION,
+        )
+
+    def test_ligne_stderr_longue_tronquee_dans_run_log(self) -> None:
+        construire = self.wrapper_command(
+            """
+_original = factice.extraire
+
+
+def extraire(moteur, messages, reglages):
+    sys.stderr.write("DEBUT-LONG " + "y" * 1000 + " FIN-LONG-SENTINELLE\\n")
+    sys.stderr.flush()
+    return _original(moteur, messages, reglages)
+
+
+factice.extraire = extraire
+"""
+        )
+        resultat = self.run_extraction(
+            [f"{self.identifiant_a}:1"], construire=construire
+        )
+        self.assertEqual(resultat.etat, "terminee")
+        dossier = self.folder_of(resultat)
+        lignes = (dossier / "run.log").read_text(encoding="utf-8").splitlines()
+        longues = [ligne for ligne in lignes if "DEBUT-LONG" in ligne]
+        self.assertEqual(len(longues), 1)
+        self.assertLessEqual(len(longues[0]), LONGUEUR_LIGNE_STDERR_MAX)
+        self.assertIn("(ligne tronquée, ", longues[0])
+        self.assertLessEqual(max(len(ligne) for ligne in lignes), LONGUEUR_LIGNE_STDERR_MAX)
+        self.assertNotIn("FIN-LONG-SENTINELLE", "\n".join(lignes))
+        self.assertNotIn("FIN-LONG-SENTINELLE", "\n".join(self.creneau.instantane().journal))
 
 
 class InterruptionRecoveryTest(ExtractionBench):

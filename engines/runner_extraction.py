@@ -40,7 +40,12 @@ Contrat d'adaptateur (volontairement minimal, aucun framework) :
     charger(modele, threads_demandes, reglages, schema) -> objet opaque
         Charge le modèle et compile la contrainte de sortie issue de `schema`.
         Une erreur ici (grammaire refusée comprise) met l'exécution entière en
-        échec, sans aucune génération.
+        échec, sans aucune génération. Un objet dict peut porter la clé
+        `meta_chargement` (métadonnées du chargement, contrôlées par
+        `engines.protocole.valider_meta_moteur`) : le runner la recopie dans
+        l'événement `chargement` sous `meta_moteur`, après validation. Un dict
+        non conforme est écarté avec une ligne sur stderr ; une clé absente n'est
+        jamais inventée (moteur factice).
     reinitialiser(moteur) -> None
         Vide le contexte (cache KV) et réinitialise l'échantillonneur. Le runner
         l'appelle avant **chaque** `extraire` : la lecture d'une source ne bénéficie
@@ -56,9 +61,15 @@ Contrat d'adaptateur (volontairement minimal, aucun framework) :
           lecture du prompt comprise, ou `None`),
           `duree_generation_s` (du premier au dernier token, ou `None`),
           `temps_cpu_s` (ou `None`).
+        Peut porter en plus, facultativement, `comptes_natifs` : dict exactement
+        `{"tokens_lecture": int >= 0, "tokens_generation": int >= 0}`, comptes
+        natifs d'une source terminée (`fin` arret ou limite). Le runner le recopie
+        tel quel dans l'événement `extraction` ; aucun temps natif n'est admis.
         Si `tokens_entree` plus `sortie_max` dépasse `contexte`, lève
-        `ErreurContexteInsuffisant` **avant** toute génération : aucune troncature.
-        Une clé inconnue ou manquante est refusée par le runner.
+        `ErreurContexteInsuffisant` (définie dans `engines.protocole`,
+        réexportée par ce module) **avant** toute génération : aucune troncature.
+        Une clé inconnue ou manquante est refusée par le runner, hors
+        `comptes_natifs` qui est facultatif.
 
 Mesures par source (D6) : `duree_extraction_s` est mesurée par le runner, de
 l'appel à `extraire` jusqu'à la validation (génération, détokenisation et
@@ -73,8 +84,9 @@ décodage. Sinon la sortie est décodée (clés dupliquées refusées) puis vali
 contre `schema`. Une source conforme porte sa valeur décodée ; sinon le motif
 est un libellé fixe, sans contenu du modèle (la clé inconnue n'est pas recopiée).
 
-Événements : `chargement` (avec son `observation_systeme` facultatif), un
-`extraction` par source extraite (conforme ou non), un `extraction_erreur` par
+Événements : `chargement` (avec ses `observation_systeme` et `meta_moteur`
+facultatifs), un `extraction` par source extraite (conforme ou non, avec
+`comptes_natifs` facultatif), un `extraction_erreur` par
 source en erreur (contexte insuffisant, erreur de l'adaptateur, résultat
 d'adaptateur invalide), puis `fin` avec le compte des `extraction` dans
 `audios_ok` et des `extraction_erreur` dans `audios_erreur` (noms du protocole
@@ -101,6 +113,7 @@ import json
 import math
 import sys
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType, ModuleType
@@ -126,14 +139,27 @@ from engines.mesures_systeme import (
     creer_releveur_systeme,
 )
 from engines.protocole import (
+    CLES_COMPTES_NATIFS,
     FINS_GENERATION,
     LONGUEUR_MAX_MOTIF,
     TYPE_CHARGEMENT,
     TYPE_EXTRACTION,
     TYPE_EXTRACTION_ERREUR,
     TYPE_FIN,
+    ErreurContexteInsuffisant,
+    ErreurSource,
     emettre,
+    valider_meta_moteur,
 )
+# `ErreurContexteInsuffisant` et `ErreurSource` sont définies dans
+# `engines.protocole` et réexportées ici : ce fichier s'exécute comme
+# **script** (`python engines/runner_extraction.py job.json`), donc sous le nom
+# `__main__` — une classe définie ici aurait une seconde identité
+# (`engines.runner_extraction`) du côté de l'adaptateur qui l'importe, et le
+# `except` de `_traiter_source` ne l'attraperait plus. Les imports existants
+# (`from engines.runner_extraction import ErreurContexteInsuffisant` dans les
+# adaptateurs et leurs tests) continuent de fonctionner et obtiennent tous la
+# classe unique de `engines.protocole`.
 from engines.registre import (
     AdaptateurIndisponible,
     MoteurInconnu,
@@ -179,6 +205,8 @@ CLES_RESULTAT_EXTRACTION = (
     "duree_generation_s",
     "temps_cpu_s",
 )
+#: Clé facultative du résultat de `extraire` : comptes natifs d'une source terminée.
+CLE_COMPTES_NATIFS = "comptes_natifs"
 MOTIF_LIMITE = "limite de sortie atteinte"
 MOTIF_DECODAGE_DUPLIQUE = "clé JSON dupliquée"
 MOTIF_ERREUR_INATTENDUE = "sortie non conforme"
@@ -191,29 +219,6 @@ MOTIFS_CONFORMITE = {
     REASON_NULL_NOT_ALLOWED: "null non admis à cet endroit",
     REASON_EMPTY_LIST: "liste vide non admise",
 }
-
-
-class ErreurSource(RuntimeError):
-    """Résultat d'adaptateur inexploitable : source en erreur, lot poursuivi."""
-
-
-class ErreurContexteInsuffisant(RuntimeError):
-    """Prompt plus sortie maximale au-delà du contexte : refus sans génération (D4).
-
-    Levée par `extraire` de l'adaptateur, qui seul tokenise le prompt. Le runner la
-    traduit en `extraction_erreur` avec les nombres ci-dessous dans le motif.
-    """
-
-    def __init__(self, tokens_entree: int, sortie_max: int, contexte: int) -> None:
-        self.tokens_entree = tokens_entree
-        self.sortie_max = sortie_max
-        self.contexte = contexte
-        super().__init__(
-            "contexte insuffisant : "
-            f"{tokens_entree + sortie_max} tokens requis "
-            f"({tokens_entree} de prompt + {sortie_max} de sortie) "
-            f"pour un contexte de {contexte}"
-        )
 
 
 @dataclass(frozen=True)
@@ -320,6 +325,9 @@ def _executer_job(job: JobExtraction, registre: RegistreMoteurs) -> None:
         "pic_memoire_octets": pic_chargement,
         **provenance,
     }
+    meta_moteur = _meta_moteur_emis(moteur)
+    if meta_moteur is not None:
+        evenement_chargement["meta_moteur"] = meta_moteur
     observation_chargement = _observation_chargement(releveur, factice)
     if observation_chargement is not None:
         evenement_chargement["observation_systeme"] = observation_chargement
@@ -403,7 +411,7 @@ def _traiter_source(
             provenance,
         )
     tokens_sortie = resultat["tokens_sortie"]
-    return {
+    evenement: dict[str, Any] = {
         "type": TYPE_EXTRACTION,
         "index": index,
         "nom": source.nom,
@@ -431,6 +439,9 @@ def _traiter_source(
         "fin": resultat["fin"],
         **provenance,
     }
+    if CLE_COMPTES_NATIFS in resultat:
+        evenement[CLE_COMPTES_NATIFS] = resultat[CLE_COMPTES_NATIFS]
+    return evenement
 
 
 def _evenement_erreur(
@@ -488,10 +499,14 @@ def _motif_conformite(issue: SchemaIssue) -> str:
 
 
 def _valider_resultat_extraction(valeur: Any) -> dict[str, Any]:
-    """Vérifie le résultat de `extraire` : clés exactes, types et cause de fin."""
+    """Vérifie le résultat de `extraire` : clés exactes, types et cause de fin.
+
+    `comptes_natifs` est la seule clé facultative ; il n'est rendu que s'il est
+    présent dans le résultat de l'adaptateur.
+    """
     if not isinstance(valeur, dict):
         raise ErreurSource("résultat d'adaptateur attendu sous forme de dict")
-    inconnues = set(valeur) - set(CLES_RESULTAT_EXTRACTION)
+    inconnues = set(valeur) - set(CLES_RESULTAT_EXTRACTION) - {CLE_COMPTES_NATIFS}
     manquantes = [cle for cle in CLES_RESULTAT_EXTRACTION if cle not in valeur]
     if inconnues or manquantes:
         raise ErreurSource(
@@ -507,7 +522,7 @@ def _valider_resultat_extraction(valeur: Any) -> dict[str, Any]:
     fin = valeur["fin"]
     if fin not in FINS_GENERATION:
         raise ErreurSource(f"cause de fin inconnue : {fin!r}")
-    return {
+    resultat: dict[str, Any] = {
         "sortie_brute": sortie,
         "tokens_entree": tokens_entree,
         "tokens_sortie": tokens_sortie,
@@ -516,6 +531,36 @@ def _valider_resultat_extraction(valeur: Any) -> dict[str, Any]:
         "duree_generation_s": _duree_adaptateur(valeur, "duree_generation_s"),
         "temps_cpu_s": _duree_adaptateur(valeur, "temps_cpu_s"),
     }
+    if CLE_COMPTES_NATIFS in valeur:
+        resultat[CLE_COMPTES_NATIFS] = _comptes_natifs_adaptateur(
+            valeur[CLE_COMPTES_NATIFS]
+        )
+    return resultat
+
+
+def _comptes_natifs_adaptateur(comptes: Any) -> dict[str, int]:
+    """Comptes natifs : objet exact de deux compteurs entiers positifs ou nuls."""
+    if not isinstance(comptes, dict):
+        raise ErreurSource("'comptes_natifs' doit être un objet")
+    if set(comptes) != set(CLES_COMPTES_NATIFS):
+        raise ErreurSource("'comptes_natifs' avec des clés inconnues ou manquantes")
+    return {
+        cle: _entier_naturel_adaptateur(comptes, cle) for cle in CLES_COMPTES_NATIFS
+    }
+
+
+def _meta_moteur_emis(moteur: Any) -> dict[str, Any] | None:
+    """Métadonnées du chargement conformes, ou `None` si absentes ou écartées.
+
+    Une valeur non conforme est écartée avec une ligne sur stderr, sans arrêt du
+    run : le motif ne recopie aucune valeur reçue (précédent `observation_systeme`).
+    """
+    if not isinstance(moteur, Mapping) or "meta_chargement" not in moteur:
+        return None
+    objet, motif = valider_meta_moteur(moteur["meta_chargement"])
+    if objet is None:
+        _journaliser(f"Métadonnées du moteur ignorées : {motif}")
+    return objet
 
 
 def _entier_naturel_adaptateur(valeur: dict[str, Any], champ: str) -> int:

@@ -205,6 +205,10 @@ DELAI_ARRET_MOTEUR = 5.0
 PAS_SONDAGE_ARRET = 0.02
 #: Nombre maximal de lignes de sortie d'erreur conservées (les plus récentes).
 NOMBRE_LIGNES_STDERR_MAX = 2000
+#: Longueur maximale d'une ligne de sortie d'erreur, suffixe de troncature compris.
+#: Les journaux natifs sont courts ; un moteur qui recopierait du texte (prompt,
+#: sortie) ne remplit pas `run.log` de contenu.
+LONGUEUR_LIGNE_STDERR_MAX = 400
 #: Nombre maximal de lignes parasites journalisées ; le total reste consigné.
 NOMBRE_LIGNES_PARASITES_JOURNALISEES = 20
 #: Motif fixe d'un événement d'extraction reçu par une exécution de transcription.
@@ -1562,25 +1566,40 @@ def _cle_evenement(evenement: Mapping[str, Any]) -> tuple[str, int | None]:
     return (type_evenement, None)
 
 
+def borner_ligne_stderr(ligne: str) -> str:
+    """Ligne de sortie d'erreur bornée à `LONGUEUR_LIGNE_STDERR_MAX` caractères.
+
+    Une ligne plus longue est tronquée, son suffixe `… (ligne tronquée, N caractères)`
+    compris (N : longueur d'origine). La ligne rendue ne dépasse jamais la borne.
+    """
+    if len(ligne) <= LONGUEUR_LIGNE_STDERR_MAX:
+        return ligne
+    suffixe = f"… (ligne tronquée, {len(ligne)} caractères)"
+    return ligne[: LONGUEUR_LIGNE_STDERR_MAX - len(suffixe)] + suffixe
+
+
 def collecter_stderr(
     enfant: subprocess.Popen[str],
     journal: deque[str],
     consignateur: ConsignateurExecution,
 ) -> None:
-    """Lit la sortie d'erreur du moteur et l'écrit intégralement dans `run.log`.
+    """Lit la sortie d'erreur du moteur et l'écrit dans `run.log`, ligne bornée.
 
-    Le résumé gardé en mémoire (`journal`, borné) sert aux messages et à la page
-    d'opération ; le fichier, lui, n'est pas borné : 2000 lignes de trace ne
-    suffisent pas à comprendre un échec d'installation de moteur. Une erreur
-    d'écriture est retenue par la consignation et n'interrompt pas la lecture, le
-    moteur ne devant jamais rester bloqué sur un tuyau plein.
+    Chaque ligne est tronquée à `LONGUEUR_LIGNE_STDERR_MAX` (`borner_ligne_stderr`)
+    avant d'entrer dans le résumé et dans le fichier : `run.log` ne reçoit donc pas
+    de long texte recopié par un moteur. Le nombre de lignes n'est pas borné dans le
+    fichier : 2000 lignes de trace ne suffisent pas à comprendre un échec
+    d'installation de moteur. Le résumé gardé en mémoire (`journal`, borné en
+    nombre) sert aux messages et à la page d'opération. Une erreur d'écriture est
+    retenue par la consignation et n'interrompt pas la lecture, le moteur ne devant
+    jamais rester bloqué sur un tuyau plein.
     """
     flux = enfant.stderr
     if flux is None:
         return
     try:
         for brut in flux:
-            ligne = brut.rstrip("\r\n")
+            ligne = borner_ligne_stderr(brut.rstrip("\r\n"))
             journal.append(ligne)
             consignateur.ecrire_journal(ligne)
     except (OSError, ValueError):

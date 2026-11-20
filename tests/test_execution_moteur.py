@@ -18,6 +18,7 @@ relevé système à son événement d'erreur. Le chemin nominal utilise
 
 from __future__ import annotations
 
+import io
 import json
 import os
 import sys
@@ -25,7 +26,9 @@ import tempfile
 import threading
 import time
 import unittest
+from collections import deque
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest import mock
 
@@ -74,12 +77,15 @@ from transcription_bench.execution_moteur import (
     ETAT_INTERROMPUE,
     ETAT_TERMINEE,
     FORMAT_AUDIO_BRUT,
+    LONGUEUR_LIGNE_STDERR_MAX,
     MOTIF_EXTRACTION_HORS_TACHE,
     NOMBRE_LIGNES_STDERR_MAX,
     VERSION_JOB,
     ExecutionImpossible,
     ExecutionMoteur,
     ProcessusMoteur,
+    borner_ligne_stderr,
+    collecter_stderr,
     evaluer_issue,
 )
 from transcription_bench.executions import (
@@ -2628,6 +2634,86 @@ class RoutesExecutionTest(SocleExecutionTest):
 
         self.assertEqual(reponse.status_code, 405)
         self.assertFalse((self.dossier_data / NOM_DOSSIER_RESULTATS).exists())
+
+
+class CollecteStderrBorneeTest(unittest.TestCase):
+    """Sortie d'erreur du moteur : chaque ligne bornée, dans le résumé comme dans run.log."""
+
+    class _Consignateur:
+        """Consignation minimale : seule `ecrire_journal` est appelée par le collecteur."""
+
+        def __init__(self) -> None:
+            self.lignes: list[str] = []
+
+        def ecrire_journal(self, ligne: str) -> None:
+            self.lignes.append(ligne)
+
+    def collecter(self, texte: str) -> tuple[list[str], list[str]]:
+        """Résumé en mémoire et lignes écrites au journal pour une sortie d'erreur donnée."""
+        enfant = SimpleNamespace(stderr=io.StringIO(texte))
+        journal: deque[str] = deque(maxlen=NOMBRE_LIGNES_STDERR_MAX)
+        consignateur = self._Consignateur()
+        collecter_stderr(enfant, journal, consignateur)
+        return list(journal), consignateur.lignes
+
+    def test_ligne_longue_tronquee_avec_suffixe_dans_le_resume_et_le_journal(self) -> None:
+        resume, journal = self.collecter("a" * 1000 + "\n")
+
+        suffixe = "… (ligne tronquée, 1000 caractères)"
+        self.assertEqual(len(resume), 1)
+        self.assertEqual(len(resume[0]), LONGUEUR_LIGNE_STDERR_MAX)
+        self.assertTrue(resume[0].endswith(suffixe))
+        self.assertEqual(resume[0][: -len(suffixe)], "a" * (LONGUEUR_LIGNE_STDERR_MAX - len(suffixe)))
+        self.assertEqual(journal, resume)
+
+    def test_ligne_courte_intacte(self) -> None:
+        resume, journal = self.collecter("ligne d'erreur simulée\r\n")
+
+        self.assertEqual(resume, ["ligne d'erreur simulée"])
+        self.assertEqual(journal, resume)
+
+    def test_seuil_exact_et_depassement(self) -> None:
+        exacte = "b" * LONGUEUR_LIGNE_STDERR_MAX
+        depassee = "c" * (LONGUEUR_LIGNE_STDERR_MAX + 1)
+
+        resume, _ = self.collecter(exacte + "\n" + depassee + "\n")
+
+        self.assertEqual(resume[0], exacte)
+        suffixe = "… (ligne tronquée, 401 caractères)"
+        self.assertTrue(resume[1].endswith(suffixe))
+        self.assertEqual(len(resume[1]), LONGUEUR_LIGNE_STDERR_MAX)
+        self.assertEqual(
+            resume[1][: -len(suffixe)],
+            "c" * (LONGUEUR_LIGNE_STDERR_MAX - len(suffixe)),
+        )
+
+    def test_borne_jamais_depassee_quelle_que_soit_la_longueur(self) -> None:
+        for longueur in list(range(0, 1200, 37)) + [10**5]:
+            with self.subTest(longueur=longueur):
+                self.assertLessEqual(
+                    len(borner_ligne_stderr("x" * longueur)),
+                    LONGUEUR_LIGNE_STDERR_MAX,
+                )
+
+    def test_texte_long_recopie_jamais_en_entier(self) -> None:
+        # Un moteur qui recopierait un prompt : la fin de la ligne n'atteint pas run.log.
+        texte = "DEBUT-PROMPT " + "s" * 5000 + " FIN-SENTINELLE-STDERR"
+
+        resume, journal = self.collecter(texte + "\n")
+
+        self.assertNotIn("FIN-SENTINELLE-STDERR", resume[0])
+        self.assertNotIn("FIN-SENTINELLE-STDERR", "".join(journal))
+        self.assertTrue(resume[0].startswith("DEBUT-PROMPT "))
+
+    def test_journal_borne_en_lignes_et_fichier_complet(self) -> None:
+        texte = "".join(f"ligne {numero}\n" for numero in range(2500))
+
+        resume, journal = self.collecter(texte)
+
+        self.assertEqual(len(resume), NOMBRE_LIGNES_STDERR_MAX)
+        self.assertEqual(resume[-1], "ligne 2499")
+        self.assertEqual(len(journal), 2500)
+        self.assertEqual(journal[0], "ligne 0")
 
 
 if __name__ == "__main__":
