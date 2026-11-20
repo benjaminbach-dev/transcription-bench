@@ -112,20 +112,31 @@ MOTIF_VERROU_NON_VERIFIE = (
 CODE_PREFIXE_INTERPRETEUR = "import sys\nprint(sys.prefix)"
 DELAI_ARRET_PROCESSUS = 5.0
 
+#: Seul ce paquet a un nom de distribution PyPI distinct du nom de module importé.
+#: Les autres moteurs ont nom de module = nom de distribution.
+DISTRIBUTIONS_MODULES = {"llama_cpp": "llama-cpp-python"}
+
+# Argument JSON : {"modules": [...], "distributions": {module: distribution}}.
+# L'import de contrôle porte sur le nom de module (il prouve l'installation) ; seule
+# la lecture de version essaie d'abord la distribution mappée, puis le nom de module.
 CODE_CONTROLE_IMPORT = """
 import importlib
 import importlib.metadata
 import json
 import sys
 
-modules = json.loads(sys.argv[1])
+requete = json.loads(sys.argv[1])
+distributions = requete["distributions"]
 versions = {}
-for nom in modules:
+for nom in requete["modules"]:
     importlib.import_module(nom)
-    try:
-        versions[nom] = importlib.metadata.version(nom)
-    except importlib.metadata.PackageNotFoundError:
-        versions[nom] = None
+    versions[nom] = None
+    for distribution in (distributions.get(nom, nom), nom):
+        try:
+            versions[nom] = importlib.metadata.version(distribution)
+            break
+        except importlib.metadata.PackageNotFoundError:
+            pass
 print(json.dumps({"modules": versions}, ensure_ascii=False))
 """
 
@@ -777,7 +788,9 @@ class InstallationMoteurs:
 
         `-I` élimine `PYTHONPATH`, `PYTHONHOME`, le site utilisateur et le
         dossier courant : un module trouvé hors des dépendances synchronisées ne
-        peut pas faire réussir le contrôle.
+        peut pas faire réussir le contrôle. Les versions sont lues sous le nom de
+        distribution de `DISTRIBUTIONS_MODULES` quand il existe, sous le nom de
+        module sinon, et restent indexées par nom de module.
         """
         if not modules:
             raise InstallationEchouee(
@@ -789,7 +802,9 @@ class InstallationMoteurs:
                 "-I",
                 "-c",
                 CODE_CONTROLE_IMPORT,
-                json.dumps(list(modules)),
+                json.dumps(
+                    {"modules": list(modules), "distributions": DISTRIBUTIONS_MODULES}
+                ),
             ],
             env=environ,
             journaliser=journaliser,

@@ -28,6 +28,8 @@ import psutil
 from engines.declarations import DeclarationAdaptateur, Famille
 from engines.registre import RegistreMoteurs, creer_registre_fourni
 from transcription_bench.moteurs import (
+    CODE_CONTROLE_IMPORT,
+    DISTRIBUTIONS_MODULES,
     ETAT_ECHEC,
     ETAT_NON_INSTALLE,
     ETAT_PRET,
@@ -687,12 +689,21 @@ class ArretEtCheminsTest(SocleMoteurs):
 
 
 class ExecuteurLlamaSimule(ExecuteurEnregistreur):
-    """Enregistre les commandes ; le contrôle d'import renvoie `llama_cpp`, sans version."""
+    """Enregistre les commandes ; le contrôle d'import lit la version sous la distribution.
+
+    La version simulée (0.3.36) n'apparaît que si la requête de contrôle mappe
+    `llama_cpp` vers `llama-cpp-python`, comme le fait le programme ; sinon elle reste nulle.
+    """
 
     def executer(self, arguments, *, env, journaliser, delai=None):
         if "-c" in arguments and "sys.prefix" not in arguments[-1]:
             self.commandes.append(list(arguments))
-            return ResultatCommande(code=0, sortie='{"modules": {"llama_cpp": null}}')
+            requete = json.loads(arguments[-1])
+            mappe = requete["distributions"].get("llama_cpp") == "llama-cpp-python"
+            version = "0.3.36" if mappe else None
+            return ResultatCommande(
+                code=0, sortie=json.dumps({"modules": {"llama_cpp": version}})
+            )
         return super().executer(
             arguments, env=env, journaliser=journaliser, delai=delai
         )
@@ -773,9 +784,46 @@ class InstallationLlamaCppTest(SocleMoteurs):
             c for c in executeur.commandes if len(c) == 5 and c[1:3] == ["-I", "-c"]
         ]
         self.assertEqual(len(controles), 1)
-        self.assertEqual(json.loads(controles[0][-1]), ["llama_cpp"])
+        self.assertEqual(
+            json.loads(controles[0][-1]),
+            {"modules": ["llama_cpp"], "distributions": {"llama_cpp": "llama-cpp-python"}},
+        )
         donnees = lire_json(self.marqueur("llama-cpp"))
-        self.assertEqual(donnees["versions"], {"llama_cpp": None})
+        self.assertEqual(donnees["versions"], {"llama_cpp": "0.3.36"})
+        etat = self.etat(service, "llama-cpp")
+        self.assertEqual(dict(etat.versions), {"llama_cpp": "0.3.36"})
+
+    def test_controle_import_lit_la_version_de_la_distribution_mappee(self) -> None:
+        """Contrôle réel (sans réseau) : module `llama_cpp` et métadonnées
+        `llama-cpp-python` fabriquées dans un dossier temporaire."""
+        self.assertEqual(DISTRIBUTIONS_MODULES, {"llama_cpp": "llama-cpp-python"})
+        temporaire = tempfile.TemporaryDirectory()
+        self.addCleanup(temporaire.cleanup)
+        racine = Path(temporaire.name)
+        (racine / "llama_cpp").mkdir()
+        (racine / "llama_cpp" / "__init__.py").write_text("", encoding="utf-8")
+        dist_info = racine / "llama_cpp_python-0.3.36.dist-info"
+        dist_info.mkdir()
+        (dist_info / "METADATA").write_text(
+            "Metadata-Version: 2.1\nName: llama-cpp-python\nVersion: 0.3.36\n",
+            encoding="utf-8",
+        )
+        requete = json.dumps(
+            {"modules": ["llama_cpp"], "distributions": DISTRIBUTIONS_MODULES}
+        )
+        resultat = subprocess.run(
+            [sys.executable, "-c", CODE_CONTROLE_IMPORT, requete],
+            cwd=racine,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=DELAI,
+        )
+        self.assertEqual(resultat.returncode, 0, resultat.stderr)
+        self.assertEqual(
+            json.loads(resultat.stdout.strip().splitlines()[-1]),
+            {"modules": {"llama_cpp": "0.3.36"}},
+        )
 
     def test_echec_de_synchronisation_donne_echec_sans_marqueur(self) -> None:
         # Une roue absente fait échouer `uv pip sync --no-build` au lieu de

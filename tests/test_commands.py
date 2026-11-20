@@ -1066,7 +1066,7 @@ class FakeInstallationExecutor(ExecuteurCommandes):
             return ResultatCommande(
                 code=0, sortie=str(Path(arguments[0]).parent.parent)
             )
-        modules = json.loads(arguments[-1])
+        modules = json.loads(arguments[-1])["modules"]
         return ResultatCommande(
             code=0, sortie=json.dumps({"modules": dict.fromkeys(modules)})
         )
