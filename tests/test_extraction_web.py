@@ -348,3 +348,23 @@ class ExtractionWebTest(ExtractionConsultationBench):
             self.assertEqual(len(page.textes["h1"]), 1)
             self.assertFalse(page.balises_de("style"))
             self.assertFalse(any(name == "style" for _, name, _ in page.attributs))
+
+    def test_deprecated_action_routes_return_404_with_local_skeleton(self) -> None:
+        """Removed action pages answer 404 with the local skeleton."""
+        deprecated_routes = [
+            "/audios",
+            "/modeles",
+            "/moteurs",
+            "/moteurs/factice/journal",
+            "/operation",
+            "/executions/etat",
+        ]
+        for route in deprecated_routes:
+            with self.subTest(route=route):
+                page = self.page(route, 404)
+                self.assertEqual(len(page.courants()), 0, "Pas de rubrique courante en erreur")
+                self.assertEqual(
+                    [(link["href"], link["texte"]) for link in page.ancres_sous("html", "body", "header", "nav")],
+                    NAVIGATION,
+                    f"Navigation manquante ou invalide pour {route}"
+                )

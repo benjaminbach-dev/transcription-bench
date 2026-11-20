@@ -2,8 +2,8 @@
 
 Même principe que `results_help.py` : les textes vivent ici en **données
 simples** (sections, paragraphes, définitions, listes, portions de texte en
-gras ou en code), lues par la commande « extract explain » et, plus tard, par
-le gabarit de la page `/extractions/aide` (tâche 4.3, non construite ici).
+gras ou en code), lues par la commande « extract explain » et par
+le gabarit de la page `/extractions/aide` (tâche 4.3).
 Aucune copie parallèle de ces textes ailleurs ; aucune logique de rendu HTML
 ni Jinja dans ce module, pour que la CLI puisse l'utiliser seule.
 

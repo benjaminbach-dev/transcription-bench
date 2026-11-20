@@ -1,7 +1,7 @@
 """Historique combiné des exécutions, transcription et extraction (tâche 4.2).
 
-Source unique, partagée par la commande `results history` et, plus tard, par
-la page Historique (tâche 4.3, non construite ici) : une seule fusion des deux
+Source unique, partagée par la commande `results history` et par
+la page Historique (tâche 4.3) : une seule fusion des deux
 services de consultation en lecture seule (`ConsultationResultats` pour les
 transcriptions, `ExtractionConsultation` pour les extractions), sans écriture
 ni accès réseau. `historique_combine` ne lit rien de plus que `lister()` et
