@@ -304,6 +304,22 @@ def read_grid(name: str, base: Path | str | None = None) -> Grid:
             f"grille « {name} » illisible au moment de la lecture : {error}"
         ) from error
     data, digest = _read_file(path, name)
+    return _interpret_bytes(name, data, digest)
+
+
+def interpret_grid_copy(name: str, data: bytes) -> Grid:
+    """Interprète une copie conservée de grille, à partir de ses octets complets.
+
+    Sert à la consultation des extractions : la grille relue est celle copiée
+    dans le dossier de l'extraction (design D7), jamais celle de `grilles/` au
+    moment de la consultation. Taille, décodage et règles sont ceux de
+    `read_grid` ; l'empreinte est celle des octets fournis.
+    """
+    return _interpret_bytes(name, data, hashlib.sha256(data).hexdigest())
+
+
+def _interpret_bytes(name: str, data: bytes, digest: str) -> Grid:
+    """Taille maximale, décodage UTF-8 puis interprétation ; rend toujours une `Grid`."""
     if len(data) > MAX_GRID_BYTES:
         return _invalid_grid(
             name,

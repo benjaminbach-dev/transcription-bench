@@ -53,6 +53,117 @@ pre {
   overflow-wrap: anywhere;
 }
 
+/* Extractions : la grille et la copie source restent visibles sans accordéon.
+ * Les pistes bornées à zéro et les coupures longues empêchent le débordement
+ * de page, même avec six colonnes et des valeurs sans espaces. */
+.extraction-reading {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+@media (min-width: 64rem) {
+  .extraction-reading {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.extraction-indicators {
+  margin: 0.5rem 0;
+}
+
+.extraction-entry {
+  padding: 0.5rem 0;
+  border-top: 1px solid var(--s-border);
+  min-width: 0;
+}
+
+.extraction-entry .resultat-etats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
+
+.extraction-source,
+.extraction-reading > section {
+  min-width: 0;
+}
+
+.extraction-subfield {
+  margin-left: 1rem;
+}
+
+.extraction-filled-grid dd,
+.extraction-value {
+  white-space: pre-wrap;
+}
+
+.extraction-comparison {
+  width: 100%;
+  table-layout: fixed;
+}
+
+.extraction-comparison th,
+.extraction-comparison td,
+.extraction-comparison .resultat-valeur,
+.extraction-comparison .resultat-valeur-absente,
+.extraction-comparison a,
+.extraction-comparison strong,
+.extraction-comparison span,
+.extraction-comparison p,
+.extraction-comparison .extraction-value {
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+
+.extraction-comparison th,
+.extraction-comparison td {
+  vertical-align: top;
+  padding: 0.5rem;
+}
+
+.extraction-comparison .resultat-entete {
+  display: block;
+}
+
+.extraction-comparison .resultat-mesures {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.extraction-mobile-label {
+  display: none;
+}
+
+/* Cartes empilées sur petit écran : chaque case conserve son libellé et
+ * chaque valeur rappelle son modèle, sans table défilant à l'échelle de page. */
+@media (max-width: 63.999rem) {
+  .extraction-comparison,
+  .extraction-comparison thead,
+  .extraction-comparison tbody,
+  .extraction-comparison tr,
+  .extraction-comparison th,
+  .extraction-comparison td {
+    display: block;
+    width: 100%;
+    min-width: 0;
+  }
+
+  .extraction-comparison tr {
+    margin-bottom: 1rem;
+    border: 1px solid var(--s-border);
+  }
+
+  .extraction-comparison .extraction-mobile-label {
+    display: block;
+    font-weight: 700;
+    margin-bottom: 0.25rem;
+  }
+
+  .extraction-comparison .resultat-mesures {
+    grid-template-columns: var(--s-resultat-grille);
+  }
+}
+
 p,
 li,
 strong,

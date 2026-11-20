@@ -30,6 +30,7 @@ from transcription_bench import paths
 from transcription_bench.audios import AudioListe, lister_audios
 from transcription_bench.consultation_resultats import ConsultationResultats
 from transcription_bench.execution_extraction import ExtractionExecution
+from transcription_bench.extraction_consultation import ExtractionConsultation
 from transcription_bench.execution_moteur import ExecutionMoteur
 from transcription_bench.executions import ConfigurationExecutions
 from transcription_bench.extractions import ExtractionConfiguration
@@ -56,6 +57,8 @@ class DataServices:
     supervisé et `results` la consultation en lecture seule. `extraction_preparation`
     et `extraction_execution` sont les équivalents de la préparation et du lancement
     pour les extractions (tâche 3.5) ; ils partagent le même créneau.
+    `extraction_results` est la consultation en lecture seule des extractions
+    enregistrées (tâches 4.1 et 4.2), équivalente de `results` pour l'extraction.
     """
 
     data_dir: Path
@@ -68,6 +71,7 @@ class DataServices:
     results: ConsultationResultats
     extraction_preparation: ExtractionConfiguration
     extraction_execution: ExtractionExecution
+    extraction_results: ExtractionConsultation
 
 
 def assemble_services(
@@ -82,6 +86,7 @@ def assemble_services(
     results: ConsultationResultats | None = None,
     extraction_preparation: ExtractionConfiguration | None = None,
     extraction_execution: ExtractionExecution | None = None,
+    extraction_results: ExtractionConsultation | None = None,
     lister: Callable[[Path], tuple[AudioListe, ...]] = lister_audios,
 ) -> DataServices:
     """Relie les services dans l'ordre de dépendance.
@@ -126,6 +131,11 @@ def assemble_services(
         if extraction_execution is None
         else extraction_execution
     )
+    resolved_extraction_results = (
+        ExtractionConsultation(data_dir)
+        if extraction_results is None
+        else extraction_results
+    )
     return DataServices(
         data_dir=data_dir,
         operations=operations,
@@ -137,6 +147,7 @@ def assemble_services(
         results=resolved_results,
         extraction_preparation=resolved_extraction_preparation,
         extraction_execution=resolved_extraction_execution,
+        extraction_results=resolved_extraction_results,
     )
 
 
@@ -165,8 +176,14 @@ class ServeSession:
     une seule fois, dans un `finally`, après l'usage de `results`.
     """
 
-    def __init__(self, results: ConsultationResultats, cleanup: NettoyageArret) -> None:
+    def __init__(
+        self,
+        results: ConsultationResultats,
+        cleanup: NettoyageArret,
+        extraction_results: ExtractionConsultation,
+    ) -> None:
         self.results = results
+        self.extraction_results = extraction_results
         self._cleanup = cleanup
 
     def close(self) -> bool:
@@ -277,4 +294,8 @@ def open_serve_session(
     construit : le serveur n'en a pas besoin.
     """
     lock = _prendre_verrou_et_recuperer(data_dir, recover)
-    return ServeSession(ConsultationResultats(data_dir), NettoyageArret(verrou=lock))
+    return ServeSession(
+        ConsultationResultats(data_dir),
+        NettoyageArret(verrou=lock),
+        ExtractionConsultation(data_dir),
+    )

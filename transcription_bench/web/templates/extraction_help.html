@@ -1,0 +1,5 @@
+{% extends "aide_resultats.html" %}
+{# Même rendu de blocs, source de données unique partagée avec « extract explain ». #}
+{% set results_help = extraction_help %}
+{% block page_courante %}parent:extractions{% endblock %}
+{% block titre %}{{ extraction_help.title }} — transcription-bench{% endblock %}

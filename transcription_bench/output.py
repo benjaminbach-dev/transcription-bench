@@ -70,8 +70,20 @@ from transcription_bench.execution_moteur import (
     ResultatAudio,
     ResultatExecution,
 )
+from transcription_bench.extraction_consultation import (
+    CaseRow,
+    Comparison,
+    Entry,
+    FillRow,
+    Group,
+    Indicators as ExtractionIndicators,
+    RunDetail as ExtractionRunDetail,
+    RunSummary,
+    SourceDetail,
+)
 from transcription_bench.extractions import ExtractionRequest, ExtractionSource
 from transcription_bench.gestion_modeles import ModeleLocal
+from transcription_bench.historique import HISTORY_TYPE_TRANSCRIPTION, HistoryEntry
 from transcription_bench.moteurs import EtatMoteur
 from transcription_bench.operations import InstantaneCreneau
 from transcription_bench.verification_modeles import FichierVerifie, ResultatVerification
@@ -832,4 +844,206 @@ def serialize_run_result(view: ResultatExecution) -> dict[str, Any]:
         "duree_processus_s": to_json_value(view.duree_processus_s),
         "audios_en_erreur": to_json_value(view.audios_en_erreur),
         "audios_non_traites": to_json_value(view.audios_non_traites),
+    }
+
+
+# --- Sérialiseurs de la consultation des extractions (tâche 4.2, design D9) -
+#
+# Mêmes principes que ci-dessus : champs listés explicitement, aucun `asdict`
+# aveugle. Les noms de champs reprennent ceux des vues de `extraction_consultation`
+# (anglais, tâche 4.1) ; les regroupements affichables (modèle, moteur, machine,
+# mesures, programme) réutilisent `serialize_pairs`, comme pour les résultats de
+# transcription.
+
+
+def serialize_extraction_indicators(view: ExtractionIndicators) -> dict[str, Any]:
+    """Indicateurs bruts d'une source d'extraction, et leurs deux ratios."""
+    return {
+        "duration_extraction_s": to_json_value(view.duration_extraction_s),
+        "time_to_first_token_s": to_json_value(view.time_to_first_token_s),
+        "generation_duration_s": to_json_value(view.generation_duration_s),
+        "generation_speed_tps": to_json_value(view.generation_speed_tps),
+        "read_speed_estimate_tps": to_json_value(view.read_speed_estimate_tps),
+        "tokens_in": to_json_value(view.tokens_in),
+        "tokens_out": to_json_value(view.tokens_out),
+        "cpu_time_s": to_json_value(view.cpu_time_s),
+        "peak_memory_bytes": to_json_value(view.peak_memory_bytes),
+        "ram_total_bytes": to_json_value(view.ram_total_bytes),
+        "ram_ratio": to_json_value(view.ram_ratio),
+        "cpu_occupancy": to_json_value(view.cpu_occupancy),
+    }
+
+
+def serialize_extraction_entry(view: Entry) -> dict[str, Any]:
+    """Source publiée d'une extraction : état, provenance, valeur et autres informations."""
+    return {
+        "selection": view.selection,
+        "run_id": view.run_id,
+        "rank": view.rank,
+        "audio_name": view.audio_name,
+        "state": view.state,
+        "state_label": view.state_label,
+        "partial": view.partial,
+        "source_state": view.source_state,
+        "source_state_label": view.source_state_label,
+        "reason": to_json_value(view.reason),
+        "compliant": view.compliant,
+        "created_at": to_json_value(view.created_at),
+        "created_short": view.created_short,
+        "model": to_json_value(view.model),
+        "engine": to_json_value(view.engine),
+        "family": to_json_value(view.family),
+        "transcription_run_id": to_json_value(view.transcription_run_id),
+        "transcription_order": to_json_value(view.transcription_order),
+        "transcription_model": to_json_value(view.transcription_model),
+        "audio_sha256": to_json_value(view.audio_sha256),
+        "text_sha256": to_json_value(view.text_sha256),
+        "marks": to_json_value(view.marks),
+        "simulated": view.simulated,
+        "consignes_version": to_json_value(view.consignes_version),
+        "format_version": to_json_value(view.format_version),
+        "indicators": serialize_extraction_indicators(view.indicators),
+        "value": to_json_value(view.value),
+        "other_info": serialize_pairs(view.other_info),
+        "groupable": view.groupable,
+        "copy_issue": to_json_value(view.copy_issue),
+    }
+
+
+def serialize_extraction_group(view: Group) -> dict[str, Any]:
+    """Groupe d'extractions comparables : entrées réelles puis simulées, dans l'ordre reçu."""
+    return {
+        "key": view.key,
+        "text_sha256": view.text_sha256,
+        "grid_sha256": view.grid_sha256,
+        "schema_sha256": view.schema_sha256,
+        "grid_name": view.grid_name,
+        "grid_title": to_json_value(view.grid_title),
+        "audio_names": to_json_value(view.audio_names),
+        "transcription_models": to_json_value(view.transcription_models),
+        "entries": [serialize_extraction_entry(entry) for entry in view.entries],
+        "consignes_versions": to_json_value(view.consignes_versions),
+        "consignes_diverge": view.consignes_diverge,
+    }
+
+
+def serialize_fill_row(view: FillRow) -> dict[str, Any]:
+    """Ligne de la grille remplie : libellé, profondeur et valeur affichable."""
+    return {
+        "label": view.label,
+        "depth": view.depth,
+        "display": view.display,
+        "absent": view.absent,
+    }
+
+
+def serialize_extraction_source_detail(view: SourceDetail) -> dict[str, Any]:
+    """Détail d'une source : état, grille remplie ou sortie brute, texte source."""
+    return {
+        "rank": view.rank,
+        "name": view.name,
+        "state": view.state,
+        "state_label": view.state_label,
+        "reason": to_json_value(view.reason),
+        "origin": to_json_value(view.origin),
+        "entry": None if view.entry is None else serialize_extraction_entry(view.entry),
+        "rows": (
+            None if view.rows is None else [serialize_fill_row(row) for row in view.rows]
+        ),
+        "source_text": to_json_value(view.source_text),
+        "source_copy_ok": view.source_copy_ok,
+        "raw_output": to_json_value(view.raw_output),
+        "origin_present": view.origin_present,
+        "raw_result": to_json_value(view.raw_result),
+    }
+
+
+def serialize_extraction_run_detail(view: ExtractionRunDetail) -> dict[str, Any]:
+    """Détail d'une extraction : métadonnées complètes, grille copiée et sources."""
+    return {
+        "run_id": view.run_id,
+        "state": view.state,
+        "state_label": view.state_label,
+        "created_at": to_json_value(view.created_at),
+        "finished_at": to_json_value(view.finished_at),
+        "error": to_json_value(view.error),
+        "partial": view.partial,
+        "grid_name": view.grid_name,
+        "grid_title": to_json_value(view.grid_title),
+        "grid_copy": to_json_value(view.grid_copy),
+        "grid_copy_ok": view.grid_copy_ok,
+        "system_message": to_json_value(view.system_message),
+        "consignes_version": to_json_value(view.consignes_version),
+        "format_version": to_json_value(view.format_version),
+        "model": serialize_pairs(view.model),
+        "engine": serialize_pairs(view.engine),
+        "engine_versions": to_json_value(view.engine_versions),
+        "program": serialize_pairs(view.program),
+        "machine": serialize_pairs(view.machine),
+        "measures": serialize_pairs(view.measures),
+        "settings": [
+            {"name": name, "value": to_json_value(value)} for name, value in view.settings
+        ],
+        "threads_requested": to_json_value(view.threads_requested),
+        "threads_applied": to_json_value(view.threads_applied),
+        "weight_loading_mode": to_json_value(view.weight_loading_mode),
+        "effective_settings": to_json_value(view.effective_settings),
+        "marks": to_json_value(view.marks),
+        "simulated": view.simulated,
+        "sources": [serialize_extraction_source_detail(source) for source in view.sources],
+        "raw_metadata": to_json_value(view.raw_metadata),
+    }
+
+
+def serialize_case_row(view: CaseRow) -> dict[str, Any]:
+    """Ligne de comparaison d'une case de grille, une valeur par extraction."""
+    return {
+        "label": view.label,
+        "values": to_json_value(view.values),
+        "differs": view.differs,
+    }
+
+
+def serialize_extraction_comparison(view: Comparison) -> dict[str, Any]:
+    """Comparaison de 2 à 6 extractions d'un même groupe, dans l'ordre reçu.
+
+    `source_text` est le texte source copié, commun au groupe et exposé une
+    seule fois, jamais répété par entrée (design D9).
+    """
+    return {
+        "key": view.key,
+        "entries": [serialize_extraction_entry(entry) for entry in view.entries],
+        "consignes_versions": to_json_value(view.consignes_versions),
+        "consignes_diverge": view.consignes_diverge,
+        "simulated": view.simulated,
+        "cases": [serialize_case_row(case) for case in view.cases],
+        "other_info": to_json_value(view.other_info),
+        "source_text": to_json_value(view.source_text),
+    }
+
+
+def serialize_history_entry(view: HistoryEntry) -> dict[str, Any]:
+    """Historique typé ; les clés audios_* de schema 1 restent pour les transcriptions."""
+    return {
+        "type": view.type,
+        "identifiant": view.identifiant,
+        "etat": to_json_value(view.etat),
+        "libelle_etat": view.libelle_etat,
+        "cree_le": to_json_value(view.cree_le),
+        "modele": to_json_value(view.modele),
+        "moteur": to_json_value(view.moteur),
+        "audios_traites": (
+            to_json_value(view.items_processed) if view.type == HISTORY_TYPE_TRANSCRIPTION else None
+        ),
+        "audios_total": (
+            to_json_value(view.items_total) if view.type == HISTORY_TYPE_TRANSCRIPTION else None
+        ),
+        "items_processed": to_json_value(view.items_processed),
+        "items_total": to_json_value(view.items_total),
+        "duree_operation_s": to_json_value(view.duree_operation_s),
+        "partiel": to_json_value(view.partiel),
+        "marques": to_json_value(view.marques),
+        "exploitable": view.exploitable,
+        "motif": to_json_value(view.motif),
+        "simule": _simulated(view.marques),
     }

@@ -127,6 +127,7 @@ même si l'action a réussi (voir `command_session`).
 from __future__ import annotations
 
 import argparse
+import json
 import math
 from collections.abc import Sequence
 from pathlib import Path
@@ -153,7 +154,6 @@ from transcription_bench.consultation_resultats import (
     ComparaisonVue,
     DetailExecutionVue,
     EntreeEmpreinte,
-    ExecutionListee,
     GroupeEmpreinte,
     IndicateursAudio,
     LIBELLES_TRI,
@@ -194,12 +194,29 @@ from transcription_bench.executions import (
     refuser_champs_repetes,
     threads_par_defaut,
 )
+from transcription_bench.extraction_consultation import (
+    LABEL_NO_OTHER_INFO,
+    MAX_SELECTIONS,
+    MIN_SELECTIONS,
+    Comparison as ExtractionComparison,
+    Entry as ExtractionEntry,
+    Group as ExtractionGroup,
+    Indicators as ExtractionIndicators,
+    RunDetail as ExtractionRunDetail,
+    SourceDetail as ExtractionSourceDetail,
+)
 from transcription_bench.extractions import (
     ExtractionRequest,
     ExtractionSource,
     sources_proposables,
 )
 from transcription_bench.grilles import Field, GridSummary
+from transcription_bench.historique import (
+    HISTORY_TYPE_EXTRACTION,
+    HISTORY_TYPE_TRANSCRIPTION,
+    HistoryEntry,
+    combined_history,
+)
 from transcription_bench.gestion_modeles import (
     ModeleLocal,
     cle_stockage,
@@ -238,10 +255,14 @@ from transcription_bench.output import (
     serialize_comparison,
     serialize_engine_state,
     serialize_execution_listing,
+    serialize_extraction_comparison,
+    serialize_extraction_group,
     serialize_extraction_request,
     serialize_extraction_result,
+    serialize_extraction_run_detail,
     serialize_extraction_source,
     serialize_hash_group,
+    serialize_history_entry,
     serialize_local_model,
     serialize_model_option,
     serialize_preparation,
@@ -249,6 +270,7 @@ from transcription_bench.output import (
     serialize_run_result,
     serialize_run_request,
     serialize_verification_result,
+    to_json_value,
 )
 from transcription_bench.paths import (
     DOSSIERS_DATA,
@@ -267,6 +289,7 @@ from transcription_bench.web.app import (
     MESSAGE_RESULTAT_NON_INTERPRETABLE,
     MESSAGE_RESULTATS_INACCESSIBLES,
 )
+from transcription_bench.web.extraction_help import EXTRACTION_HELP
 from transcription_bench.web.results_help import RESULTS_HELP
 from transcription_bench.web.vues_resultats import etats_ligne
 
@@ -1924,10 +1947,417 @@ EXTRACT_START = CommandSpec(
     run=_run_extract_start,
 )
 
+#: « extract list » : regroupement par triplet d'empreintes (tâche 4.2, D9).
+MESSAGE_EXTRACTIONS_INACCESSIBLES = (
+    "Le dossier des extractions n'a pas pu être lu : aucune extraction n'est "
+    "listée."
+)
+NO_EXTRACTION_GROUP_MESSAGE = "Aucune extraction à regrouper pour l'instant."
+
+
+def configure_extract_list(parser: argparse.ArgumentParser) -> None:
+    """Argument de « extract list » : le critère de classement des entrées."""
+    parser.add_argument(
+        "--sort",
+        type=sort_choice,
+        default=TRI_RECENT,
+        metavar="CRITERE",
+        help="classement des entrées dans chaque groupe : temps, ram, cpu ou "
+        "recent (défaut : recent)",
+    )
+
+
+def _run_extract_list(
+    arguments: argparse.Namespace,
+    services: DataServices,
+    signal_flag: SignalFlag,
+) -> int:
+    """Liste les extractions groupées par triplet d'empreintes (tâche 4.2, D9).
+
+    Même regroupement que le service (tâche 4.1) : entrées réelles et simulées
+    séparées, chaque entrée portant sa sélection `identifiant:rang`. Le tri
+    inconnu est déjà refusé à l'analyse ; un dossier des extractions illisible
+    est un échec (code 1), sans écriture.
+    """
+    output = output_from_arguments(arguments)
+    try:
+        groups = services.extraction_results.groups(arguments.sort)
+    except LectureResultatsImpossible:
+        output.diagnostic(MESSAGE_EXTRACTIONS_INACCESSIBLES)
+        return CODE_ECHEC
+    output.result(
+        {
+            "sort": arguments.sort,
+            "groups": [serialize_extraction_group(group) for group in groups],
+        },
+        extract_list_text_lines(arguments.sort, groups),
+    )
+    return CODE_SUCCESS
+
+
+def extract_list_text_lines(sort: str, groups: Sequence[ExtractionGroup]) -> list[str]:
+    """Lignes de texte de « extract list » : un groupe par triplet, puis par entrée."""
+    lines = [f"Tri des entrées : {LIBELLES_TRI[sort]}"]
+    if not groups:
+        lines.append(NO_EXTRACTION_GROUP_MESSAGE)
+        return lines
+    for group in groups:
+        names = ", ".join(group.audio_names) or "audio non consigné"
+        models = ", ".join(group.transcription_models) or "non consigné"
+        lines.append(
+            f"Grille « {group.grid_title or group.grid_name} » — audio {names} — "
+            f"modèle de transcription {models} — clé {group.key} :"
+        )
+        if group.consignes_diverge:
+            lines.append(
+                "  Versions de consignes différentes dans ce groupe : "
+                + ", ".join(str(version) for version in group.consignes_versions)
+            )
+        if group.real_entries:
+            lines.append("  entrées réelles :")
+            for entry in group.real_entries:
+                lines.extend(extraction_entry_lines(entry))
+        if group.simulated_entries:
+            lines.append("  mesures simulées :")
+            for entry in group.simulated_entries:
+                lines.extend(extraction_entry_lines(entry))
+    return lines
+
+
+def extraction_entry_lines(entry: ExtractionEntry) -> list[str]:
+    """Une entrée : sélection, modèle, états, puis indicateurs principaux."""
+    header = (
+        f"    {entry.selection} : {entry.model or 'modèle non consigné'} — "
+        f"moteur {entry.engine or 'non consigné'}, {entry.created_short} — "
+        f"{entry.source_state_label}, exécution {entry.state_label}"
+    )
+    if entry.partial:
+        header += " (résultats partiels)"
+    lines = [header, f"      {extraction_measures_text(entry.indicators)}"]
+    if entry.marks:
+        lines.append(f"      Marques : {', '.join(entry.marks)}")
+    if entry.reason is not None:
+        lines.append(f"      Motif : {entry.reason}")
+    if entry.copy_issue is not None:
+        lines.append(f"      Copie : {entry.copy_issue}")
+    return lines
+
+
+def extraction_measures_text(indicators: ExtractionIndicators) -> str:
+    """Indicateurs principaux d'une extraction, sans inventer les mesures absentes."""
+    ram = formater_memoire_premier_niveau(indicators.peak_memory_bytes)
+    if indicators.cpu_occupancy is not None:
+        cpu = formater_pourcentage_premier_niveau(indicators.cpu_occupancy)
+    elif indicators.cpu_time_s is not None:
+        cpu = "non interprétable"
+    else:
+        cpu = "non mesuré"
+    speed = (
+        "non mesuré"
+        if indicators.generation_speed_tps is None
+        else f"{indicators.generation_speed_tps:g} tokens/s"
+    )
+    return (
+        f"extraction {formater_duree_premier_niveau(indicators.duration_extraction_s)}, "
+        "délai avant le premier token "
+        f"{formater_duree_premier_niveau(indicators.time_to_first_token_s)}, "
+        f"vitesse de génération {speed}, RAM moteur {ram}, CPU moteur {cpu}"
+    )
+
+
+def configure_extract_show(parser: argparse.ArgumentParser) -> None:
+    """Argument de « extract show » : l'identifiant de l'extraction."""
+    parser.add_argument(
+        "run_id",
+        metavar="ID",
+        help="identifiant de l'extraction, comme dans « extract list »",
+    )
+
+
+def _run_extract_show(
+    arguments: argparse.Namespace,
+    services: DataServices,
+    signal_flag: SignalFlag,
+) -> int:
+    """Détail d'une extraction, comme la future page de détail (lecture seule).
+
+    Le service refuse un identifiant hostile ou inconnu (`ValeurRefusee`,
+    `ResultatIntrouvable`) et un `run.json` non interprétable : code 2 dans les
+    trois cas, sans trace ni fichier modifié.
+    """
+    output = output_from_arguments(arguments)
+    try:
+        detail = services.extraction_results.detail(arguments.run_id)
+    except (ValeurRefusee, ResultatIntrouvable) as error:
+        output.diagnostic(str(error))
+        return CODE_REFUS
+    except ResultatNonInterpretable:
+        output.diagnostic(MESSAGE_RESULTAT_NON_INTERPRETABLE)
+        return CODE_REFUS
+    except LectureResultatsImpossible:
+        output.diagnostic(MESSAGE_EXTRACTIONS_INACCESSIBLES)
+        return CODE_ECHEC
+    output.result(
+        serialize_extraction_run_detail(detail), extract_show_text_lines(detail)
+    )
+    return CODE_SUCCESS
+
+
+def extract_show_text_lines(detail: ExtractionRunDetail) -> list[str]:
+    """Lignes de texte de « extract show » : en-tête, puis chaque source."""
+    header = f"Extraction {detail.run_id} : {detail.state_label}"
+    if detail.partial:
+        header += " (résultats partiels)"
+    header += f", créée le {detail.created_at or 'date non consignée'}"
+    lines = [header]
+    if detail.simulated:
+        lines.append(SIMULATED_RUN_MESSAGE)
+    lines.append(
+        f"Grille « {detail.grid_title or detail.grid_name} » ({detail.grid_name})"
+    )
+    if detail.error is not None:
+        lines.append(f"Erreur : {detail.error}")
+    if detail.marks:
+        lines.append(f"Marques : {', '.join(detail.marks)}")
+    for source in detail.sources:
+        lines.extend(extraction_source_detail_text_lines(source))
+    lines.append("Grille copiée :")
+    if not detail.grid_copy_ok:
+        lines.append("  Copie de la grille absente ou modifiée.")
+    lines.append(detail.grid_copy if detail.grid_copy is not None else "  indisponible")
+    lines.append("Message système :")
+    lines.append(detail.system_message if detail.system_message is not None else "  indisponible")
+    lines.append("Réglages demandés :")
+    lines.append(json.dumps(to_json_value(dict(detail.settings)), ensure_ascii=False, indent=2))
+    lines.append("Réglages effectifs :")
+    lines.append(json.dumps(to_json_value(detail.effective_settings), ensure_ascii=False, indent=2))
+    lines.append("Métadonnées complètes (run.json) :")
+    lines.append(json.dumps(to_json_value(detail.raw_metadata), ensure_ascii=False, indent=2))
+    return lines
+
+
+def extraction_source_detail_text_lines(source: ExtractionSourceDetail) -> list[str]:
+    """Une source : état, grille remplie ou sortie brute, autres informations, texte."""
+    lines = [f"Source {source.rank} : {source.name} — {source.state_label}"]
+    if source.reason is not None:
+        lines.append(f"  Motif : {source.reason}")
+    if source.entry is not None:
+        lines.append(f"  {extraction_measures_text(source.entry.indicators)}")
+        if source.entry.marks:
+            lines.append(f"  Marques : {', '.join(source.entry.marks)}")
+        if source.entry.copy_issue is not None:
+            lines.append(f"  Copie : {source.entry.copy_issue}")
+    if not source.source_copy_ok:
+        lines.append("  Copie du texte source absente ou modifiée.")
+    if source.rows is not None:
+        lines.append("  Grille remplie :")
+        for row in source.rows:
+            lines.append(f"    {'  ' * row.depth}{row.label} : {row.display}")
+        other_info = () if source.entry is None else source.entry.other_info
+        lines.append("  Autres informations utiles :")
+        if other_info:
+            for label, value in other_info:
+                lines.append(f"    {label} : {value}")
+        else:
+            lines.append(f"    {LABEL_NO_OTHER_INFO}")
+    if source.raw_output is not None:
+        lines.append("  Sortie brute :")
+        lines.extend(f"    {line}" for line in source.raw_output.split("\n"))
+    if source.source_text is not None:
+        lines.append("  Texte source :")
+        lines.extend(source.source_text.split("\n"))
+    lines.append("  Provenance :")
+    lines.append(json.dumps(to_json_value(source.origin), ensure_ascii=False, indent=2))
+    if source.raw_result is not None:
+        lines.append("  Résultat source complet (result.json) :")
+        lines.append(json.dumps(to_json_value(source.raw_result), ensure_ascii=False, indent=2))
+    return lines
+
+
+def extraction_selection_choice(value: str) -> str:
+    """Valide la forme `identifiant:rang` à l'analyse ; la chaîne est transmise telle quelle.
+
+    Contrairement à `selection_choice` (compare des transcriptions), le service
+    `compare` des extractions attend des chaînes brutes, pas des couples décodés.
+    """
+    try:
+        analyser_selection(value)
+    except ValeurRefusee as error:
+        raise argparse.ArgumentTypeError(str(error)) from None
+    return value
+
+
+def configure_extract_compare(parser: argparse.ArgumentParser) -> None:
+    """Arguments de « extract compare » : clé de groupe puis sélections ordonnées."""
+    parser.add_argument(
+        "key",
+        metavar="CLE",
+        help="clé du groupe d'extractions, comme listée par « extract list »",
+    )
+    parser.add_argument(
+        "selections",
+        metavar="SEL",
+        nargs="+",
+        type=extraction_selection_choice,
+        help="sélection identifiant:rang d'une extraction du groupe ; de "
+        f"{MIN_SELECTIONS} à {MAX_SELECTIONS} sélections, l'ordre reçu est conservé, "
+        "jamais factices et réelles mêlées",
+    )
+
+
+def _run_extract_compare(
+    arguments: argparse.Namespace,
+    services: DataServices,
+    signal_flag: SignalFlag,
+) -> int:
+    """Comparaison de 2 à 6 extractions d'un même groupe, dans l'ordre reçu (D9).
+
+    Le service refuse, avant toute lecture, une clé ou une sélection mal
+    formée, hors bornes, hors du groupe, ou un mélange d'extractions factices
+    et réelles : code 2, sans rien écrire.
+    """
+    output = output_from_arguments(arguments)
+    try:
+        comparison = services.extraction_results.compare(
+            arguments.key, arguments.selections
+        )
+    except (ValeurRefusee, ResultatIntrouvable) as error:
+        output.diagnostic(str(error))
+        return CODE_REFUS
+    except ResultatNonInterpretable:
+        output.diagnostic(MESSAGE_RESULTAT_NON_INTERPRETABLE)
+        return CODE_REFUS
+    except LectureResultatsImpossible:
+        output.diagnostic(MESSAGE_EXTRACTIONS_INACCESSIBLES)
+        return CODE_ECHEC
+    output.result(
+        serialize_extraction_comparison(comparison),
+        extract_compare_text_lines(comparison),
+    )
+    return CODE_SUCCESS
+
+
+def extract_compare_text_lines(comparison: ExtractionComparison) -> list[str]:
+    """Lignes de texte de « extract compare » : en-tête, cases, autres informations."""
+    lines = [
+        f"Comparaison de {len(comparison.entries)} extractions — clé {comparison.key}"
+    ]
+    if comparison.simulated:
+        lines.append(SIMULATED_RUN_MESSAGE)
+    if comparison.consignes_diverge:
+        lines.append(
+            "Versions de consignes différentes dans ce groupe : "
+            + ", ".join(str(version) for version in comparison.consignes_versions)
+        )
+    lines.append("Ordre reçu :")
+    for index, entry in enumerate(comparison.entries, start=1):
+        lines.append(f"  Modèle {index} :")
+        lines.extend(extraction_entry_lines(entry))
+        if entry.value is None:
+            lines.append(f"      Sortie brute : extract show {entry.run_id}")
+    lines.append("Cases de la grille :")
+    for case in comparison.cases:
+        suffixe = " (différent)" if case.differs else ""
+        valeurs = " | ".join(
+            valeur if valeur is not None else "valeur indisponible : voir sortie brute"
+            for valeur in case.values
+        )
+        lines.append(f"  {case.label}{suffixe} : {valeurs}")
+    lines.append("Autres informations utiles :")
+    for index, info in enumerate(comparison.other_info, start=1):
+        lines.append(f"  {index}. {info if info is not None else 'valeur indisponible : voir sortie brute'}")
+    lines.append("Texte source (commun au groupe, affiché une seule fois) :")
+    if comparison.source_text is not None:
+        lines.extend(comparison.source_text.split("\n"))
+    else:
+        lines.append("  copie du texte source indisponible")
+    return lines
+
+
+def _run_extract_explain(
+    arguments: argparse.Namespace,
+    services: DataServices,
+    signal_flag: SignalFlag,
+) -> int:
+    """Imprime l'aide des indicateurs d'extraction, source unique (design D9).
+
+    Même principe que « results explain » : aucune lecture d'extraction,
+    aucune écriture.
+    """
+    output = output_from_arguments(arguments)
+    output.result(
+        {
+            "title": EXTRACTION_HELP["title"],
+            "intro": EXTRACTION_HELP["intro"],
+            "sections": EXTRACTION_HELP["sections"],
+        },
+        extract_explain_text_lines(),
+    )
+    return CODE_SUCCESS
+
+
+def extract_explain_text_lines() -> list[str]:
+    """Lignes de texte de « extract explain » : la source unique, en clair."""
+    lines = [EXTRACTION_HELP["title"], inline_text(EXTRACTION_HELP["intro"])]
+    for section in EXTRACTION_HELP["sections"]:
+        lines.append("")
+        lines.append(section["title"])
+        for block in section["blocks"]:
+            lines.extend(block_text_lines(block))
+    return lines
+
+
+EXTRACT_LIST = CommandSpec(
+    name="list",
+    help_text=(
+        "liste les extractions groupées par triplet source/grille/schéma, "
+        "réelles et simulées séparées, avec la sélection de chaque entrée"
+    ),
+    configure=configure_extract_list,
+    run=_run_extract_list,
+)
+
+EXTRACT_SHOW = CommandSpec(
+    name="show",
+    help_text=(
+        "détail d'une extraction : grille remplie case par case, sortie brute "
+        "si non conforme, texte source et métadonnées complètes"
+    ),
+    configure=configure_extract_show,
+    run=_run_extract_show,
+)
+
+EXTRACT_COMPARE = CommandSpec(
+    name="compare",
+    help_text=(
+        f"compare {MIN_SELECTIONS} à {MAX_SELECTIONS} extractions d'un même "
+        "groupe, case par case, dans l'ordre reçu"
+    ),
+    configure=configure_extract_compare,
+    run=_run_extract_compare,
+)
+
+EXTRACT_EXPLAIN = CommandSpec(
+    name="explain",
+    help_text=(
+        "aide des indicateurs d'extraction, même source que la future page d'aide"
+    ),
+    configure=configure_no_arguments,
+    run=_run_extract_explain,
+)
+
 EXTRACT = CommandGroup(
     name="extract",
     help_text="extraction de grilles à partir des transcriptions enregistrées",
-    commands=(EXTRACT_OPTIONS, EXTRACT_CHECK, EXTRACT_START),
+    commands=(
+        EXTRACT_OPTIONS,
+        EXTRACT_CHECK,
+        EXTRACT_START,
+        EXTRACT_LIST,
+        EXTRACT_SHOW,
+        EXTRACT_COMPARE,
+        EXTRACT_EXPLAIN,
+    ),
 )
 
 #: « results list » : regroupement par empreinte et sélection par essai.
@@ -2047,21 +2477,23 @@ def _run_results_history(
     services: DataServices,
     signal_flag: SignalFlag,
 ) -> int:
-    """Historique complet des exécutions, comme la page Exécutions.
+    """Historique complet des exécutions, transcription et extraction (tâche 4.2).
 
-    Toutes les exécutions enregistrées, des plus récentes aux plus anciennes,
-    y compris non interprétables ; aucun fichier de résultat n'est modifié.
+    Toutes les exécutions enregistrées des deux types, des plus récentes aux
+    plus anciennes par date réelle, y compris non interprétables ; aucun
+    fichier de résultat n'est modifié (`combined_history`, source partagée avec
+    la future page Historique).
     """
     output = output_from_arguments(arguments)
     try:
-        executions = services.results.lister()
+        executions = combined_history(services.results, services.extraction_results)
     except LectureResultatsImpossible:
         output.diagnostic(MESSAGE_RESULTATS_INACCESSIBLES)
         return CODE_ECHEC
     output.result(
         {
             "executions": [
-                serialize_execution_listing(execution) for execution in executions
+                serialize_history_entry(execution) for execution in executions
             ]
         },
         history_text_lines(executions),
@@ -2069,21 +2501,27 @@ def _run_results_history(
     return CODE_SUCCESS
 
 
-def history_text_lines(
-    executions: Sequence[ExecutionListee],
-) -> list[str]:
-    """Lignes de texte de « results history » : une exécution par bloc."""
+#: Libellés du type d'une ligne d'historique, pour le texte de « results history ».
+HISTORY_TYPE_LABELS: dict[str, str] = {
+    HISTORY_TYPE_TRANSCRIPTION: "transcription",
+    HISTORY_TYPE_EXTRACTION: "extraction",
+}
+
+
+def history_text_lines(executions: Sequence[HistoryEntry]) -> list[str]:
+    """Lignes de texte de « results history » : une exécution par bloc, avec son type."""
     if not executions:
         return [NO_EXECUTION_MESSAGE]
     lines = ["De la plus récente à la plus ancienne :"]
     for execution in executions:
+        label = HISTORY_TYPE_LABELS[execution.type]
         if not execution.exploitable:
             lines.append(
-                f"{execution.identifiant} : {NON_INTERPRETABLE_PREFIX} — "
+                f"{label} {execution.identifiant} : {NON_INTERPRETABLE_PREFIX} — "
                 f"{execution.motif}"
             )
             continue
-        line = f"{execution.identifiant} : {execution.libelle_etat}"
+        line = f"{label} {execution.identifiant} : {execution.libelle_etat}"
         if execution.partiel:
             line += " (résultats partiels)"
         line += f", créée le {execution.cree_le or 'date non consignée'}"
@@ -2092,10 +2530,11 @@ def history_text_lines(
             f"    modèle {execution.modele or 'non consigné'}, "
             f"moteur {execution.moteur or 'non consigné'}"
         )
-        if execution.audios_traites is not None:
+        if execution.items_processed is not None:
+            unite = "audios" if execution.type == HISTORY_TYPE_TRANSCRIPTION else "sources"
             details += (
-                f", {execution.audios_traites} audios traités "
-                f"sur {execution.audios_total}"
+                f", {execution.items_processed} {unite} traité(e)s "
+                f"sur {execution.items_total}"
             )
         if execution.duree_operation_s is not None:
             details += (

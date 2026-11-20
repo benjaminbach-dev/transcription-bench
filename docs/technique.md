@@ -282,9 +282,10 @@ sans lire ni écrire dans `data/`.
 | `grids list`, `grids show NOM` | grilles d'extraction : liste et interprétation avant lancement |
 | `engines list`, `engines install ID`, `engines log ID [--limit N]` | moteurs : états, installation, journal d’installation |
 | `extract options`, `extract check`, `extract start --model REF --grid NOM --source ID:ORDRE... [--threads N] [--setting NOM=VALEUR]...` | extractions : préparation, vérification à blanc, lancement |
+| `extract list [--sort temps\|ram\|cpu\|recent]`, `extract show ID`, `extract compare CLE SEL SEL...`, `extract explain` | extractions en lecture seule : groupes source/grille/schéma, détail, comparaison de 2 à 6 sélections dans l'ordre reçu (sans mélanger factices et réelles), aide |
 | `models list`, `models check/download REPO --engine E [--revision R] [--file F]`, `models delete ENGINE KEY` | modèles : inventaire, vérification, téléchargement, suppression |
 | `run options`, `run check/start --model REF --audio NAME... [--threads N] [--setting NOM=VALEUR]...` | exécutions : préparation, vérification à blanc, lancement |
-| `results list [--sort temps\|ram\|cpu\|recent]`, `results show ID`, `results history`, `results explain` | résultats en lecture seule |
+| `results list [--sort temps\|ram\|cpu\|recent]`, `results show ID`, `results history`, `results explain` | transcriptions en lecture seule ; historique commun aux transcriptions et extractions, distinguées par leur type |
 | `compare AUDIO_HASH SEL SEL...` | comparaison de 2 à 64 essais d'un même audio, dans l'ordre reçu |
 
 Aucune commande ne demande de confirmation interactive : l'action nommée sur la

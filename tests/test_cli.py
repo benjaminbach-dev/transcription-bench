@@ -24,6 +24,7 @@ from waitress import serve as serve_waitress
 
 from transcription_bench import cli, composition, paths, web
 from transcription_bench.consultation_resultats import ConsultationResultats
+from transcription_bench.extraction_consultation import ExtractionConsultation
 from transcription_bench.instance import InstanceDejaActive, VerrouInstance
 from transcription_bench.operations import CreneauOperations
 from transcription_bench.recuperation import EtatAnterieurNonTraitable
@@ -615,8 +616,13 @@ class DemarrageOrdonneTest(unittest.TestCase):
 
         services = creer.call_args.args[1]
         # Le serveur ne relie que la consultation : ni créneau, ni supervision (D4).
-        self.assertEqual([champ.name for champ in dataclasses.fields(services)], ["resultats"])
+        self.assertEqual(
+            [champ.name for champ in dataclasses.fields(services)],
+            ["resultats", "extraction_results"],
+        )
         self.assertIsInstance(services.resultats, ConsultationResultats)
+        self.assertIsInstance(services.extraction_results, ExtractionConsultation)
+        self.assertEqual(services.extraction_results.extractions_dir, self.base / "extractions")
         VerrouInstance(self.base).acquerir().liberer()
 
     def test_ctrl_c_pendant_serve_execute_le_nettoyage_et_libere_le_verrou(self) -> None:

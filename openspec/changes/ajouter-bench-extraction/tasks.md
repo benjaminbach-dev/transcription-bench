@@ -25,8 +25,8 @@
 
 ## 4. Consultation
 
-- [ ] 4.1 Service de consultation des extractions : regroupement par source, grille et schéma (D9), tris, indicateurs et ratios, factices séparés, version de consignes différente signalée, aucune écriture. Tests.
-- [ ] 4.2 Commandes `extract list`, `extract show`, `extract compare` (2 à 6 sélections, factices et réelles non mêlées), `extract explain` ; `results history` étendu aux extractions avec leur type. Instantanés de clés.
+- [x] 4.1 Service de consultation des extractions : regroupement par source, grille et schéma (D9), tris, indicateurs et ratios, factices séparés, version de consignes différente signalée, aucune écriture. Tests.
+- [x] 4.2 Commandes `extract list`, `extract show`, `extract compare` (2 à 6 sélections, factices et réelles non mêlées), `extract explain` ; `results history` étendu aux extractions avec leur type. Instantanés de clés.
 - [ ] 4.3 Pages web `/extractions`, `/extractions/<id>`, `/extractions/aide`, `/extractions/comparaison`, `/extractions/comparaison/<cle>` (GET, sans script, contrôle `Host`, échappement) ; navigation à quatre rubriques ; Historique à deux types ; table de parité étendue. Tests de gabarits, de structure et d'échappement.
 - [ ] 4.4 Contrôle visuel par le propriétaire du détail (grille et source côte à côte) et de la comparaison à six modèles, clair et sombre, 1280 et 360 px.
 

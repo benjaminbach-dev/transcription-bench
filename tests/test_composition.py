@@ -18,6 +18,7 @@ from transcription_bench.composition import (
 from transcription_bench.consultation_resultats import ConsultationResultats
 from transcription_bench.execution_moteur import ExecutionMoteur
 from transcription_bench.executions import ConfigurationExecutions
+from transcription_bench.extraction_consultation import ExtractionConsultation
 from transcription_bench.gestion_modeles import GestionModeles
 from transcription_bench.instance import InstanceDejaActive, VerrouInstance
 from transcription_bench.moteurs import InstallationMoteurs
@@ -47,6 +48,8 @@ class ServicesAssemblyTest(unittest.TestCase):
         self.assertIsInstance(services.preparation, ConfigurationExecutions)
         self.assertIsInstance(services.execution, ExecutionMoteur)
         self.assertIsInstance(services.results, ConsultationResultats)
+        self.assertIsInstance(services.extraction_results, ExtractionConsultation)
+        self.assertEqual(services.extraction_results.extractions_dir, self.base / "extractions")
         self.assertFalse(self.base.exists(), "l'assemblage ne doit faire aucune E/S")
 
     def test_reuses_injected_services_without_rebuilding_them(self) -> None:
@@ -55,6 +58,7 @@ class ServicesAssemblyTest(unittest.TestCase):
         engines = InstallationMoteurs(self.base, registry, operations)
         models = GestionModeles(self.base, registry, operations, engines)
         results = ConsultationResultats(self.base)
+        extraction_results = ExtractionConsultation(self.base)
 
         services = assemble_services(
             self.base,
@@ -63,12 +67,14 @@ class ServicesAssemblyTest(unittest.TestCase):
             engines=engines,
             models=models,
             results=results,
+            extraction_results=extraction_results,
         )
 
         self.assertIs(services.registry, registry)
         self.assertIs(services.engines, engines)
         self.assertIs(services.models, models)
         self.assertIs(services.results, results)
+        self.assertIs(services.extraction_results, extraction_results)
 
 
 class DataSessionTest(unittest.TestCase):
@@ -154,6 +160,8 @@ class ServeSessionTest(unittest.TestCase):
             session = open_serve_session(self.base, recover=_no_recovery)
 
         self.assertIsInstance(session.results, ConsultationResultats)
+        self.assertIsInstance(session.extraction_results, ExtractionConsultation)
+        self.assertEqual(session.extraction_results.extractions_dir, self.base / "extractions")
         with self.assertRaises(InstanceDejaActive):
             VerrouInstance(self.base).acquerir()
         self.assertTrue(session.close())

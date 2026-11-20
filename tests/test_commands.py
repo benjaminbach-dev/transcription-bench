@@ -23,6 +23,7 @@ import json
 import os
 import shutil
 import signal
+import socket
 import tempfile
 import threading
 import time
@@ -37,6 +38,14 @@ from tests.test_comparaison_resultats import (
     EMPREINTE_A,
     EMPREINTE_B,
     resultat_empreinte,
+)
+from tests.test_extraction_consultation import (
+    ExtractionConsultationBench,
+    GRILLE_A as EXTRACTION_GRID_A,
+    GRILLE_B as EXTRACTION_GRID_B,
+    TEXTE_A as EXTRACTION_TEXT,
+    VALEUR_A as EXTRACTION_VALUE,
+    Source as ExtractionFixtureSource,
 )
 from tests.test_consultation_observations_systeme import cpu_systeme, observation
 from tests.test_consultation_resultats import (
@@ -93,7 +102,12 @@ from transcription_bench.gestion_modeles import (
 )
 from transcription_bench.instance import VerrouInstance
 from transcription_bench.paths import RACINE_PROJET
-from transcription_bench.consultation_resultats import CLE_OBSERVATION_AUDIO
+from transcription_bench.consultation_resultats import (
+    CLE_OBSERVATION_AUDIO,
+    LectureResultatsImpossible,
+    ResultatNonInterpretable,
+)
+from transcription_bench.extraction_consultation import ExtractionConsultation
 from transcription_bench.command_session import (
     CODE_ECHEC,
     CODE_INTERRUPTED,
@@ -121,6 +135,13 @@ from transcription_bench.resultats import (
     ETAT_TERMINEE,
     STATUT_NON_TRAITE,
 )
+from transcription_bench.resultats_extraction import (
+    RUN_TYPE_EXTRACTION,
+    SCHEMA_EXTRACTION,
+    SOURCE_COMPLIANT,
+    SOURCE_NOT_PROCESSED,
+)
+from transcription_bench.stockage import ecrire_json_atomique
 from transcription_bench.verification_modeles import (
     MESSAGES_ERREUR,
     RAISON_ACCES_REFUSE,
@@ -325,6 +346,8 @@ JSON_SNAPSHOT_KEYS = {
     ],
     ("extract", "options"): ["schema", "models", "grids", "sources", "default_threads"],
     ("extract", "check"): ["schema", "request"],
+    ("extract", "list"): ["schema", "sort", "groups"],
+    ("extract", "explain"): ["schema", "title", "intro", "sections"],
     ("extract", "start"): [
         "schema",
         "operation",
@@ -2412,23 +2435,131 @@ class ResultsListTest(ResultsCommandsSocle):
         self.assert_unlocked()
 
 
+def extraction_run_json(
+    identifiant: str,
+    *,
+    etat: str = ETAT_TERMINEE,
+    schema: Any = SCHEMA_EXTRACTION,
+    cree_le: str | None = "2024-01-02T12:00:00+00:00",
+    sources: tuple[tuple[str, str], ...] = (("a.wav", SOURCE_COMPLIANT),),
+    modele: str = "modele-extraction-test",
+    duree_operation_s: float | None = 4.5,
+    factice: bool = True,
+    **remplacements: Any,
+) -> dict[str, Any]:
+    """`run.json` d'extraction synthétique, conforme au format de `resultats_extraction`."""
+    plans = [
+        {
+            "rang": position + 1,
+            "dossier": f"source-{position + 1:02d}-{nom}",
+            "nom": nom,
+            "source": {},
+            "texte": {},
+            "etat": etat_source,
+        }
+        for position, (nom, etat_source) in enumerate(sources)
+    ]
+    contenu: dict[str, Any] = {
+        "schema": schema,
+        "type": RUN_TYPE_EXTRACTION,
+        "identifiant": identifiant,
+        "etat": etat,
+        "cree_le": cree_le,
+        "fin": cree_le,
+        "erreur": None,
+        "factice": factice,
+        "synthetique": factice,
+        "mesures_simulees": factice,
+        "grille": {
+            "nom": "grille-test", "sha256": "a" * 64,
+            "titre": "Grille de test", "fichier": "grille.md",
+        },
+        "schema_sortie": {"fichier": "schema.json"},
+        "consignes": {"version_consignes": 1, "version_format": 1, "fichier": "consignes.json"},
+        "modele": {
+            "identifiant": modele, "id_resolu": modele, "commit": "0" * 40,
+            "cle": "0" * 64, "famille": "factice-extraction",
+            "fichier_gguf": None, "architecture": None, "sha256_gabarit_embarque": None,
+        },
+        "moteur": {"identifiant": "factice", "nom": "Moteur factice", "factice": factice},
+        "machine": {
+            "os": "Linux", "version_os": "6.1", "architecture": "x86_64", "processeur": None,
+            "coeurs_physiques": 4, "coeurs_logiques": 8, "ram_totale_octets": 8 * 1024**3,
+        },
+        "programme": {"nom": "transcription-bench", "version": "0.1.0"},
+        "demande": {
+            "moteur": "factice", "famille": "factice-extraction", "threads_demandes": 2,
+            "reglages": {}, "sources": [f"{nom}:1" for nom, _ in sources],
+        },
+        "effectifs": {},
+        "processus_moteur": {},
+        "mesures": {"duree_operation_s": duree_operation_s},
+        "progression": {
+            "sources_traitees": sum(
+                1 for _, etat_source in sources if etat_source != SOURCE_NOT_PROCESSED
+            ),
+            "sources_total": len(sources),
+        },
+        "sources": plans,
+    }
+    contenu.update(remplacements)
+    return contenu
+
+
+def ecrire_extraction(donnees: Path | str, run: dict[str, Any]) -> Path:
+    """Écrit `run.json` sous `donnees/extractions/<identifiant>`, sans source publiée."""
+    dossier = Path(donnees) / paths.NOM_DOSSIER_EXTRACTIONS / run["identifiant"]
+    ecrire_json_atomique(dossier / "run.json", run)
+    return dossier
+
+
+#: Clefs d'une ligne d'historique combiné (tâche 4.2), dans l'ordre du sérialiseur.
+HISTORY_ENTRY_KEYS = [
+    "type",
+    "identifiant",
+    "etat",
+    "libelle_etat",
+    "cree_le",
+    "modele",
+    "moteur",
+    "audios_traites",
+    "audios_total",
+    "items_processed",
+    "items_total",
+    "duree_operation_s",
+    "partiel",
+    "marques",
+    "exploitable",
+    "motif",
+    "simule",
+]
+
+
 class ResultsHistoryTest(ResultsCommandsSocle):
-    """« results history » : historique complet, états et non interprétables."""
+    """« results history » : historique à deux types, états et non interprétables (tâche 4.2)."""
 
     BAD_SCHEMA_ID = "20240104-050607-99aabbcc"
+    BAD_SCHEMA_EXTRACTION_ID = "20240105-060708-aabbccee"
+    EXTRACTION_ID = "20240103-040506-ddeeffaa"
 
     def write_history(self) -> None:
-        """Une exécution terminée, une abandonnée et une non interprétable."""
-        execution_complete(self.base)
+        """Transcription terminée et abandonnée, extraction terminée, deux non interprétables."""
+        execution_complete(self.base)  # IDENTIFIANT, cree_le 2024-01-02T03:04:05+00:00
         ecrire_execution(
             self.base,
             run_json(
                 IDENTIFIANT_ANCIEN,
                 etat=ETAT_ABANDONNEE,
                 audios=(("a.wav", STATUT_NON_TRAITE),),
+                cree_le="2024-01-01T01:01:01+00:00",
             ),
         )
         ecrire_execution(self.base, run_json(self.BAD_SCHEMA_ID, schema=999))
+        # Extraction la plus récente par date réelle : entre les deux transcriptions.
+        ecrire_extraction(self.base, extraction_run_json(self.EXTRACTION_ID))
+        ecrire_extraction(
+            self.base, extraction_run_json(self.BAD_SCHEMA_EXTRACTION_ID, schema=999)
+        )
 
     def test_json_snapshot_states_and_marks(self) -> None:
         self.write_history()
@@ -2442,48 +2573,133 @@ class ResultsHistoryTest(ResultsCommandsSocle):
         data = json.loads(lines[0])
         self.assertEqual(list(data.keys()), JSON_SNAPSHOT_KEYS[("results", "history")])
         self.assertEqual(data["schema"], 1)
+        # Date réelle décroissante, toutes types confondus ; non interprétables
+        # (date inconnue) en fin, départagées entre elles par identifiant décroissant.
         self.assertEqual(
             [execution["identifiant"] for execution in data["executions"]],
-            [self.BAD_SCHEMA_ID, IDENTIFIANT, IDENTIFIANT_ANCIEN],
+            [
+                self.EXTRACTION_ID,
+                IDENTIFIANT,
+                IDENTIFIANT_ANCIEN,
+                self.BAD_SCHEMA_EXTRACTION_ID,
+                self.BAD_SCHEMA_ID,
+            ],
         )
-        non_interpretable, completed, abandoned = data["executions"]
-        self.assertEqual(list(completed.keys()), EXECUTION_LISTING_KEYS)
-        # Non interprétable : aucun fait inventé, motif du service conservé.
+        self.assertEqual(
+            [execution["type"] for execution in data["executions"]],
+            ["extraction", "transcription", "transcription", "extraction", "transcription"],
+        )
+        extraction, completed, abandoned, bad_extraction, non_interpretable = data["executions"]
+        self.assertEqual(list(completed.keys()), HISTORY_ENTRY_KEYS)
+        self.assertEqual(list(extraction.keys()), HISTORY_ENTRY_KEYS)
+        # Non interprétable (transcription) : aucun fait inventé, motif conservé.
         self.assertFalse(non_interpretable["exploitable"])
         self.assertEqual(non_interpretable["libelle_etat"], "non interprétable")
         self.assertIsNone(non_interpretable["etat"])
         self.assertIsNone(non_interpretable["marques"])
         self.assertIsNone(non_interpretable["simule"])
         self.assertIn("schéma", non_interpretable["motif"])
-        # Terminée, marquée factice et simulée : aucune omission.
+        # Non interprétable (extraction) : même traitement, type distinct.
+        self.assertFalse(bad_extraction["exploitable"])
+        self.assertEqual(bad_extraction["type"], "extraction")
+        self.assertIsNone(bad_extraction["items_processed"])
+        self.assertIsNone(bad_extraction["items_total"])
+        # Transcription terminée, marquée factice et simulée : aucune omission.
         self.assertTrue(completed["exploitable"])
+        self.assertEqual(completed["type"], "transcription")
         self.assertEqual(completed["etat"], ETAT_TERMINEE)
         self.assertEqual(completed["libelle_etat"], "terminée")
         self.assertFalse(completed["partiel"])
         self.assertTrue(completed["simule"])
         self.assertIn("MESURES SIMULÉES", completed["marques"])
+        self.assertEqual(completed["items_processed"], 1)
+        self.assertEqual(completed["items_total"], 1)
         self.assertEqual(completed["audios_traites"], 1)
         self.assertEqual(completed["audios_total"], 1)
-        # Abandonnée : résultat partiel, audio non traité.
+        self.assertIsNone(extraction["audios_traites"])
+        self.assertIsNone(extraction["audios_total"])
+        self.assertIsNone(non_interpretable["audios_traites"])
+        self.assertIsNone(non_interpretable["audios_total"])
+        # Transcription abandonnée : résultat partiel, audio non traité.
         self.assertEqual(abandoned["etat"], ETAT_ABANDONNEE)
         self.assertEqual(abandoned["libelle_etat"], "abandonnée")
         self.assertTrue(abandoned["partiel"])
-        self.assertEqual(abandoned["audios_traites"], 0)
-        self.assertEqual(abandoned["audios_total"], 1)
+        self.assertEqual(abandoned["items_processed"], 0)
+        self.assertEqual(abandoned["items_total"], 1)
+        # Extraction terminée, conforme et simulée : modèle, moteur et durée consignés.
+        self.assertEqual(extraction["etat"], ETAT_TERMINEE)
+        self.assertEqual(extraction["modele"], "modele-extraction-test")
+        self.assertEqual(extraction["moteur"], "Moteur factice")
+        self.assertEqual(extraction["items_processed"], 1)
+        self.assertEqual(extraction["items_total"], 1)
+        self.assertEqual(extraction["duree_operation_s"], 4.5)
+        self.assertTrue(extraction["simule"])
         self.assert_unlocked()
 
-    def test_text_output_reports_states_in_recency_order(self) -> None:
+    def test_text_output_reports_both_types_in_recency_order(self) -> None:
         self.write_history()
 
         code, stdout, stderr = self.run_command(["results", "history"])
 
         self.assertEqual((code, stderr), (0, ""))
         self.assertIn("De la plus récente à la plus ancienne :", stdout)
-        self.assertIn(f"{IDENTIFIANT} : terminée", stdout)
-        self.assertIn(f"{IDENTIFIANT_ANCIEN} : abandonnée (résultats partiels)", stdout)
-        self.assertIn(f"{self.BAD_SCHEMA_ID} : non interprétable", stdout)
+        self.assertIn(f"extraction {self.EXTRACTION_ID} : terminée", stdout)
+        self.assertIn(f"transcription {IDENTIFIANT} : terminée", stdout)
+        self.assertIn(
+            f"transcription {IDENTIFIANT_ANCIEN} : abandonnée (résultats partiels)", stdout
+        )
+        self.assertIn(f"transcription {self.BAD_SCHEMA_ID} : non interprétable", stdout)
+        self.assertIn(
+            f"extraction {self.BAD_SCHEMA_EXTRACTION_ID} : non interprétable", stdout
+        )
         self.assertIn("schéma", stdout)
         self.assertIn("marques : FACTICE", stdout)
+        self.assertIn("1 sources traité(e)s sur 1", stdout)
+        # Date réelle décroissante, toutes types confondus : l'extraction (créée
+        # entre les deux transcriptions) s'affiche avant elles deux.
+        self.assertLess(
+            stdout.index(self.EXTRACTION_ID), stdout.index(f"{IDENTIFIANT} :")
+        )
+        self.assertLess(
+            stdout.index(f"{IDENTIFIANT} :"), stdout.index(IDENTIFIANT_ANCIEN)
+        )
+
+    def test_history_keeps_failures_unknown_fingerprints_and_identical_ids_of_both_types(self) -> None:
+        states = ("failed", "interrupted", "abandoned")
+        ids = [f"2024010{index + 1}-000000-deadbeef" for index in range(3)]
+        for index, (identifier, state) in enumerate(zip(ids, states)):
+            date = f"2024-03-0{3 - index}T00:00:00+00:00"
+            ecrire_execution(self.base, run_json(
+                identifier, etat=state, cree_le=date, audios=(("sans-empreinte.wav", STATUT_NON_TRAITE),)
+            ))
+            ecrire_extraction(self.base, extraction_run_json(
+                identifier, etat=state, cree_le=date, sources=(("source.wav", SOURCE_NOT_PROCESSED),)
+            ))
+        invalid_id = "20240109-000000-deadbeef"
+        ecrire_execution(self.base, run_json(invalid_id, schema=999))
+        ecrire_extraction(self.base, extraction_run_json(invalid_id, schema=999))
+        code, stdout, stderr = self.run_command(["results", "history", "--json"])
+        self.assertEqual((code, stderr), (CODE_SUCCESS, ""))
+        entries = json.loads(stdout)["executions"]
+        self.assertEqual(len(entries), 8)
+        # Dates, not IDs, define recency; duplicate IDs remain distinct by type.
+        self.assertEqual([entry["identifiant"] for entry in entries],
+                         [identifier for identifier in [*ids, invalid_id] for _ in range(2)])
+        self.assertEqual({(entry["identifiant"], entry["type"]) for entry in entries},
+                         {(identifier, kind) for identifier in [*ids, invalid_id]
+                          for kind in ("transcription", "extraction")})
+        for entry in entries[:-2]:
+            self.assertEqual(entry["etat"], states[ids.index(entry["identifiant"])])
+            self.assertTrue(entry["partiel"])
+            self.assertEqual(entry["items_processed"], 0)
+            self.assertEqual(entry["items_total"], 1)
+        for entry in entries[-2:]:
+            self.assertFalse(entry["exploitable"])
+            self.assertIsNone(entry["items_processed"])
+        code, stdout, stderr = self.run_command(["results", "history"])
+        self.assertEqual((code, stderr), (CODE_SUCCESS, ""))
+        for state_label in ("en échec", "interrompue", "abandonnée", "non interprétable"):
+            self.assertIn(state_label, stdout)
 
     def test_empty_history(self) -> None:
         code, stdout, stderr = self.run_command(["results", "history"])
@@ -3681,6 +3897,313 @@ class ExtractCommandTest(CommandTestCase):
             ).read_text(encoding="utf-8")
         )
         self.assertEqual(run["etat"], "interrupted")
+        self.assert_unlocked()
+
+
+EXTRACTION_INDICATOR_KEYS = [
+    "duration_extraction_s", "time_to_first_token_s", "generation_duration_s",
+    "generation_speed_tps", "read_speed_estimate_tps", "tokens_in", "tokens_out",
+    "cpu_time_s", "peak_memory_bytes", "ram_total_bytes", "ram_ratio", "cpu_occupancy",
+]
+EXTRACTION_ENTRY_KEYS = [
+    "selection", "run_id", "rank", "audio_name", "state", "state_label", "partial",
+    "source_state", "source_state_label", "reason", "compliant", "created_at",
+    "created_short", "model", "engine", "family", "transcription_run_id",
+    "transcription_order", "transcription_model", "audio_sha256", "text_sha256",
+    "marks", "simulated", "consignes_version", "format_version", "indicators",
+    "value", "other_info", "groupable", "copy_issue",
+]
+EXTRACTION_GROUP_KEYS = [
+    "key", "text_sha256", "grid_sha256", "schema_sha256", "grid_name", "grid_title",
+    "audio_names", "transcription_models", "entries", "consignes_versions", "consignes_diverge",
+]
+EXTRACTION_DETAIL_KEYS = [
+    "schema", "run_id", "state", "state_label", "created_at", "finished_at", "error",
+    "partial", "grid_name", "grid_title", "grid_copy", "grid_copy_ok", "system_message",
+    "consignes_version", "format_version", "model", "engine", "engine_versions",
+    "program", "machine", "measures", "settings", "threads_requested", "threads_applied",
+    "weight_loading_mode", "effective_settings", "marks", "simulated", "sources", "raw_metadata",
+]
+EXTRACTION_SOURCE_DETAIL_KEYS = [
+    "rank", "name", "state", "state_label", "reason", "origin", "entry", "rows",
+    "source_text", "source_copy_ok", "raw_output", "origin_present", "raw_result",
+]
+EXTRACTION_COMPARISON_KEYS = [
+    "schema", "key", "entries", "consignes_versions", "consignes_diverge", "simulated",
+    "cases", "other_info", "source_text",
+]
+JSON_SNAPSHOT_KEYS.update({
+    ("extract", "show"): EXTRACTION_DETAIL_KEYS,
+    ("extract", "compare"): EXTRACTION_COMPARISON_KEYS,
+})
+
+
+class ExtractionReadCommandsTest(ExtractionConsultationBench, CommandTestCase):
+    """Consultation CLI de fichiers synthétiques, sans moteur ni inférence (4.2)."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.base = self.donnees
+
+    def json_command(self, argv: list[str]) -> dict[str, Any]:
+        code, stdout, stderr = self.run_command([*argv, "--json"])
+        self.assertEqual((code, stderr), (CODE_SUCCESS, ""))
+        self.assertEqual(len(stdout.splitlines()), 1)
+        data = json.loads(stdout)
+        self.assertEqual(data["schema"], 1)
+        return data
+
+    def test_list_text_and_json_include_group_names_states_marks_and_measures(self) -> None:
+        first = self.write_run([ExtractionFixtureSource(source_factice=True)], version_consignes=1)
+        second = self.write_run([ExtractionFixtureSource(conforme=False)], version_consignes=2)
+        fake = self.write_run([ExtractionFixtureSource()], factice=True)
+        code, stdout, stderr = self.run_command(["extract", "list"])
+        self.assertEqual((code, stderr), (CODE_SUCCESS, ""))
+        for text in (
+            "Grille « Grille de test »", "consultation-a.wav", "modèle de transcription transcription-test",
+            "Versions de consignes différentes", "1, 2", "entrées réelles", "mesures simulées",
+            f"{first}:1", f"{second}:1", f"{fake}:1", "exécution terminée", "non conforme",
+            "clé inconnue de la grille", "FACTICE", "MESURES SIMULÉES", "SYNTHÉTIQUE",
+            "extraction 3 s", "délai avant le premier token 1 s", "vitesse de génération 20 tokens/s",
+            "RAM moteur", "CPU moteur 25 %",
+        ):
+            self.assertIn(text, stdout)
+        data = self.json_command(["extract", "list"])
+        self.assertEqual(list(data), JSON_SNAPSHOT_KEYS[("extract", "list")])
+        self.assertEqual(data["sort"], "recent")
+        group, = data["groups"]
+        self.assertEqual(list(group), EXTRACTION_GROUP_KEYS)
+        self.assertTrue(group["consignes_diverge"])
+        self.assertEqual(group["consignes_versions"], [1, 2])
+        self.assertEqual([entry["selection"] for entry in group["entries"]],
+                         [f"{second}:1", f"{first}:1", f"{fake}:1"])
+        entry = group["entries"][1]
+        self.assertEqual(list(entry), EXTRACTION_ENTRY_KEYS)
+        self.assertEqual(list(entry["indicators"]), EXTRACTION_INDICATOR_KEYS)
+        self.assertEqual(entry["indicators"]["time_to_first_token_s"], 1.25)
+        self.assertEqual(entry["indicators"]["generation_speed_tps"], 20.0)
+        self.assertTrue(entry["compliant"])
+        self.assertFalse(group["entries"][0]["compliant"])
+        self.assertTrue(group["entries"][-1]["simulated"])
+
+    def test_list_passes_all_sorts_and_keeps_absent_values_last(self) -> None:
+        slow = self.write_run([ExtractionFixtureSource(mesures={"duree_extraction_s": 5.0})])
+        fast = self.write_run([ExtractionFixtureSource(mesures={"duree_extraction_s": 1.0})])
+        missing = self.write_run([ExtractionFixtureSource(mesures={"duree_extraction_s": None})])
+        for sort in ("temps", "ram", "cpu", "recent"):
+            with self.subTest(sort=sort):
+                data = self.json_command(["extract", "list", "--sort", sort])
+                self.assertEqual(data["sort"], sort)
+                self.assertEqual([entry["run_id"] for entry in data["groups"][0]["entries"]],
+                                 [entry.run_id for entry in self.consultation.groups(sort)[0].entries])
+        entries = self.json_command(["extract", "list", "--sort", "temps"])["groups"][0]["entries"]
+        self.assertEqual([entry["run_id"] for entry in entries], [fast, slow, missing])
+        code, stdout, stderr = self.run_command(["extract", "list"])
+        self.assertEqual((code, stderr), (CODE_SUCCESS, ""))
+        self.assertIn("extraction non mesuré", stdout)
+        with self.assertRaises(SystemExit) as error:
+            self.run_command(["extract", "list", "--sort", "inconnu"])
+        self.assertEqual(error.exception.code, CODE_REFUS)
+
+    def test_empty_list(self) -> None:
+        self.assertEqual(self.json_command(["extract", "list"])["groups"], [])
+        code, stdout, stderr = self.run_command(["extract", "list"])
+        self.assertEqual((code, stderr), (CODE_SUCCESS, ""))
+        self.assertIn(commands.NO_EXTRACTION_GROUP_MESSAGE, stdout)
+
+    def test_show_text_and_json_expose_all_details_for_each_source(self) -> None:
+        run = self.write_run([
+            ExtractionFixtureSource(source_factice=True),
+            ExtractionFixtureSource(conforme=False),
+            ExtractionFixtureSource(publier=False),
+        ])
+        code, stdout, stderr = self.run_command(["extract", "show", run])
+        self.assertEqual((code, stderr), (CODE_SUCCESS, ""))
+        for text in (
+            "Source 1", "Source 2", "Source 3", "conforme", "non conforme", "non traitée",
+            "Motif ? : Toux", "Symptômes ? (2) : (vide)", "Posologie : non mentionné",
+            "Autres informations utiles", "Allergie : non dite", EXTRACTION_TEXT,
+            "clé inconnue de la grille", "SOURCE FACTICE", "extraction 3 s", "CPU moteur 25 %",
+            'Sortie brute :', '{"motif": "Toux"}', "Grille copiée :", EXTRACTION_GRID_A,
+            "Message système :", "Réglages demandés :", "Réglages effectifs :",
+            "Métadonnées complètes (run.json)", '"sha256_gabarit_embarque"', '"architecture"',
+            '"mode_chargement_poids": "mmap"', '"threads_appliques": 2',
+            "Résultat source complet (result.json)", '"comptes_natifs"', "Provenance :",
+        ):
+            self.assertIn(text, stdout)
+        data = self.json_command(["extract", "show", run])
+        self.assertEqual(list(data), EXTRACTION_DETAIL_KEYS)
+        self.assertEqual(data["grid_copy"], EXTRACTION_GRID_A)
+        self.assertIn(data["system_message"], stdout)
+        for source in data["sources"]:
+            self.assertEqual(list(source), EXTRACTION_SOURCE_DETAIL_KEYS)
+            self.assertEqual(source["source_text"], EXTRACTION_TEXT)
+        first, non_compliant, unpublished = data["sources"]
+        self.assertEqual(list(first["entry"]), EXTRACTION_ENTRY_KEYS)
+        self.assertEqual(list(first["rows"][0]), ["label", "depth", "display", "absent"])
+        self.assertIsNone(non_compliant["rows"])
+        self.assertEqual(non_compliant["raw_output"], '{"motif": "Toux"}')
+        self.assertIsNone(unpublished["entry"])
+        self.assertIsNone(unpublished["raw_output"])
+
+    def test_show_does_not_relabel_compliant_output_when_a_copy_is_damaged(self) -> None:
+        for filename in ("grille.md", "schema.json"):
+            with self.subTest(copy=filename):
+                run = self.write_run([ExtractionFixtureSource()])
+                (self.run_dir(run) / filename).write_text("copie abîmée", encoding="utf-8")
+                code, stdout, stderr = self.run_command(["extract", "show", run])
+                self.assertEqual((code, stderr), (CODE_SUCCESS, ""))
+                self.assertIn("— conforme", stdout)
+                self.assertIn("Copie :", stdout)
+                self.assertIn("Sortie brute :", stdout)
+                self.assertNotIn("non conforme", stdout)
+                data = self.json_command(["extract", "show", run])
+                self.assertTrue(data["sources"][0]["entry"]["compliant"])
+                self.assertIsNotNone(data["sources"][0]["entry"]["copy_issue"])
+                self.assertIsNone(data["sources"][0]["rows"])
+
+    def test_compare_two_to_six_preserves_order_and_snapshot_keys(self) -> None:
+        runs = [self.write_run([ExtractionFixtureSource(
+            valeur=dict(EXTRACTION_VALUE, motif=f"motif-{index}")
+        )]) for index in range(6)]
+        key = self.consultation.groups()[0].key
+        for count in range(2, 7):
+            with self.subTest(count=count):
+                selections = [f"{run}:1" for run in reversed(runs[:count])]
+                data = self.json_command(["extract", "compare", key, *selections])
+                self.assertEqual(list(data), EXTRACTION_COMPARISON_KEYS)
+                self.assertEqual([entry["selection"] for entry in data["entries"]], selections)
+                self.assertEqual(list(data["entries"][0]), EXTRACTION_ENTRY_KEYS)
+                self.assertEqual(list(data["cases"][0]), ["label", "values", "differs"])
+                self.assertEqual(data["cases"][0]["values"], [f"motif-{i}" for i in reversed(range(count))])
+                self.assertTrue(data["cases"][0]["differs"])
+                self.assertEqual(data["source_text"], EXTRACTION_TEXT)
+                code, stdout, stderr = self.run_command(["extract", "compare", key, *selections])
+                self.assertEqual((code, stderr), (CODE_SUCCESS, ""))
+                self.assertEqual(stdout.count(EXTRACTION_TEXT), 1)
+                positions = [stdout.index(selection) for selection in selections]
+                self.assertEqual(positions, sorted(positions))
+                self.assertIn("vitesse de génération 20 tokens/s", stdout)
+                self.assertIn("RAM moteur", stdout)
+
+    def test_compare_text_states_marks_reasons_and_raw_output_reference(self) -> None:
+        first = self.write_run([ExtractionFixtureSource(source_factice=True)], version_consignes=1)
+        second = self.write_run([ExtractionFixtureSource(conforme=False)], version_consignes=2)
+        key = self.consultation.groups()[0].key
+        argv = ["extract", "compare", key, f"{second}:1", f"{first}:1"]
+        code, stdout, stderr = self.run_command(argv)
+        self.assertEqual((code, stderr), (CODE_SUCCESS, ""))
+        for text in ("Versions de consignes différentes", "non conforme", "clé inconnue de la grille",
+                     f"extract show {second}", "SOURCE FACTICE", "vitesse de génération", "CPU moteur"):
+            self.assertIn(text, stdout)
+        data = self.json_command(argv)
+        self.assertEqual(data["cases"][0]["values"], [None, "Toux"])
+        self.assertEqual(data["entries"][0]["reason"], "clé inconnue de la grille")
+        self.assertTrue(data["consignes_diverge"])
+
+    def test_compare_refusals_are_code_two_without_traceback(self) -> None:
+        first = self.write_run([ExtractionFixtureSource()])
+        second = self.write_run([ExtractionFixtureSource()])
+        fake = self.write_run([ExtractionFixtureSource()], factice=True)
+        different = self.write_run(
+            [ExtractionFixtureSource(valeur=dict(EXTRACTION_VALUE, duree=None))], grille=EXTRACTION_GRID_B
+        )
+        key = next(group.key for group in self.consultation.groups() if group.grid_sha256 ==
+                   hashlib.sha256(EXTRACTION_GRID_A.encode()).hexdigest())
+        cases = (
+            (key, [f"{first}:1"], "entre 2 et 6"),
+            (key, [f"{first}:1"] * 7, "6 au maximum"),
+            (key, [f"{first}:1", f"{different}:1"], "hors du groupe"),
+            (key, [f"{first}:1", f"{fake}:1"], "factices et réelles"),
+            (key, [f"{first}:1", f"{second}:9"], "inconnue ou non comparable"),
+            ("../hors", [f"{first}:1", f"{second}:1"], "clé de groupe invalide"),
+        )
+        for group, selections, reason in cases:
+            for json_mode in (False, True):
+                with self.subTest(reason=reason, json=json_mode):
+                    code, stdout, stderr = self.run_command(
+                        ["extract", "compare", group, *selections, *(["--json"] if json_mode else [])]
+                    )
+                    self.assertEqual((code, stdout), (CODE_REFUS, ""))
+                    self.assertIn(reason, stderr)
+                    self.assertNotIn("Traceback", stderr)
+        with self.assertRaises(SystemExit) as error:
+            self.run_command(["extract", "compare", key, "../hors:1", f"{second}:1"])
+        self.assertEqual(error.exception.code, CODE_REFUS)
+
+    def test_show_refuses_hostile_unknown_and_unreadable_ids(self) -> None:
+        bad = self.write_run([ExtractionFixtureSource()])
+        (self.run_dir(bad) / "run.json").write_text("{invalide", encoding="utf-8")
+        for run in ("../hors", str(self.hors), "20260101-000000-deadbeef", bad):
+            code, stdout, stderr = self.run_command(["extract", "show", run, "--json"])
+            self.assertEqual((code, stdout), (CODE_REFUS, ""))
+            self.assertIn(DIAGNOSTIC_PREFIX, stderr)
+            self.assertNotIn("Traceback", stderr)
+
+    def test_io_failure_is_code_one_for_list_show_and_compare(self) -> None:
+        run = self.write_run([ExtractionFixtureSource()])
+        for method, argv in (
+            ("groups", ["extract", "list"]),
+            ("detail", ["extract", "show", run]),
+            ("compare", ["extract", "compare", "a" * 64, f"{run}:1", f"{run}:2"]),
+            ("list_runs", ["results", "history"]),
+        ):
+            for json_mode in (False, True):
+                with self.subTest(method=method, json=json_mode), mock.patch.object(
+                    ExtractionConsultation, method, side_effect=LectureResultatsImpossible("lecture refusée")
+                ):
+                    code, stdout, stderr = self.run_command([*argv, *(["--json"] if json_mode else [])])
+                    self.assertEqual((code, stdout), (CODE_ECHEC, ""))
+                    self.assertIn(DIAGNOSTIC_PREFIX, stderr)
+                    self.assertNotIn("Traceback", stderr)
+
+    def test_compare_uninterpretable_result_is_refused(self) -> None:
+        with mock.patch.object(ExtractionConsultation, "compare", side_effect=ResultatNonInterpretable("invalide")):
+            code, stdout, stderr = self.run_command(
+                ["extract", "compare", "a" * 64, "20260301-100000-00000001:1", "20260301-100000-00000002:1"]
+            )
+        self.assertEqual((code, stdout), (CODE_REFUS, ""))
+        self.assertIn(MESSAGE_RESULTAT_NON_INTERPRETABLE, stderr)
+
+    def test_explain_text_and_json_use_the_shared_source(self) -> None:
+        from transcription_bench.web.extraction_help import EXTRACTION_HELP
+
+        data = self.json_command(["extract", "explain"])
+        self.assertEqual(list(data), JSON_SNAPSHOT_KEYS[("extract", "explain")])
+        self.assertEqual(data["title"], EXTRACTION_HELP["title"])
+        self.assertEqual(data["sections"], json.loads(json.dumps(EXTRACTION_HELP["sections"])))
+        code, stdout, stderr = self.run_command(["extract", "explain"])
+        self.assertEqual((code, stderr), (CODE_SUCCESS, ""))
+        for text in ("Tokens entrée / sortie", "Délai avant le premier token", "Vitesse de génération",
+                     "Mémoire max", "CPU du moteur", "conformité", "preuve d'exactitude médicale",
+                     "humain ou à un agent local"):
+            self.assertIn(text, stdout)
+        self.assertIn("Nombre de tokens d'entrée divisé par le délai avant le premier token", stdout)
+        self.assertIn("Nombre de tokens de sortie moins un", stdout)
+        self.assertIn("détokenisation et validation", stdout)
+        self.assertIn("SOURCE FACTICE", stdout)
+        self.assertNotIn("estimée sur la durée d'extraction totale", stdout)
+
+    def test_all_read_commands_leave_result_files_unchanged_without_network(self) -> None:
+        first = self.write_run([ExtractionFixtureSource()])
+        second = self.write_run([ExtractionFixtureSource()])
+        key = self.consultation.groups()[0].key
+        execution_complete(self.base)
+        # Session preparation and the common lock precede read-only consultation.
+        self.run_command(["extract", "explain"])
+        before = self.tree_snapshot()
+        for json_mode in (False, True):
+            for argv in (
+                ["extract", "list"], ["extract", "show", first],
+                ["extract", "compare", key, f"{second}:1", f"{first}:1"],
+                ["extract", "explain"], ["results", "history"],
+            ):
+                with self.subTest(argv=argv, json=json_mode), (
+                    mock.patch.object(socket.socket, "connect", side_effect=AssertionError("réseau interdit"))
+                ):
+                    code, _, stderr = self.run_command([*argv, *(["--json"] if json_mode else [])])
+                    self.assertEqual((code, stderr), (CODE_SUCCESS, ""))
+                self.assertEqual(self.tree_snapshot(), before)
         self.assert_unlocked()
 
 

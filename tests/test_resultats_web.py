@@ -559,7 +559,9 @@ class ResultatsWebTest(SocleWebTest):
 
         self.assertIn("non interprétable", corps)
         self.assertIn(IDENTIFIANT, corps)
-        self.assertNotIn(f'href="/resultats/{IDENTIFIANT}"', corps)
+        # L'historique à deux types conserve aussi le lien d'un résultat
+        # non interprétable ; son détail explique le refus en 422.
+        self.assertIn(f'href="/resultats/{IDENTIFIANT}"', corps)
         # Marques inconnues : « indisponible », jamais « aucune ».
         debut = corps.index(IDENTIFIANT)
         ligne = corps[corps.rfind("<tr>", 0, debut) : corps.index("</tr>", debut)]

@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% import "extraction_components.html" as components %}
+{% block page_courante %}parent:extractions{% endblock %}
+{% block titre %}Comparaison d'extractions — transcription-bench{% endblock %}
+{% block contenu %}
+<h1>Comparaison d'extractions</h1>
+<p class="prose"><a href="{{ url_for('extraction_comparisons') }}">Choisir les extractions</a> · <a href="{{ url_for('extraction_help') }}">Comprendre les indicateurs</a></p>
+{% if comparison.simulated %}<p class="callout warning prose"><strong>Mesures simulées</strong> — non représentatives d'un modèle réel.</p>{% endif %}
+{% if comparison.consignes_diverge %}<p class="callout warning prose">Versions de consignes différentes : {{ comparison.consignes_versions | join(', ') }}.</p>{% endif %}
+<table class="extraction-comparison">
+<caption>Indicateurs par modèle, puis comparaison case par case dans l'ordre de sélection</caption>
+<thead><tr><th scope="col">Case de la grille</th>{% for entry in comparison.entries %}<th scope="col" id="model-{{ loop.index }}">{{ components.entry_summary(entry) }}</th>{% endfor %}</tr></thead>
+<tbody>
+{% for case in comparison.cases %}{{ components.comparison_row(case.label, case['values'], comparison.entries, 'case-' ~ loop.index) }}{% endfor %}
+{{ components.comparison_row('Autres informations utiles', comparison.other_info, comparison.entries, 'other-info') }}
+</tbody>
+</table>
+<section>
+<h2>Transcription source commune</h2>
+{% if comparison.source_text is not none %}<pre>{{ comparison.source_text }}</pre>{% else %}<p class="prose">Texte source indisponible.</p>{% endif %}
+</section>
+{% endblock %}

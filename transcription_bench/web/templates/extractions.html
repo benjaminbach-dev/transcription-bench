@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% import "extraction_components.html" as components %}
+{% block page_courante %}{% if selecting %}parent:extractions{% else %}extractions{% endif %}{% endblock %}
+{% block titre %}{% if selecting %}Comparer les extractions{% else %}Extractions{% endif %} — transcription-bench{% endblock %}
+{% block contenu %}
+<h1>{% if selecting %}Comparer les extractions{% else %}Extractions{% endif %}</h1>
+<p class="prose"><a href="{{ url_for('extractions') }}">Liste des extractions</a> · <a href="{{ url_for('extraction_comparisons') }}">Comparer les extractions</a> · <a href="{{ url_for('extraction_help') }}">Comprendre les indicateurs</a> · <a href="{{ url_for('executions') }}#historique">Historique</a></p>
+{% if selecting %}<p class="prose small">Sélectionnez de 2 à 6 extractions d'un même groupe. Le tri conserve les cases cochées ; les mesures simulées ne se mélangent pas aux mesures réelles.</p>{% endif %}
+{% if groups and not selecting %}
+<div class="resultat-tris">{% for value, label in sort_options %}{% if value == sort %}<strong>{{ label }}</strong>{% else %}<a href="{{ url_for('extractions', tri=value) }}">{{ label }}</a>{% endif %}{% endfor %}</div>
+{% endif %}
+{% for group in groups %}
+<section class="resultat-section" id="groupe-{{ group.key }}">
+<h2 class="resultat-audio">{{ group.audio_names | join(', ') or 'audio non consigné' }} · {{ group.transcription_models | join(', ') or 'modèle de transcription non consigné' }} · {{ group.grid_title or group.grid_name }}</h2>
+<p class="prose small">Groupe {{ group.key[:8] }}</p>
+{% if group.consignes_diverge %}<p class="callout warning prose">Versions de consignes différentes : {{ group.consignes_versions | join(', ') }}.</p>{% endif %}
+{% for entries, label in ((group.real_entries, 'Résultats observés'), (group.simulated_entries, 'Mesures simulées')) %}
+{% if entries %}
+<h3>{{ label }}</h3>
+{% if selecting %}
+<form method="get" action="{{ url_for('extraction_comparison', key=group.key) }}">
+<input type="hidden" name="{{ group_field }}" value="{{ group.key }}">
+<div class="resultat-tris">{% for value, label in sort_options %}{% if value == sort %}<strong>{{ label }}</strong>{% else %}<button type="submit" name="tri" value="{{ value }}" formaction="{{ url_for('extraction_comparisons') }}#groupe-{{ group.key }}">{{ label }}</button>{% endif %}{% endfor %}</div>
+{% endif %}
+{% for entry in entries %}{{ components.entry_summary(entry, selecting, selection_field, checked) }}{% endfor %}
+{% if selecting %}<p class="prose"><button type="submit">Comparer les extractions sélectionnées</button></p></form>{% endif %}
+{% endif %}
+{% endfor %}
+<details>
+<summary>Empreintes de ce groupe</summary>
+<dl class="prose"><dt>Texte source</dt><dd>{{ group.text_sha256 }}</dd><dt>Grille copiée</dt><dd>{{ group.grid_sha256 }}</dd><dt>Schéma généré</dt><dd>{{ group.schema_sha256 }}</dd><dt>Clé du groupe</dt><dd>{{ group.key }}</dd></dl>
+</details>
+</section>
+{% else %}
+<p class="callout prose">Aucune extraction comparable pour l'instant. Lancez une extraction avec la commande « extract start » ; toutes les exécutions, même sans résultat exploitable, restent dans Historique.</p>
+{% endfor %}
+{% endblock %}

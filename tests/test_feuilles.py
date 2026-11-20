@@ -91,6 +91,17 @@ PROPRIETES_RESULTAT = frozenset(
     }
 )
 
+# D9 : propriétés de présentation bornées aux composants d'extraction.
+EXTRACTION_PROPERTIES = frozenset({"width", "margin-left", "table-layout", "vertical-align"})
+EXTRACTION_ZERO_MIN_WIDTH = frozenset({
+    ".extraction-entry", ".extraction-source", ".extraction-reading > section",
+    ".extraction-comparison", ".extraction-comparison thead", ".extraction-comparison tbody",
+    ".extraction-comparison tr", ".extraction-comparison th", ".extraction-comparison td",
+    ".extraction-comparison .resultat-valeur", ".extraction-comparison .resultat-valeur-absente",
+    ".extraction-comparison a", ".extraction-comparison strong", ".extraction-comparison span",
+    ".extraction-comparison p", ".extraction-comparison .extraction-value",
+})
+
 PROPRIETES_AUTORISEES = frozenset(
     {
         "white-space",
@@ -101,6 +112,7 @@ PROPRIETES_AUTORISEES = frozenset(
         "--s-btn-on",
         *JETONS_COULEUR,
         *PROPRIETES_RESULTAT,
+        *EXTRACTION_PROPERTIES,
     }
 )
 
@@ -710,7 +722,18 @@ class FeuilleComplementaireTest(SocleFeuillesTest):
                     for selecteur in regle.group(1).split(",")
                     if selecteur.strip()
                 )
-        self.assertEqual(porteurs, set(SELECTEURS_LARGEUR_MINIMALE))
+        self.assertEqual(porteurs, set(SELECTEURS_LARGEUR_MINIMALE) | EXTRACTION_ZERO_MIN_WIDTH)
+        for selector in EXTRACTION_ZERO_MIN_WIDTH:
+            self.assertEqual(feuille[selector]["min-width"], "0", selector)
+
+    def test_extraction_properties_are_scoped_without_new_colors(self) -> None:
+        for selector, properties in regles(self.css).items():
+            added = properties.keys() & EXTRACTION_PROPERTIES
+            if added:
+                self.assertTrue(selector.startswith(".extraction-"), selector)
+                expected = {"width": "100%", "margin-left": "1rem", "table-layout": "fixed", "vertical-align": "top"}
+                for name in added:
+                    self.assertEqual(properties[name], expected[name])
 
     def test_contraste_des_paires_de_jetons(self) -> None:
         for nom, partie in (("clair", self.clair), ("sombre", self.sombre)):

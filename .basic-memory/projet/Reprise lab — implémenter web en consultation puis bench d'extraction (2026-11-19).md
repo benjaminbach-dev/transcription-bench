@@ -31,5 +31,15 @@ Point de reprise pour l'agent du lab (serveur de développement). Provenance : s
 - Regroupement des extractions par source + grille + schéma (D9) ; le moteur réel devra neutraliser ses journaux natifs sur stderr pour tenir « run.log sans texte ».
 - Contrat du runner figé à 7 clés : l'étendre AVEC le protocole et le consignateur au moment de l'adaptateur réel.
 
+## État au 2026-11-20 (lots 4.1-4.3 du lab)
+
+- [validation] 4.1 consultation des extractions : regroupement par triplet (empreinte texte, grille, schéma), tris temps/ram/cpu/recent, indicateurs et ratios, factices séparés, version de consignes différente signalée, aucune écriture. Tests unitaires 48. Revue principal : contrôle de l'enveloppe extraction.json, lecture des copies au-delà de 16 MiB, tris de RAM sans overflow. Suite complète 1621 tests OK après 4.1.
+- [validation] 4.2 commandes de consultation : extract list/show/compare/explain, results history étendu aux deux types. Sortie texte et JSON avec indicateurs complets (délai premier token, vitesse de génération, marques, copy_issue), métadonnées complètes accessibles. Historique combiné (historique.py) avec anciennes clés audios_traites/audios_total préservées. 209 tests ciblés OK.
+- [validation] 4.3 pages web : cinq routes GET/HEAD (/extractions, /extractions/<id>, /extractions/aide, /extractions/comparaison, /extractions/comparaison/<cle>), navigation à quatre rubriques, détail grille/source côte à côte, comparaison 2-6 avec source commune, historique combiné typé, parité web/CLI étendue. 345 tests ciblés OK. Suite complète 1658 tests OK.
+- [observation] Navigation automatique : detail clair 1280×900 vérifié (grille+source côte à côte, 571 px chacun, scrollWidth=clientWidth=1280, chaînes hostiles affichées en texte, navigation 4 liens avec aria-current). Sombre et 360px non vérifiés (bascule thème indisponible dans le navigateur headless). favicon 404 mineur en console.
+- [limit] 4.4 contrôle visuel propriétaire non effectué (clair/sombre 1280/360). 5.1 documentation et 5.3 validation finale restent ouvertes. Tâches 6.2-6.3 (qualification PC) hors périmètre lab.
+- [limit] 9 WARNING OpenSpec (exigences > 500 caractères) et 2 INFO (archive) à traiter en 5.3.
+- [next] 4.4 contrôle visuel par le propriétaire (clair/sombre, 1280 et 360 px, détail grille/source côte à côte et comparaison 6 modèles). 5.1 documentation (guide, technique, licences, rappel exactitude médicale). 5.3 validation OpenSpec strict + suite complète + revue advisor + mémoire.
+
 ## Méthode
 - Une tâche à la fois via worker, revue advisor par lot, le principal coche `tasks.md` et corrige ; commit et push par lot sur demande explicite du propriétaire (accord du 2026-11-19 pour ce fil de travail ; pause demandée après le lot 3).

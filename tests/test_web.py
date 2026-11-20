@@ -59,6 +59,11 @@ ROUTES_CONSERVEES = (
     "/resultats/comparaison",
     f"/resultats/comparaison/{'a' * 64}",
     "/executions",
+    "/extractions",
+    "/extractions/absent",
+    "/extractions/aide",
+    "/extractions/comparaison",
+    f"/extractions/comparaison/{'a' * 64}",
     "/sumi.css",
     "/app.css",
 )
@@ -322,7 +327,7 @@ class ProtectionsRequetesTest(SocleWebTest):
             def read(self, size: int = -1) -> bytes:
                 raise RuntimeError("corps lu")
 
-        for chemin in ("/resultats", "/executions", "/route-inconnue"):
+        for chemin in ("/resultats", "/executions", "/extractions", "/extractions/comparaison", "/route-inconnue"):
             with self.subTest(chemin=chemin):
                 reponse = self.client.post(
                     chemin,

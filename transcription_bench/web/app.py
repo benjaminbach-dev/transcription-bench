@@ -7,8 +7,9 @@ injectés ; le lancement HTTP (Waitress) relève de la CLI.
 
 L'interface est en consultation seule (change `alleger-interface-web`, design D1) :
 la CLI est la seule interface d'action. Les pages réelles sont Résultats, le détail
-d'un résultat, l'aide des indicateurs, Comparaisons et l'historique complet des
-exécutions (`/executions`, sans formulaire). `GET /` redirige vers Résultats. Les
+d'un résultat, l'aide des indicateurs, Comparaisons, Extractions (liste, détail,
+aide et comparaison) et l'historique complet des deux types d'exécutions
+(`/executions`, sans formulaire). `GET /` redirige vers Résultats. Les
 anciennes pages d'action et leurs POST ne sont plus routés : ils répondent 404, et
 toute méthode autre que GET et HEAD répond 405 sur une route existante, OPTIONS
 compris.
@@ -81,7 +82,11 @@ from transcription_bench.indicateurs_resultats import (
     formater_memoire_premier_niveau,
     formater_pourcentage_premier_niveau,
 )
+from transcription_bench.extraction_consultation import ExtractionConsultation
+from transcription_bench.historique import combined_history
 from transcription_bench.paths import ValeurRefusee
+from transcription_bench.web.extraction_help import EXTRACTION_HELP
+from transcription_bench.web.extraction_views import register_extraction_routes
 from transcription_bench.web.results_help import RESULTS_HELP
 from transcription_bench.web.vues_resultats import (
     vue_comparaison,
@@ -164,12 +169,15 @@ class ServicesApplication:
     `resultats` est le service de consultation des résultats (tâche 7.1),
     strictement en lecture ; s'il est absent, la fabrique en construit un sur le
     dossier de données, sans aucune E/S. Il est injectable pour rendre les
-    lectures illisibles ou incohérentes testables. L'application ne reçoit aucun
-    service d'action : créneau d'opération, supervision de moteur et préparation
-    relèvent des commandes (change `alleger-interface-web`, D4).
+    lectures illisibles ou incohérentes testables. `extraction_results` suit le
+    même contrat pour les extractions et leur historique partagé avec la CLI.
+    L'application ne reçoit aucun service d'action : créneau d'opération,
+    supervision de moteur et préparation relèvent des commandes
+    (change `alleger-interface-web`, D4).
     """
 
     resultats: ConsultationResultats | None = None
+    extraction_results: ExtractionConsultation | None = None
 
 
 def create_app(config: ConfigApplication, services: ServicesApplication) -> Flask:
@@ -190,6 +198,7 @@ def create_app(config: ConfigApplication, services: ServicesApplication) -> Flas
         # Source unique du texte d'aide des indicateurs (design D7) : le
         # gabarit `aide_resultats.html` ne fait que la rendre, échappée.
         results_help=RESULTS_HELP,
+        extraction_help=EXTRACTION_HELP,
     )
     hotes = frozenset(f"{adresse}:{config.port}" for adresse in HOTES_AUTORISES)
     # Service absent : construit sur le dossier de données, sans aucune E/S.
@@ -197,6 +206,12 @@ def create_app(config: ConfigApplication, services: ServicesApplication) -> Flas
         ConsultationResultats(config.dossier_data)
         if services.resultats is None
         else services.resultats
+    )
+
+    extraction_results = (
+        ExtractionConsultation(config.dossier_data)
+        if services.extraction_results is None
+        else services.extraction_results
     )
 
     @application.before_request
@@ -217,7 +232,8 @@ def create_app(config: ConfigApplication, services: ServicesApplication) -> Flas
             reponse.headers["Content-Security-Policy"] = POLITIQUE_CONTENU
         return reponse
 
-    _enregistrer_routes(application, service_resultats)
+    _enregistrer_routes(application, service_resultats, extraction_results)
+    register_extraction_routes(application, extraction_results)
     _enregistrer_erreurs(application)
     return application
 
@@ -336,6 +352,7 @@ def selections_liste(
 def _enregistrer_routes(
     application: Flask,
     service_resultats: ConsultationResultats,
+    extraction_results: ExtractionConsultation,
 ) -> None:
     @application.get("/")
     def accueil() -> Response:
@@ -365,7 +382,7 @@ def _enregistrer_routes(
         Aucun formulaire ni action : le lancement relève des commandes du programme.
         """
         try:
-            executions_enregistrees = service_resultats.lister()
+            executions_enregistrees = combined_history(service_resultats, extraction_results)
         except LectureResultatsImpossible:
             executions_enregistrees = ()
             erreur_historique = MESSAGE_RESULTATS_INACCESSIBLES
@@ -376,6 +393,7 @@ def _enregistrer_routes(
             executions=executions_enregistrees,
             erreur_historique=erreur_historique,
             dossier=service_resultats.dossier_resultats,
+            extractions_dir=extraction_results.extractions_dir,
         )
 
     @application.get("/resultats")

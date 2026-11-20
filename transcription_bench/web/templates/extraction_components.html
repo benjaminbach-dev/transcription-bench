@@ -1,0 +1,42 @@
+{% import "formats.html" as formats %}
+
+{% macro indicators(values) -%}
+<div class="resultat-mesures extraction-indicators">
+<div class="resultat-mesure resultat-mesure-temps"><span class="resultat-libelle">Extraction</span><span class="resultat-valeur{% if values.duration_extraction_s is none %} resultat-valeur-absente{% endif %}">{{ formats.duree_premier_niveau(values.duration_extraction_s) }}</span></div>
+<div class="resultat-mesure"><span class="resultat-libelle">Premier token</span><span class="resultat-valeur{% if values.time_to_first_token_s is none %} resultat-valeur-absente{% endif %}">{{ formats.duree_premier_niveau(values.time_to_first_token_s) }}</span></div>
+<div class="resultat-mesure"><span class="resultat-libelle">Génération</span><span class="resultat-valeur{% if values.generation_speed_tps is none %} resultat-valeur-absente{% endif %}">{{ formats.nombre(values.generation_speed_tps) }}{% if values.generation_speed_tps is not none %} tokens/s{% endif %}</span></div>
+<div class="resultat-mesure resultat-mesure-ram"><span class="resultat-libelle">RAM moteur</span><span class="resultat-valeur{% if values.peak_memory_bytes is none %} resultat-valeur-absente{% endif %}">{{ formats.memoire_premier_niveau(values.peak_memory_bytes) }}</span><span class="resultat-secondaire">{% if values.ram_total_bytes is not none %}sur {{ formats.memoire_premier_niveau(values.ram_total_bytes) }} · {% if values.ram_ratio is not none %}{{ formats.pourcentage_premier_niveau(values.ram_ratio) }}{% else %}part non interprétable{% endif %}{% else %}RAM totale non consignée · part non interprétable{% endif %}</span>{% if values.peak_memory_bytes is not none %}<span class="resultat-secondaire">pic cumulatif</span>{% endif %}</div>
+<div class="resultat-mesure resultat-mesure-cpu"><span class="resultat-libelle">CPU moteur</span><span class="resultat-valeur{% if values.cpu_occupancy is none %} resultat-valeur-absente{% endif %}">{% if values.cpu_occupancy is not none %}{{ formats.pourcentage_premier_niveau(values.cpu_occupancy) }}{% elif values.cpu_time_s is not none %}non interprétable{% else %}non mesuré{% endif %}</span></div>
+</div>
+{%- endmacro %}
+
+{% macro entry_summary(entry, selectable=false, field='extraction', checked=()) -%}
+<div class="extraction-entry">
+<div class="resultat-entete">
+{% if selectable %}<input type="checkbox" name="{{ field }}" value="{{ entry.selection }}" aria-label="Sélectionner {{ entry.model or 'modèle non consigné' }}, source {{ entry.rank }}, {{ entry.created_short }}"{% if entry.selection in checked %} checked{% endif %}>{% endif %}
+<a class="resultat-modele" href="{{ url_for('extraction_detail', run_id=entry.run_id) }}#source-{{ entry.rank }}">{{ entry.model or 'modèle non consigné' }}</a>
+</div>
+<div class="resultat-secondaire">{{ entry.engine or 'moteur non consigné' }} · {{ entry.created_short }}</div>
+<div class="resultat-etats"><span class="resultat-etat">{{ entry.source_state_label }}</span><span class="resultat-etat">{{ entry.state_label }}{% if entry.partial %} · résultats partiels{% endif %}</span>{% for mark in entry.marks %}<strong class="resultat-etat">{{ mark }}</strong>{% endfor %}</div>
+{% if entry.reason %}<div class="resultat-alerte">{{ entry.reason }}</div>{% endif %}
+{% if entry.copy_issue %}<div class="resultat-alerte">{{ entry.copy_issue }}</div>{% endif %}
+{{ indicators(entry.indicators) }}
+</div>
+{%- endmacro %}
+
+{% macro unavailable(entry) -%}
+<span>{{ entry.source_state_label }}</span> — <a href="{{ url_for('extraction_detail', run_id=entry.run_id) }}#raw-{{ entry.rank }}">Voir la sortie brute</a>
+{%- endmacro %}
+
+{% macro comparison_row(label, values, entries, row_id) -%}
+<tr>
+<th scope="row" id="{{ row_id }}">{{ label }}</th>
+{% for value in values %}
+{% set entry = entries[loop.index0] %}
+<td headers="{{ row_id }} model-{{ loop.index }}">
+<span class="extraction-mobile-label">{{ entry.model or 'modèle non consigné' }} · {{ entry.created_short }}</span>
+{% if value is none %}{{ unavailable(entry) }}{% else %}<div class="extraction-value">{{ value }}</div>{% endif %}
+</td>
+{% endfor %}
+</tr>
+{%- endmacro %}

@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% import "formats.html" as formats %}
+{% import "extraction_components.html" as components %}
+{% block page_courante %}parent:extractions{% endblock %}
+{% block titre %}{{ detail.grid_title or detail.grid_name }} — extraction — transcription-bench{% endblock %}
+{% block contenu %}
+<h1>{{ detail.grid_title or detail.grid_name }}</h1>
+<p class="prose"><a href="{{ url_for('extractions') }}">Retour aux extractions</a> · <a href="{{ url_for('extraction_help') }}">Comprendre les indicateurs</a> · <a href="{{ url_for('extraction_detail', run_id=detail.run_id) }}">Actualiser</a></p>
+<p class="prose">Exécution {{ detail.state_label }} · {{ formats.date_courte(detail.created_at) }}</p>
+{% if detail.partial %}<p class="callout warning prose" role="status">Résultats partiels : exécution {{ detail.state_label }}. Les sources non traitées restent signalées ; aucune mesure manquante n'est remplacée par zéro.</p>{% endif %}
+{% if detail.error %}<p class="callout danger prose">{{ detail.error }}</p>{% endif %}
+{% if detail.marks %}<p class="callout warning prose"><strong>{{ detail.marks | join(', ') }}</strong>{% if detail.simulated %} — textes et mesures simulés, non représentatifs d'un modèle réel.{% endif %}</p>{% endif %}
+{% for source in detail.sources %}
+<article class="extraction-source" id="source-{{ source.rank }}">
+<h2>Source {{ source.rank }} — {{ source.name }} : {{ source.state_label }}</h2>
+{% if source.reason %}<p class="callout warning prose">{{ source.reason }}</p>{% endif %}
+{% if source.entry %}{{ components.entry_summary(source.entry) }}{% endif %}
+{% if source.origin_present %}<p class="prose"><a href="{{ url_for('resultat_detail', identifiant=source.origin.execution) }}#audio-{{ source.origin.ordre }}">Transcription d'origine</a></p>{% endif %}
+<div class="extraction-reading">
+<section>
+{% if source.rows is not none %}
+<h3>Grille remplie</h3>
+<dl class="prose extraction-filled-grid">
+{% for row in source.rows %}
+<dt{% if row.depth %} class="extraction-subfield"{% endif %}>{{ row.label }}</dt>
+<dd{% if row.depth %} class="extraction-subfield"{% endif %}>{{ row.display }}</dd>
+{% endfor %}
+</dl>
+<h3>Autres informations utiles</h3>
+{% if source.entry.other_info %}<dl class="prose">{% for title, value in source.entry.other_info %}<dt>{{ title }}</dt><dd>{{ value }}</dd>{% endfor %}</dl>{% else %}<p class="prose">aucune</p>{% endif %}
+{% else %}
+<h3 id="raw-{{ source.rank }}">Sortie brute — {{ source.state_label }}</h3>
+{% if source.raw_output is not none %}<pre>{{ source.raw_output }}</pre>{% else %}<p class="prose">Aucune sortie brute publiée pour cette source.</p>{% endif %}
+{% endif %}
+</section>
+<section>
+<h3>Transcription source</h3>
+{% if source.source_text is not none %}<pre>{{ source.source_text }}</pre>{% else %}<p class="prose">Texte source indisponible.</p>{% endif %}
+{% if not source.source_copy_ok %}<p class="callout warning prose">La copie du texte source n'a pas pu être vérifiée.</p>{% endif %}
+</section>
+</div>
+{% if source.rows is not none %}
+<details id="raw-{{ source.rank }}"><summary>Sortie brute du modèle</summary>{% if source.raw_output is not none %}<pre>{{ source.raw_output }}</pre>{% else %}<p class="prose">Aucune sortie brute disponible.</p>{% endif %}</details>
+{% endif %}
+<details>
+<summary>Mesures détaillées, résultat publié et provenance — source {{ source.rank }}</summary>
+{% if source.entry %}
+{% set values = source.entry.indicators %}
+<dl class="prose">
+<dt>Tokens entrée / sortie</dt><dd>{{ formats.afficher(values.tokens_in) }} / {{ formats.afficher(values.tokens_out) }}</dd>
+<dt>Durée de génération</dt><dd>{{ formats.duree(values.generation_duration_s) }}</dd>
+<dt>Vitesse de lecture estimée (tokens/s)</dt><dd>{{ formats.nombre(values.read_speed_estimate_tps) }}</dd>
+<dt>Temps CPU</dt><dd>{{ formats.duree(values.cpu_time_s) }}</dd>
+<dt>RAM moteur / RAM totale</dt><dd>{{ formats.octets(values.peak_memory_bytes) }} / {{ formats.octets(values.ram_total_bytes) }}</dd>
+<dt>Part de RAM</dt><dd>{{ formats.pourcentage_premier_niveau(values.ram_ratio) }}</dd>
+<dt>Versions des consignes / du format</dt><dd>{{ formats.afficher(source.entry.consignes_version) }} / {{ formats.afficher(source.entry.format_version) }}</dd>
+</dl>
+{% endif %}
+<h3>Provenance conservée</h3><pre>{{ source.origin | tojson(indent=2) }}</pre>
+<h3>Résultat publié complet (mesures et comptes natifs inclus)</h3>
+{% if source.raw_result is not none %}<pre>{{ source.raw_result | tojson(indent=2) }}</pre>{% else %}<p class="prose">Aucun résultat publié.</p>{% endif %}
+</details>
+</article>
+{% else %}<p class="prose">Aucune source consignée.</p>{% endfor %}
+<details>
+<summary>Grille copiée et message système</summary>
+<h2>Grille copiée</h2>
+{% if not detail.grid_copy_ok %}<p class="callout warning prose">Copie de grille absente ou empreinte non vérifiée.</p>{% endif %}
+{% if detail.grid_copy is not none %}<pre>{{ detail.grid_copy }}</pre>{% endif %}
+<h2>Message système</h2>
+<p class="prose">Version des consignes : {{ formats.afficher(detail.consignes_version) }} · version du format : {{ formats.afficher(detail.format_version) }}</p>
+{% if detail.system_message is not none %}<pre>{{ detail.system_message }}</pre>{% else %}<p class="prose">Message système indisponible.</p>{% endif %}
+</details>
+<details>
+<summary>Réglages et métadonnées complets de l'exécution</summary>
+<dl class="prose">
+<dt>Identifiant</dt><dd>{{ detail.run_id }}</dd>
+<dt>Création / fin</dt><dd>{{ formats.afficher(detail.created_at) }} / {{ formats.afficher(detail.finished_at) }}</dd>
+<dt>Threads demandés / appliqués</dt><dd>{{ formats.afficher(detail.threads_requested) }} / {{ formats.afficher(detail.threads_applied) }}</dd>
+<dt>Chargement des poids</dt><dd>{{ formats.afficher(detail.weight_loading_mode) }}</dd>
+{% for label, value in detail.settings %}<dt>{{ label }}</dt><dd>{{ formats.afficher(value) }}</dd>{% endfor %}
+{% for label, value in detail.model + detail.engine + detail.program + detail.machine + detail.measures %}<dt>{{ label }}</dt><dd>{{ formats.afficher(value) }}</dd>{% endfor %}
+</dl>
+<h2>Réglages effectifs</h2><pre>{{ detail.effective_settings | tojson(indent=2) }}</pre>
+<h2>Versions du moteur</h2><pre>{{ detail.engine_versions | tojson(indent=2) }}</pre>
+<h2>Métadonnées complètes</h2><pre>{{ detail.raw_metadata | tojson(indent=2) }}</pre>
+</details>
+{% endblock %}

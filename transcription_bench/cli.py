@@ -306,7 +306,9 @@ def main(
     try:
         application = create_app(
             ConfigApplication(port=arguments.port, dossier_data=dossier_data),
-            ServicesApplication(resultats=session.results),
+            ServicesApplication(
+                resultats=session.results, extraction_results=session.extraction_results
+            ),
         )
         print(
             f"Interface disponible : http://{ADRESSE_ECOUTE}:{arguments.port}",

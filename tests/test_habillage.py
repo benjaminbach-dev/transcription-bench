@@ -98,6 +98,7 @@ MOTIF_SELECTEUR_CLASSE = re.compile(r"\.([A-Za-z][\w-]*)")
 LIENS_NAVIGATION = (
     ("/resultats", "Résultats"),
     ("/resultats/comparaison", "Comparaisons"),
+    ("/extractions", "Extractions"),
     ("/executions", "Historique"),
 )
 CHEMIN_NAVIGATION = ("html", "body", "header", "nav")
@@ -222,7 +223,7 @@ def analyser_details(corps: str) -> AnalyseDetails:
 
 #: Nombre de messages d'état `role="status"` dans les gabarits restants : chacun
 #: reste dans un encart `callout` (contrôle ci-dessous).
-NOMBRE_ROLE_STATUS = 7
+NOMBRE_ROLE_STATUS = 8
 
 
 class GabaritsTest(unittest.TestCase):
@@ -299,6 +300,14 @@ class GabaritsTest(unittest.TestCase):
     def test_chaque_tableau_dans_un_conteneur_defilant(self) -> None:
         for nom, source in self.sources.items():
             with self.subTest(gabarit=nom):
+                if nom == "extraction_comparison.html":
+                    # D9 : tableau borné sur bureau, cartes empilées sur mobile,
+                    # contrairement aux anciennes tables locales défilantes.
+                    self.assertEqual(source.count('<table class="extraction-comparison">'), 1)
+                    self.assertEqual(source.count("<table"), 1)
+                    self.assertEqual(source.count("</table>"), 1)
+                    self.assertNotIn("overflow-auto", source)
+                    continue
                 lignes = [
                     ligne.strip() for ligne in source.splitlines() if ligne.strip()
                 ]
@@ -318,7 +327,9 @@ class GabaritsTest(unittest.TestCase):
         for nom, source in self.sources.items():
             with self.subTest(gabarit=nom):
                 self.assertNotRegex(source, r"<main[^>]*class=")
-                self.assertNotRegex(source, r"<table[^>]*class=")
+                for classes in re.findall(r'<table[^>]*class="([^"]*)"', source):
+                    self.assertEqual(classes, "extraction-comparison")
+                    self.assertNotIn("prose", classes.split())
                 for ligne in source.splitlines():
                     if 'class="prose"' in ligne or 'class="narrow"' in ligne:
                         self.assertNotIn("<main", ligne)
@@ -400,7 +411,7 @@ class GabaritsTest(unittest.TestCase):
 
     def test_chaque_page_a_son_titre(self) -> None:
         for nom, source in self.sources.items():
-            if nom in ("base.html", "formats.html", GABARIT_COMPOSANT):
+            if nom in ("base.html", "formats.html", GABARIT_COMPOSANT, "extraction_components.html"):
                 # `base.html` porte le titre par défaut, `formats.html` et
                 # `composants.html` sont des fichiers de macros sans page propre.
                 continue
@@ -569,7 +580,7 @@ class HabillagePageTest(SocleWebTest):
                 self.assertTrue(page.texte_titre.endswith("transcription-bench"))
 
     def test_navigation_commune(self) -> None:
-        # Les trois rubriques, dans cet ordre, sur toutes les pages : premier
+        # Les quatre rubriques, dans cet ordre, sur toutes les pages : premier
         # niveau, sous-pages et page d'erreur.
         for chemin, page in self.pages_a_controler().items():
             with self.subTest(chemin=chemin):

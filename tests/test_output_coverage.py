@@ -23,6 +23,9 @@ EXCLUDED_MEMBERS = {
     "serialize_extraction_source": {  # Le rang est l'ordre de la liste ; le texte n'est jamais exposé.
         "rang", "texte",
     },
+    "serialize_extraction_group": {  # Déjà séparées dans "entries" ; interprétation interne de la grille.
+        "fields", "real_entries", "simulated_entries",
+    },
 }
 
 

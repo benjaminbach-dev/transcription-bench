@@ -76,6 +76,21 @@ WEB_CLI_PARITY: tuple[RouteParity, ...] = (
         rule="/resultats/comparaison/<empreinte>",
         commands=(("compare",),),
     ),
+    RouteParity(method="GET", rule="/extractions", commands=(("extract", "list"),)),
+    RouteParity(
+        method="GET", rule="/extractions/<run_id>", commands=(("extract", "show"),)
+    ),
+    RouteParity(
+        method="GET", rule="/extractions/aide", commands=(("extract", "explain"),)
+    ),
+    RouteParity(
+        method="GET", rule="/extractions/comparaison", commands=(("extract", "list"),)
+    ),
+    RouteParity(
+        method="GET",
+        rule="/extractions/comparaison/<key>",
+        commands=(("extract", "compare"),),
+    ),
     RouteParity(
         method="GET",
         rule="/executions",

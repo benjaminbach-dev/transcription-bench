@@ -1607,8 +1607,13 @@ class ListeParResultatWebTest(SocleWebTest):
         self.assertLess(
             historique.index(IDENTIFIANT_QUATRIEME), historique.index(IDENTIFIANT_TIERS)
         )
+        # Historique combiné : la date consignée fait foi, pas l'horodatage
+        # du nom de dossier (les deux diffèrent volontairement ici).
         self.assertLess(
-            historique.index(IDENTIFIANT_TIERS), historique.index(IDENTIFIANT)
+            historique.index(IDENTIFIANT_QUATRIEME), historique.index(IDENTIFIANT)
+        )
+        self.assertLess(
+            historique.index(IDENTIFIANT), historique.index(IDENTIFIANT_TIERS)
         )
 
 

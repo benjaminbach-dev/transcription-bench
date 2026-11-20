@@ -34,6 +34,10 @@ COMMANDES_DE_LECTURE: frozenset[tuple[str, ...]] = frozenset(
         ("results", "explain"),
         ("results", "history"),
         ("compare",),
+        ("extract", "list"),
+        ("extract", "show"),
+        ("extract", "compare"),
+        ("extract", "explain"),
     }
 )
 
