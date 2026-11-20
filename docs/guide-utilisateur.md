@@ -19,10 +19,11 @@ Ce guide vous mène, pas à pas, de « rien d'installé » à une première tran
 9. [Lancer une transcription](#9-lancer-une-transcription)
 10. [Lire un résultat](#10-lire-un-résultat)
 11. [Comparer deux résultats](#11-comparer-deux-résultats)
-12. [Arrêter et relancer](#12-arrêter-et-relancer)
-13. [Dépannage](#13-dépannage)
-14. [Glossaire](#glossaire)
-15. [Pour aller plus loin](#pour-aller-plus-loin)
+12. [Extraire une grille depuis une transcription](#12-extraire-une-grille-depuis-une-transcription)
+13. [Arrêter et relancer](#13-arrêter-et-relancer)
+14. [Dépannage](#14-dépannage)
+15. [Glossaire](#glossaire)
+16. [Pour aller plus loin](#pour-aller-plus-loin)
 
 ## Ce que fait l'outil, et ce qu'il envoie sur Internet
 
@@ -87,7 +88,7 @@ Procédure officielle : <https://docs.astral.sh/uv/getting-started/installation/
 
 *Vous devez voir.* Le terminal affiche que `uv` est installé. Fermez puis rouvrez le terminal, puis tapez `uv --version` : un numéro de version s'affiche.
 
-*Si ce n'est pas le cas.* Voir « commande introuvable » dans le [dépannage](#13-dépannage).
+*Si ce n'est pas le cas.* Voir « commande introuvable » dans le [dépannage](#14-dépannage).
 
 Vérification : non vérifié. Ni l'installation de `uv` ni celle par `winget` n'ont été suivies, sous Linux comme sous Windows.
 
@@ -140,13 +141,13 @@ La commande est la même sous Linux et sous Windows. Gardez ce terminal ouvert :
 Interface disponible : http://127.0.0.1:8765
 ```
 
-Ouvrez cette adresse dans votre navigateur. La page **Résultats** s'affiche : l'adresse racine (`/`) y mène directement. Le menu propose trois rubriques, dans cet ordre : **Résultats**, **Comparaisons** et **Historique**. La rubrique de la page où vous êtes est signalée dans le menu. Sans résultat, la page **Résultats** affiche : « Aucune transcription à regrouper par audio pour l'instant. Lancez une exécution avec la commande « run start » ; ses résultats apparaîtront ici. »
+Ouvrez cette adresse dans votre navigateur. La page **Résultats** s'affiche : l'adresse racine (`/`) y mène directement. Le menu propose quatre rubriques, dans cet ordre : **Résultats**, **Comparaisons**, **Extractions** et **Historique**. La rubrique de la page où vous êtes est signalée dans le menu. Sans résultat, la page **Résultats** affiche : « Aucune transcription à regrouper par audio pour l'instant. Lancez une exécution avec la commande « run start » ; ses résultats apparaîtront ici. »
 
-*Une seule instance à la fois.* La page web ne lance aucune action : installer un moteur, ajouter un modèle et lancer une transcription se font en tapant des commandes. L'application et les commandes ne peuvent pas travailler en même temps sur le même dossier de données : si vous tapez une commande pendant que l'application tourne, elle est refusée (voir le [dépannage](#13-dépannage)). Pour suivre les étapes suivantes, arrêtez l'application en appuyant sur `Ctrl+C` dans son terminal (étape 12) ; vous la relancerez à l'étape 10 pour consulter vos résultats.
+*Une seule instance à la fois.* La page web ne lance aucune action : installer un moteur, ajouter un modèle et lancer une transcription se font en tapant des commandes. L'application et les commandes ne peuvent pas travailler en même temps sur le même dossier de données : si vous tapez une commande pendant que l'application tourne, elle est refusée (voir le [dépannage](#14-dépannage)). Pour suivre les étapes suivantes, arrêtez l'application en appuyant sur `Ctrl+C` dans son terminal (étape 13) ; vous la relancerez à l'étape 10 pour consulter vos résultats.
 
-*Si ce n'est pas le cas.* Voir « port déjà utilisé », « commande introuvable » et « la page ne s'ouvre pas » dans le [dépannage](#13-dépannage). Pour choisir un autre port : `uv run --locked transcription-bench --port 8080`.
+*Si ce n'est pas le cas.* Voir « port déjà utilisé », « commande introuvable » et « la page ne s'ouvre pas » dans le [dépannage](#14-dépannage). Pour choisir un autre port : `uv run --locked transcription-bench --port 8080`.
 
-Vérification : premier lancement sur une copie vierge vérifié sous Linux le 2026-11-13 : la ligne « Interface disponible » s'affiche et la page s'ouvre. La première fois, la préparation a demandé quelques secondes (les éléments nécessaires venaient du cache de la machine ; une machine neuve les télécharge, durée non mesurée). `uv` était déjà installé sur cette machine : son installation n'est pas vérifiée (étape 2). La navigation à trois rubriques (**Résultats**, **Comparaisons**, **Historique**) et les états vides actuels sont couverts par les tests automatiques du projet ; le parcours à froid du 13 novembre montrait six rubriques, supprimées depuis. La CI Windows a contrôlé la suite de tests, serveur compris, dernière fois le 2026-11-02 (voir [ci-windows.md](ci-windows.md)) ; le lancement en console sur un poste Windows n'est pas vérifié.
+Vérification : premier lancement sur une copie vierge vérifié sous Linux le 2026-11-13 : la ligne « Interface disponible » s'affiche et la page s'ouvre. La première fois, la préparation a demandé quelques secondes (les éléments nécessaires venaient du cache de la machine ; une machine neuve les télécharge, durée non mesurée). `uv` était déjà installé sur cette machine : son installation n'est pas vérifiée (étape 2). La navigation à quatre rubriques (**Résultats**, **Comparaisons**, **Extractions**, **Historique**) et les états vides actuels sont couverts par les tests automatiques du projet ; le parcours à froid du 13 novembre montrait six rubriques, supprimées depuis. La CI Windows a contrôlé la suite de tests, serveur compris, dernière fois le 2026-11-02 (voir [ci-windows.md](ci-windows.md)) ; le lancement en console sur un poste Windows n'est pas vérifié.
 
 ## 6. Déposer vos audios
 
@@ -163,7 +164,7 @@ Les fichiers ne s'envoient pas par une page : vous les copiez vous-même dans le
 
 *Vous devez voir.* Une ligne « Dossier d'entrée : … » avec le chemin du dossier, puis une ligne par fichier : son nom, son format, sa taille en octets, sa durée indicative, et le mot « lisible » si le fichier peut être décodé. Un fichier illisible apparaît avec son erreur, sans empêcher la liste des autres. Vos audios ne quittent pas l'ordinateur.
 
-*Si ce n'est pas le cas.* Si la commande affiche « Aucun fichier audio dans le dossier d'entrée. », les fichiers ne sont pas au bon endroit. Pour un fichier signalé avec une erreur, voir « audio illisible » dans le [dépannage](#13-dépannage).
+*Si ce n'est pas le cas.* Si la commande affiche « Aucun fichier audio dans le dossier d'entrée. », les fichiers ne sont pas au bon endroit. Pour un fichier signalé avec une erreur, voir « audio illisible » dans le [dépannage](#14-dépannage).
 
 Vérification : le dépôt des fichiers par copie est vérifié sous Linux le 2026-11-13 (parcours d'alors, dans un navigateur via une page aujourd'hui retirée) ; la commande `audios list` est couverte par les tests automatiques du projet, sans parcours manuel en l'état. Windows : non vérifié sur un poste Windows.
 
@@ -204,7 +205,7 @@ L'installation récupère des éléments sur Internet (ou dans le cache de l'out
 uv run --locked transcription-bench engines log transcribe-cpp
 ```
 
-Corrigez (par exemple rétablissez la connexion), puis relancez l'installation. Voir « moteur non prêt » dans le [dépannage](#13-dépannage).
+Corrigez (par exemple rétablissez la connexion), puis relancez l'installation. Voir « moteur non prêt » dans le [dépannage](#14-dépannage).
 
 Vérification : installation par la commande `engines install` vérifiée sous Linux le 2026-11-13, sur le PC de test : la roue du moteur était déjà dans le cache de la machine (aucun téléchargement réseau du moteur observé, durée de la commande non consignée). La CI Windows contrôle l'installation des trois moteurs depuis leurs verrous, dernière fois le 2026-11-13, sur ses propres machines, sans passer par les commandes du programme (voir [ci-windows.md](ci-windows.md)).
 
@@ -263,7 +264,7 @@ Pour l'exemple, utilisez :
 
 *Supprimer un modèle.* La commande `models delete`, suivie du moteur et de la clé affichés par `models list`, supprime les fichiers locaux du modèle. La commande ne pose aucune question : le fait de la taper vaut confirmation. Les résultats déjà produits restent consultables.
 
-*Si ce n'est pas le cas.* Voir « modèle refusé ou introuvable », « téléchargement interrompu » et « pas de connexion Internet » dans le [dépannage](#13-dépannage).
+*Si ce n'est pas le cas.* Voir « modèle refusé ou introuvable », « téléchargement interrompu » et « pas de connexion Internet » dans le [dépannage](#14-dépannage).
 
 Autres modèles essayés avec succès par le projet (liste complète des licences : [licences-modeles.md](licences-modeles.md)) :
 
@@ -319,7 +320,7 @@ L'identifiant du résultat (noté entre les mots « Résultat enregistré : » e
 
 *Arrêter une exécution.* Appuyez sur `Ctrl+C` dans le terminal de la commande : la commande affiche « arrêt demandé par signal : clôture de l'opération en cours. », l'exécution est marquée interrompue et les résultats déjà écrits sont conservés.
 
-*Si ce n'est pas le cas.* Si la préparation affiche « Aucun modèle proposable. » ou « Aucun audio lisible dans le dossier d'entrée. », retournez aux étapes 7, 8 et 6. Si le lancement est refusé avec « moteur non prêt (état : …) », retournez à l'étape 7. Voir « texte vide ou exécution interrompue » dans le [dépannage](#13-dépannage).
+*Si ce n'est pas le cas.* Si la préparation affiche « Aucun modèle proposable. » ou « Aucun audio lisible dans le dossier d'entrée. », retournez aux étapes 7, 8 et 6. Si le lancement est refusé avec « moteur non prêt (état : …) », retournez à l'étape 7. Voir « texte vide ou exécution interrompue » dans le [dépannage](#14-dépannage).
 
 Vérification : les commandes `run check` et `run start` ont été éprouvées en commande sous Linux le 2026-11-13 sur le PC de test (moteur transcribe.cpp, famille Whisper) : une exécution complète à réglages par défaut (durée non consignée). L'ancien parcours par page web, le même jour, mesurait deux exécutions d'un audio de 10 secondes en 5,8 et 5,9 secondes : ordre de grandeur de l'interface d'alors, pas une mesure des commandes. Les quatre combinaisons de moteurs ont aussi tourné le 2026-11-02 (par les formulaires de l'interface d'alors) et dans la CI Windows, dernière fois le 2026-11-13. Les refus (modèle non prêt, audio illisible, réglage inapplicable, seconde opération pendant la première) sont couverts par les tests automatiques du projet.
 
@@ -341,7 +342,7 @@ Deux moyens de lire un résultat : dans le terminal, ou dans le navigateur, en r
 
 *Vous devez voir.* Une ligne par essai : le modèle (et sa variante GGUF si elle est consignée), puis **Transcription**, **RAM moteur** et **CPU moteur**, le moteur et la date courte. Si les durées décodées d'un audio divergent, le groupe le signale et chaque ligne donne la durée de son propre essai ; deux fichiers de même nom se distinguent par leur empreinte courte (l'empreinte est un identifiant unique calculé à partir du contenu du fichier). Les états restent visibles sur la ligne : résultat en erreur, exécution interrompue, marques. Les mesures simulées sont classées à part, sous leur propre titre. Les mesures dépendent de votre ordinateur : elles ne disent rien de la qualité du texte ni des performances d'un autre poste.
 
-*Si ce n'est pas le cas.* Voir « texte vide ou exécution interrompue » dans le [dépannage](#13-dépannage) ; si la page elle-même ne s'affiche pas, voir « la page ne s'ouvre pas ».
+*Si ce n'est pas le cas.* Voir « texte vide ou exécution interrompue » dans le [dépannage](#14-dépannage) ; si la page elle-même ne s'affiche pas, voir « la page ne s'ouvre pas ».
 
 Une marque **SYNTHÉTIQUE** seule signale un audio ou un texte de test : elle ne dit rien du moteur ni des mesures. Les marques **FACTICE** ou **MESURES SIMULÉES** signalent, elles, un moteur factice (un moteur de substitution utilisé par les tests) ou des valeurs simulées.
 
@@ -371,13 +372,120 @@ On compare deux transcriptions d'un même audio, obtenues avec deux modèles (ou
 uv run --locked transcription-bench compare <empreinte> <identifiant>:<ordre> <identifiant>:<ordre>
 ```
 
-*Si ce n'est pas le cas.* Vérifiez que deux essais terminés du même audio existent (étapes 9 et 10) ; pour un texte vide ou une exécution interrompue, voir le [dépannage](#13-dépannage).
+*Si ce n'est pas le cas.* Vérifiez que deux essais terminés du même audio existent (étapes 9 et 10) ; pour un texte vide ou une exécution interrompue, voir le [dépannage](#14-dépannage).
 
 *Ce que cela ne dit pas.* Le texte le plus fluide n'est pas forcément le plus exact, et l'outil ne désigne aucun « meilleur » modèle. La comparaison sert à repérer des différences ; c'est à vous de juger, en réécoutant l'audio.
 
 Vérification : comparaison de deux exécutions du même modèle sur le même audio vérifiée sous Linux le 2026-11-13 dans un navigateur (la seconde exécution n'a demandé aucun second téléchargement) ; comparaison plus ancienne de quatre résultats d'un même audio le 2026-11-02, par l'interface d'alors. La page conservée n'a pas changé depuis ; la commande `compare` est couverte par les tests automatiques du projet, sans parcours manuel en l'état. Windows : non vérifié sur un poste ; la CI contrôle la suite de tests.
 
-## 12. Arrêter et relancer
+## 12. Extraire une grille depuis une transcription
+
+Une extraction remplit automatiquement une grille structurée à partir d'une transcription déjà enregistrée. Par exemple, la grille de consultation de médecine générale fournie avec le projet extrait les personnes présentes, le motif, les symptômes, les examens, le doute restant, la prescription et la prise en charge. L'extraction utilise un modèle de langage local, différent des modèles de transcription.
+
+> *Important.* Une grille bien remplie n'est pas une preuve d'exactitude médicale. Une transcription fluide n'est pas forcément correcte. L'outil n'est pas validé cliniquement : vérifiez toujours le résultat contre l'enregistrement original.
+
+### Écrire ou relire une grille
+
+Les grilles sont des fichiers Markdown placés dans le dossier `grilles/` du projet. Une grille d'exemple, `grilles/consultation-generale.md`, est fournie. Pour lister les grilles disponibles :
+
+```sh
+uv run --locked transcription-bench grids list
+```
+
+Pour voir comment une grille est interprétée (cases, types, schéma JSON, message qui sera envoyé au modèle) :
+
+```sh
+uv run --locked transcription-bench grids show consultation-generale
+```
+
+Une grille se lit ainsi : un titre `#` unique en tête, puis des titres `##` qui ouvrent chaque case. Le texte sous un titre est la consigne pour le modèle. Si la première ligne de la consigne commence par « Liste. » ou « Liste: », la case accepte plusieurs entrées. Des titres `###` sous une case la rendent composée (par exemple médicament, posologie, durée). Chaque case peut valoir « non mentionné » si l'information est absente de la transcription. Une section « Autres informations utiles » est ajoutée d'office pour consigner ce qui est utile mais hors de la grille.
+
+### Lancer une extraction
+
+Pour extraire, il faut : un moteur d'extraction installé, un modèle d'extraction téléchargé, une grille valide et au moins une transcription déjà enregistrée.
+
+*Faites ceci.*
+
+1. Présentez ce qui est disponible pour une extraction :
+
+   ```sh
+   uv run --locked transcription-bench extract options
+   ```
+
+   La commande affiche les modèles d'extraction proposés (avec leur référence, leur état et les réglages de la famille), les grilles valides, les transcriptions utilisables comme sources (sous la forme `identifiant:ordre`) et le nombre de threads par défaut. Notez la référence d'un modèle exécutable et l'identifiant d'une source.
+
+2. Vérifiez la demande sans rien lancer :
+
+   ```sh
+   uv run --locked transcription-bench extract check --model <référence> --grid consultation-generale --source <identifiant>:<ordre>
+   ```
+
+   La commande affiche « Demande valide : aucune extraction lancée, aucun résultat écrit. » puis la demande normalisée.
+
+3. Lancez l'extraction :
+
+   ```sh
+   uv run --locked transcription-bench extract start --model <référence> --grid consultation-generale --source <identifiant>:<ordre>
+   ```
+
+   Le déroulement s'écrit au fil de l'eau dans le terminal. La commande ne rend la main qu'à la fin.
+
+*Plusieurs sources.* Répétez l'option `--source` : elles forment un lot traité source après source, dans l'ordre donné, avec un seul chargement du modèle.
+
+*Choix avancés.* L'option `--threads` fixe le nombre de threads ; l'option `--setting NOM=VALEUR` change un réglage de la famille (par exemple `contexte` ou `sortie_max`).
+
+*Vous devez voir.* À la fin, des lignes de ce type :
+
+```
+Opération « extraction » : terminée
+Résultat enregistré : <identifiant>
+Sources :
+  1. <nom> : conforme
+```
+
+L'état « conforme » signifie que la sortie respecte la structure attendue par la grille. Cela ne garantit pas l'exactitude du contenu : une case peut être remplie avec une information erronée.
+
+### Relire et comparer les extractions
+
+*Dans le terminal.*
+
+- Listez les extractions groupées par source, grille et schéma :
+
+  ```sh
+  uv run --locked transcription-bench extract list
+  ```
+
+  Chaque entrée porte sa sélection `identifiant:ordre`. Le tri par défaut est « recent » ; utilisez `--sort temps`, `--sort ram` ou `--sort cpu` pour changer l'ordre dans chaque groupe.
+
+- Affichez le détail d'une extraction :
+
+  ```sh
+  uv run --locked transcription-bench extract show <identifiant>
+  ```
+
+  Le détail montre la grille remplie case par case, la section « Autres informations utiles », puis le texte source complet.
+
+- Comparez 2 à 6 extractions d'un même groupe :
+
+  ```sh
+  uv run --locked transcription-bench extract compare <clé> <identifiant>:<ordre> <identifiant>:<ordre>
+  ```
+
+  La clé du groupe vient de `extract list`. La comparaison affiche une ligne par case et une colonne par modèle.
+
+- Consultez l'aide des indicateurs d'extraction :
+
+  ```sh
+  uv run --locked transcription-bench extract explain
+  ```
+
+*Dans le navigateur.* Relancez l'application (étape 5) et ouvrez la page **Extractions**. Les extractions sont groupées par audio source, modèle de transcription et grille. Cliquez sur un modèle pour ouvrir le détail : la grille remplie et le texte source sont lisibles côte à côte sur grand écran. La page de comparaison rassemble les cases de plusieurs modèles sur une même ligne. L'écran **Historique** liste aussi les extractions, distinguées par leur type.
+
+*Sortie non conforme.* Si la sortie du modèle ne respecte pas la structure de la grille (limite atteinte, JSON invalide), la source est marquée « non conforme » et la sortie brute est affichée à la place de la grille remplie.
+
+Vérification : les commandes `grids list`, `grids show`, `extract options`, `extract check`, `extract start`, `extract list`, `extract show`, `extract compare` et `extract explain` sont couvertes par les tests automatiques du projet. Une qualification réelle a eu lieu sur un PC de test Linux le 2026-11-20 avec six modèles et trois transcriptions (tasks.md, groupe 6) ; qualification Windows non vérifiée.
+
+## 13. Arrêter et relancer
 
 - Arrêter l'application : dans le terminal où elle tourne, appuyez sur `Ctrl+C`. Le message `Arrêt du serveur.` s'affiche. Attendez la fin avant de fermer le terminal. Les résultats déjà obtenus restent consultables ; l'application ne lance aucune opération, il n'y a rien d'autre à terminer.
 - Arrêter une commande longue (exécution, installation, téléchargement) : appuyez sur `Ctrl+C` dans le terminal de la commande. Elle affiche « arrêt demandé par signal : clôture de l'opération en cours. » puis s'arrête : l'exécution est marquée interrompue, les résultats déjà écrits sont conservés, une installation ou un téléchargement interrompu reste non prêt. Un second `Ctrl+C` pendant l'arrêt est ignoré. Un téléchargement n'est pas annulable : si le transfert tarde à se terminer, la commande le signale et le verrou reste tenu jusqu'à la fin réelle du processus.
@@ -385,11 +493,11 @@ Vérification : comparaison de deux exécutions du même modèle sur le même au
 
 Le programme répond aussi par un code de sortie (un nombre que le terminal ou un script peut lire) : `0` quand tout s'est bien passé, `1` pour un échec, `2` pour un refus, `3` pour un arrêt demandé par `Ctrl+C` ou un signal équivalent.
 
-*Si ce n'est pas le cas.* Si le message ne s'affiche pas, attendez la fin du travail en cours. Si vous fermez le terminal sans attendre, ou si l'ordinateur s'éteint brutalement pendant une commande, l'exécution en cours sera marquée « abandonnée » au prochain démarrage (voir le [dépannage](#13-dépannage)).
+*Si ce n'est pas le cas.* Si le message ne s'affiche pas, attendez la fin du travail en cours. Si vous fermez le terminal sans attendre, ou si l'ordinateur s'éteint brutalement pendant une commande, l'exécution en cours sera marquée « abandonnée » au prochain démarrage (voir le [dépannage](#14-dépannage)).
 
 Vérification : le message « Arrêt du serveur. » est vérifié sous Linux le 2026-11-13, par le signal d'interruption qu'envoie Ctrl+C (le clavier physique n'a pas été observé). L'arrêt d'une commande en cours a été vérifié le même jour par le signal SIGTERM (code `3`, verrou libéré) ; Ctrl+C physique sur une commande n'a pas été observé. L'arrêt pendant une exécution réelle, puis le redémarrage avec conservation des résultats, sont vérifiés sous Linux le 2026-11-02 (version antérieure de l'interface). Sous Windows, Ctrl+C n'est pas vérifié sur un poste réel ; l'annulation d'un job CI n'est pas un Ctrl+C.
 
-## 13. Dépannage
+## 14. Dépannage
 
 Pour chaque cas : ce que vous voyez, la cause probable, que faire.
 

@@ -27,14 +27,18 @@ Une extraction SHALL associer un modèle d'extraction prêt, son moteur, une gri
 - **THEN** la commande accepte `--model`, `--grid`, `--source` répétable et ordonné, `--threads` et `--setting NOM=VALEUR` applicables à la famille du modèle
 
 ### Requirement: Consignes versionnées
-Le programme SHALL construire, à partir d'un gabarit interne versionné, un message système contenant les règles d'extraction, les consignes générales de la grille et la description de chaque case, puis un message utilisateur contenant la transcription source. Les règles MUST demander de n'utiliser que ce qui est dit, de renvoyer « non mentionné » plutôt que d'inventer, de reprendre médicaments, doses et chiffres tels qu'entendus et d'utiliser `autres_informations` pour l'utile hors grille. La version du gabarit MUST être consignée avec chaque exécution.
+Le programme SHALL construire, à partir d'un gabarit interne versionné, un message système contenant les règles d'extraction, les consignes générales de la grille et la description de chaque case, puis un message utilisateur contenant la transcription source. La version du gabarit MUST être consignée avec chaque exécution.
 
 #### Scenario: Message système consultable
 - **WHEN** une extraction est terminée
 - **THEN** le message système exact et la version du gabarit sont conservés avec le résultat
 
+#### Scenario: Règles fixes du message système
+- **WHEN** le message système est construit
+- **THEN** ses règles demandent de n'utiliser que ce qui est dit, de renvoyer « non mentionné » plutôt que d'inventer, de reprendre médicaments, doses et chiffres tels qu'entendus et d'utiliser `autres_informations` pour l'utile hors grille
+
 ### Requirement: Sortie contrainte et validée
-Le moteur SHALL contraindre la génération par une grammaire convertie explicitement depuis le schéma de la grille puis chargée nativement avant la première source. Un échec de conversion ou de chargement, ou tout repli vers une contrainte plus large, MUST mettre l'exécution en échec avec ce motif, sans générer. La génération s'arrête sur tout token de fin de génération du modèle ou à la limite `sortie_max`. Le programme MUST valider lui-même chaque sortie contre le schéma, en refusant les clés JSON dupliquées. La sortie brute MUST être conservée dès qu'au moins un token a été généré. Une sortie non conforme ou interrompue par la limite de sortie est enregistrée avec l'état « non conforme » et son motif, sans être corrigée ni complétée. La conformité ne mesure que la forme, jamais l'exactitude.
+Le moteur SHALL contraindre la génération par une grammaire convertie explicitement depuis le schéma de la grille puis chargée nativement avant la première source. Un échec de conversion ou de chargement, ou tout repli vers une contrainte plus large, MUST mettre l'exécution en échec avec ce motif, sans générer. Le programme MUST valider lui-même chaque sortie contre le schéma, en refusant les clés JSON dupliquées. La conformité ne mesure que la forme, jamais l'exactitude.
 
 #### Scenario: Grammaire impossible à compiler
 - **WHEN** la compilation de la grammaire échoue pour le schéma d'une grille
@@ -48,12 +52,20 @@ Le moteur SHALL contraindre la génération par une grammaire convertie explicit
 - **WHEN** la génération s'arrête parce que le réglage `sortie_max` est atteint
 - **THEN** la source est enregistrée non conforme avec la fin « limite », la sortie brute est conservée et l'exécution continue avec la source suivante
 
+#### Scenario: Arrêt de la génération et sortie brute
+- **WHEN** la génération s'arrête sur un token de fin du modèle ou à la limite `sortie_max`
+- **THEN** la sortie brute est conservée dès qu'au moins un token a été généré ; une sortie non conforme ou interrompue par la limite est enregistrée avec l'état « non conforme » et son motif, sans être corrigée ni complétée
+
 ### Requirement: Génération reproductible et CPU
-Une extraction SHALL s'exécuter sur CPU uniquement, hors ligne à partir des fichiers locaux, avec un décodage glouton et une graine fixe, consignés dans les réglages effectifs. Le prompt SHALL être assemblé par un format de conversation maintenu localement pour l'architecture du modèle et versionné ; le gabarit de conversation embarqué dans le fichier du modèle MUST NOT être compilé ni interprété, y compris au chargement du modèle. Les réglages `contexte` et `sortie_max` SHALL être exposés avec leurs défauts. L'état du modèle MUST être réinitialisé avant chaque source, sans réutilisation de préfixe ni cache de prompt, afin que la lecture d'une source ne bénéficie pas de celle de la précédente.
+Une extraction SHALL s'exécuter sur CPU uniquement, hors ligne à partir des fichiers locaux, avec un décodage glouton et une graine fixe consignés. Le prompt SHALL être assemblé par un format de conversation maintenu localement pour l'architecture du modèle et versionné ; le gabarit embarqué dans le fichier du modèle MUST NOT être compilé ni interprété, même au chargement. Les réglages `contexte` et `sortie_max` SHALL être exposés avec leurs défauts.
 
 #### Scenario: Lot de deux sources
 - **WHEN** une extraction porte sur deux sources partageant le même message système
 - **THEN** le modèle est chargé une fois, le cache est réinitialisé avant la seconde source et les tokens lus de la seconde source incluent tout son prompt
+
+#### Scenario: Aucun effet d'une source sur la suivante
+- **WHEN** plusieurs sources sont extraites dans une même exécution
+- **THEN** l'état du modèle est réinitialisé avant chaque source, sans réutilisation de préfixe ni cache de prompt, pour que la lecture d'une source ne bénéficie pas de celle de la précédente
 
 ### Requirement: Contexte insuffisant refusé sans troncature
 Avant de générer, le programme SHALL tokeniser le prompt effectivement soumis, tokens spéciaux compris, avec le tokenizer du modèle ; ce sont ces tokens qui sont comptés et soumis. Si ce nombre augmenté de `sortie_max` dépasse `contexte`, la source MUST être enregistrée en erreur « contexte insuffisant » avec les deux nombres, sans tronquer la transcription.
@@ -74,7 +86,7 @@ Les sources d'une extraction SHALL être traitées une par une avec un seul char
 - **THEN** le moteur survivant vérifié est terminé et l'extraction est clôturée en état abandonné, ses résultats déjà écrits restant consultables
 
 ### Requirement: Mesures d'extraction
-Le programme SHALL mesurer, pour chaque source, sur une génération token par token : tokens du prompt soumis, tokens générés, délai avant le premier token généré (lecture du prompt et premier token compris), durée de génération, durée de l'extraction, vitesse de génération ((tokens générés − 1) / durée de génération), vitesse de lecture estimée (tokens du prompt / délai avant le premier token, étiquetée comme estimation), temps CPU, pic de mémoire cumulatif du processus moteur et cause de fin. Il SHALL mesurer pour l'exécution le temps de chargement, la durée du processus moteur et la durée totale, et relever le contexte système selon la méthode existante. Une mesure indisponible MUST être absente, jamais remplacée par zéro ; aucun score de qualité n'est calculé.
+Le programme SHALL mesurer, pour chaque source, token par token : tokens du prompt soumis et générés, délai avant le premier token généré (lecture du prompt comprise), durée de génération, durée de l'extraction, temps CPU, pic de mémoire cumulatif du processus moteur et cause de fin. Par exécution : temps de chargement, durée du processus moteur, durée totale, contexte système. Une mesure indisponible MUST être absente, jamais remplacée par zéro ; aucun score de qualité n'est calculé.
 
 #### Scenario: Source extraite
 - **WHEN** une source est extraite
@@ -84,8 +96,12 @@ Le programme SHALL mesurer, pour chaque source, sur une génération token par t
 - **WHEN** la génération ne produit qu'un token
 - **THEN** la vitesse de génération est absente et non nulle
 
+#### Scenario: Vitesses dérivées
+- **WHEN** les mesures d'une source sont calculées
+- **THEN** la vitesse de génération vaut (tokens générés − 1) / durée de génération et la vitesse de lecture estimée vaut tokens du prompt / délai avant le premier token, étiquetée comme estimation
+
 ### Requirement: Métadonnées et conservation
-Chaque extraction SHALL être enregistrée dans un emplacement unique sous `data/extractions/` avec : grille (nom, empreinte, copie, schéma), consignes (message système, version), modèle (identifiant, révision, fichier, famille, architecture), moteur et versions, réglages effectifs défauts compris, threads demandés et appliqués si vérifiables, mode de chargement des poids, machine, programme, date, et pour chaque source une copie du texte, son empreinte, sa provenance (exécution, ordre, audio et empreinte, modèle et moteur de transcription, marque factice), la sortie brute, la valeur décodée si conforme et les mesures. Les écritures sont atomiques ; le fichier de résultat d'une source est écrit en dernier et marque sa publication ; une extraction finalisée n'est jamais modifiée. Le journal d'exécution MUST NOT contenir le texte source ni la sortie du modèle, et les fichiers de travail contenant ces textes MUST être supprimés à la fin de l'opération ou lors de la récupération.
+Chaque extraction SHALL être enregistrée dans un emplacement unique sous `data/extractions/` avec grille, consignes, modèle, moteur, réglages effectifs, threads, machine, programme, date, et par source texte copié, provenance, sortie brute, valeur décodée et mesures. Les écritures sont atomiques ; le résultat d'une source est écrit en dernier et marque sa publication ; une extraction finalisée n'est jamais modifiée. Le journal d'exécution MUST NOT contenir le texte source ni la sortie du modèle.
 
 #### Scenario: Même source extraite de nouveau
 - **WHEN** une source est extraite une seconde fois avec la même configuration
@@ -94,6 +110,10 @@ Chaque extraction SHALL être enregistrée dans un emplacement unique sous `data
 #### Scenario: Résultat de transcription source supprimé ou illisible
 - **WHEN** l'exécution de transcription d'origine n'est plus lisible
 - **THEN** l'extraction reste consultable grâce à sa copie du texte source et à sa provenance consignée
+
+#### Scenario: Détail des métadonnées et fichiers de travail
+- **WHEN** une extraction est enregistrée
+- **THEN** le modèle porte identifiant, révision, fichier, famille et architecture ; les threads demandés et appliqués et le mode de chargement des poids sont consignés si vérifiables ; la provenance d'une source porte exécution, ordre, audio et empreinte, modèle et moteur de transcription et marque factice ; les fichiers de travail contenant texte source ou sortie du modèle sont supprimés à la fin de l'opération ou lors de la récupération
 
 ### Requirement: Extraction factice
 Le moteur factice SHALL proposer une famille d'extraction qui, sans réseau ni modèle, produit pour une grille une sortie conforme déterministe et des mesures simulées clairement identifiées comme factices.

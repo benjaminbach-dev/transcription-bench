@@ -12,7 +12,7 @@ Une grille d'extraction SHALL être un fichier Markdown UTF-8 d'au plus 64 Kio, 
 - **THEN** elle refuse avec le code 2 sans lire le fichier
 
 ### Requirement: Interprétation des cases
-Le programme SHALL interpréter une grille ainsi : un titre `#` unique en premier contenu ; un texte facultatif de consignes générales avant la première case ; chaque titre `##` ouvre une case dont le texte suivant est la consigne ; la case est une liste si la première ligne non vide de sa consigne, blancs de tête retirés, commence par le mot « Liste » (casse ignorée) suivi d'espaces facultatifs puis de `.` ou `:` ; des titres `###` sous une case en font une case composée de sous-cases, chacune pouvant être une liste selon la même règle. Les titres placés dans un bloc de code clôturé par trois accents graves ou trois tildes ne sont pas interprétés ; un bloc non fermé rend la grille invalide.
+Le programme SHALL interpréter une grille ainsi : un titre `#` unique en premier contenu ; un texte facultatif de consignes générales avant la première case ; chaque titre `##` ouvre une case dont le texte suivant est la consigne ; des titres `###` sous une case en font une case composée de sous-cases. Une case ou sous-case est une liste selon la règle du scénario « Case liste ». Un bloc de code clôturé non fermé rend la grille invalide.
 
 #### Scenario: Case simple, liste et composée
 - **WHEN** une grille contient `## Qui ?` sans consigne, `## Symptômes déclarés ?` suivi de « Liste. Un symptôme par entrée » et `## Prescription ?` suivi de « Liste. » puis `### Médicament`, `### Posologie`, `### Durée`
@@ -25,6 +25,10 @@ Le programme SHALL interpréter une grille ainsi : un titre `#` unique en premie
 #### Scenario: Profondeur excessive ou structure invalide
 - **WHEN** une grille contient un titre `####`, un `###` avant tout `##`, aucun `##`, plusieurs `#`, un bloc de code non fermé ou plus de 60 cases et sous-cases
 - **THEN** la grille est déclarée invalide avec la ligne et la règle en cause, et elle n'est pas proposée à l'exécution
+
+#### Scenario: Case liste et blocs de code
+- **WHEN** la première ligne non vide de la consigne d'une case ou sous-case, blancs de tête retirés, commence par le mot « Liste » (casse ignorée) suivi d'espaces facultatifs puis de `.` ou `:`
+- **THEN** la case est une liste ; les titres placés dans un bloc de code clôturé par trois accents graves ou trois tildes ne sont pas interprétés
 
 ### Requirement: Clés stables et réservées
 Chaque case et sous-case SHALL recevoir une clé dérivée de son libellé : décomposition Unicode NFKD sans marques diacritiques, `œ`→`oe`, `æ`→`ae`, `ß`→`ss`, minuscules, toute suite de caractères hors `[a-z0-9]` remplacée par un seul `_`, sans `_` en début ni en fin. Une clé vide, deux clés identiques au même niveau ou la clé réservée `autres_informations` MUST rendre la grille invalide.

@@ -32,9 +32,9 @@
 
 ## 5. Documentation et vérifications
 
-- [ ] 5.1 Documentation : guide (écrire une grille, lancer une extraction, relire et comparer), technique (protocole, stockage, mesures, formats locaux), `docs/licences-modeles.md` (six modèles candidats, licences Apache 2.0, conditions d'accès), rappel « grille remplie ≠ exactitude médicale » ; adaptation de `tests/test_documentation.py` sans contourner ses contrôles.
+- [x] 5.1 Documentation : guide (écrire une grille, lancer une extraction, relire et comparer), technique (protocole, stockage, mesures, formats locaux), `docs/licences-modeles.md` (six modèles candidats, licences Apache 2.0, conditions d'accès), rappel « grille remplie ≠ exactitude médicale » ; adaptation de `tests/test_documentation.py` sans contourner ses contrôles. Fait le 2026-11-20 (guide section 12, technique, licences ; revue advisor).
 - [x] 5.2 Mettre à jour `AGENTS.md` (périmètre étendu à l'extraction, moteur llama.cpp, CI inchangée sans nouvel accord) — validé avec le propriétaire lors de la rédaction des specs.
-- [ ] 5.3 `openspec validate ajouter-bench-extraction --strict`, suite de tests complète avec moteur factice sur le serveur de développement ; relecture advisor ; consigner décisions et limites en mémoire projet.
+- [x] 5.3 `openspec validate ajouter-bench-extraction --strict`, suite de tests complète avec moteur factice sur le serveur de développement ; relecture advisor ; consigner décisions et limites en mémoire projet. Fait le 2026-11-20 : validate --strict valide (2 INFO d’archivage attendus, ordre d’archivage des autres changes), suite de 1659 tests OK, relecture advisor, mémoire à jour.
 
 ## 6. Qualification réelle (PC de test Linux déclaré, accord explicite requis)
 

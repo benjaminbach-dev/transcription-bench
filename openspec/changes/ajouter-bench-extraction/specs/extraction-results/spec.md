@@ -8,7 +8,7 @@ Les extractions SHALL être regroupées par triplet (empreinte du texte source, 
 - **THEN** les extractions apparaissent dans deux groupes distincts et ne peuvent pas être comparées entre elles
 
 ### Requirement: Liste des extractions
-`extract list` et la page Extractions SHALL présenter les groupes, nommés par l'audio d'origine, le modèle de transcription et le titre de la grille, ordonnés par leur extraction la plus récente. Chaque entrée montre modèle, durée de l'extraction, délai avant le premier token, vitesse de génération, RAM moteur, CPU moteur, conformité, état et date courte. Le tri à l'intérieur d'un groupe SHALL être `temps`, `ram`, `cpu` ou `recent` (défaut), les valeurs absentes en dernier. Les extractions factices sont séparées et marquées.
+`extract list` et la page Extractions SHALL présenter les groupes, nommés par l'audio d'origine, le modèle de transcription et le titre de la grille, ordonnés par leur extraction la plus récente. Chaque entrée montre modèle, durée de l'extraction, délai avant le premier token, vitesse de génération, RAM moteur, CPU moteur, conformité, état et date courte. Le tri dans un groupe SHALL être `temps`, `ram`, `cpu` ou `recent` (défaut). Les extractions factices sont séparées et marquées.
 
 #### Scenario: Liste en JSON
 - **WHEN** un agent exécute `extract list --json`
@@ -18,8 +18,12 @@ Les extractions SHALL être regroupées par triplet (empreinte du texte source, 
 - **WHEN** un tri inconnu est demandé, par la commande ou par la page
 - **THEN** il est refusé sans opération
 
+#### Scenario: Valeurs absentes dans un tri
+- **WHEN** une entrée n'a pas la valeur du critère de tri demandé
+- **THEN** elle est placée après les entrées qui l'ont
+
 ### Requirement: Détail d'une extraction
-`extract show ID` et la page de détail SHALL présenter, pour chaque source, les indicateurs principaux, puis la grille remplie case par case dans l'ordre de la grille avec le libellé de chaque case, « non mentionné » pour une valeur nulle, « (vide) » pour une chaîne vide, les sous-cases et entrées de liste lisibles, la section « Autres informations utiles », puis le texte source complet. Sur grand écran, la grille et le texte source SHALL être lisibles côte à côte ; sur petit écran, ils se suivent. La sortie brute, la grille copiée, le message système, les réglages et les métadonnées restent accessibles en détail.
+`extract show ID` et la page de détail SHALL présenter, pour chaque source, les indicateurs principaux, puis la grille remplie case par case dans l'ordre de la grille avec le libellé de chaque case, la section « Autres informations utiles », puis le texte source complet. Sur grand écran, la grille et le texte source SHALL être lisibles côte à côte ; sur petit écran, ils se suivent. Sortie brute, grille copiée, message système, réglages et métadonnées restent accessibles.
 
 #### Scenario: Relecture humaine
 - **WHEN** l'utilisateur ouvre une extraction conforme à 1280 px
@@ -33,8 +37,12 @@ Les extractions SHALL être regroupées par triplet (empreinte du texte source, 
 - **WHEN** une valeur extraite ou un texte source contient du balisage
 - **THEN** il est affiché comme texte, sans exécution
 
+#### Scenario: Valeurs particulières de la grille remplie
+- **WHEN** une case vaut null, une chaîne vide, une sous-case ou une liste
+- **THEN** elle est lue comme « non mentionné » pour null, « (vide) » pour une chaîne vide, avec sous-cases et entrées de liste lisibles
+
 ### Requirement: Comparaison case par case
-`extract compare CLE SEL SEL…` et la page de comparaison SHALL présenter 2 à 6 extractions d'un même groupe dans l'ordre reçu : indicateurs principaux de chaque modèle, puis une ligne par case de la grille et une colonne par extraction, puis `autres_informations` ; la transcription source est accessible une fois. Une sélection hors groupe, mal formée, hors bornes ou mêlant extractions factices et réelles MUST être refusée. Sur petit écran, la présentation se réorganise sans défilement horizontal de page.
+`extract compare CLE SEL SEL…` et la page de comparaison SHALL présenter 2 à 6 extractions d'un même groupe dans l'ordre reçu : indicateurs principaux de chaque modèle, puis une ligne par case de la grille et une colonne par extraction, puis `autres_informations` ; la transcription source est accessible une fois. Une sélection hors groupe, mal formée, hors bornes ou mêlant factices et réelles MUST être refusée. Sur petit écran, la présentation se réorganise sans défilement horizontal de page.
 
 #### Scenario: Trois modèles comparés
 - **WHEN** l'utilisateur compare trois extractions conformes d'un même groupe

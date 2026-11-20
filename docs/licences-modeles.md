@@ -35,6 +35,29 @@ Les deux feuilles de l'interface sont servies par l'application depuis le paquet
 
 Ces deux licences MIT autorisent l'usage, la modification et la redistribution à condition de conserver l'avis de copyright et le texte de licence ; pour Sumi.css le texte est joint dans `LICENSE-Sumi.css`, pour Flexoki le texte type de la MIT s'applique avec le copyright déclaré ci-dessus. Sumi.css est utilisé sans modification fonctionnelle (copie octet pour octet) ; Flexoki n'est employé que par des valeurs de couleur déclarées dans `app.css` du projet.
 
+## Modèles d'extraction candidats
+
+Vérification documentaire par l'API publique Hugging Face le 2026-11-19 (métadonnées seules, aucun poids téléchargé sur le serveur de développement pour cet examen). Ce relevé ne constitue pas un avis juridique.
+
+| Palier RAM | Dépôt GGUF | Fichier | Taille | Révision vue (tronquée) | Licence déclarée | Accès vu |
+|------------|-----------|---------|--------|-------------------------|------------------|----------|
+| 8 Go | `mistralai/Ministral-3-3B-Instruct-2512-GGUF` | `Ministral-3-3B-Instruct-2512-Q8_0.gguf` | 3,65 Go | `eb599d40…` | Apache-2.0 | libre |
+| 8 Go | `unsloth/Qwen3.5-4B-GGUF` | `Qwen3.5-4B-Q4_K_M.gguf` | 2,74 Go | `e87f1764…` | Apache-2.0 | libre |
+| 16 Go | `mistralai/Ministral-3-8B-Instruct-2512-GGUF` | `Ministral-3-8B-Instruct-2512-Q4_K_M.gguf` | 5,20 Go | `0102285a…` | Apache-2.0 | libre |
+| 16 Go | `unsloth/Qwen3.5-9B-GGUF` | `Qwen3.5-9B-Q4_K_M.gguf` | 5,68 Go | `3885219b…` | Apache-2.0 | libre |
+| 16 Go | `ibm-granite/granite-4.2-8b-GGUF` | `granite-4.2-8b-Q4_K_M.gguf` | 5,35 Go | `93f3f6a8…` | Apache-2.0 | libre |
+| 16 Go | `ggml-org/gemma-4-E4B-it-GGUF` | `gemma-4-E4B-it-Q8_0.gguf` | 8,03 Go | `8903cb40…` | Apache-2.0 | libre |
+
+Les révisions indiquées sont celles du design et n'ont pas été vérifiées comme complètes dans ce relevé. Le palier est une recommandation documentaire (poids + contexte + système), pas une règle du programme.
+
+**Modèles écartés.** MedGemma : accès restreint, entraînement majoritairement anglophone. LFM2.5 : licence limitée selon le chiffre d'affaires. EuroLLM-22B : trop lourd pour le palier 16 Go.
+
+**Qualification réelle.** Une qualification a eu lieu sur un PC de test Linux le 2026-11-20 (tasks.md, groupe 6) avec les six modèles et trois transcriptions des audios Gemini existants. Les preuves locales consignent six modèles chargés, 18 sorties structurellement conformes et les mesures RAM sur ce PC. Cela ne constitue pas une validation clinique et ne préjuge ni de la qualité médicale des extractions, ni des performances sur d'autres machines. La liste blanche des architectures reste provisoire tant que la qualification n'est pas close. Qualification Windows non vérifiée.
+
+**Moteur d'extraction.** llama-cpp-python 0.3.36 (licence MIT), roues CPU précompilées Linux x64 et Windows x64 depuis l'index du projet (`https://abetlen.github.io/llama-cpp-python/whl/cpu/`).
+
+Les mêmes réserves que le reste de ce fichier s'appliquent : conversions tierces et quantifications, poids non redistribués par ce dépôt, ne pas contourner un dépôt restreint.
+
 ## Dépendances principales
 
 D'après leurs métadonnées officielles et dépôts : faster-whisper 1.2.1, CTranslate2 4.8.3, transcribe-cpp et transcribe-cpp-native 0.4.1 déclarent MIT ; Transformers 5.20.2 déclare Apache-2.0 ; PyTorch 2.14.1 utilise notamment BSD-3-Clause avec des composants tiers sous plusieurs licences ; librosa 1.0.0 déclare ISC.

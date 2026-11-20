@@ -442,6 +442,126 @@ tests/                     tests unittest, sans réseau
   uv run --locked python -m unittest discover -s tests -t .
   ```
 
+## Extraction de grilles structurées
+
+L'extraction remplit une grille structurée à partir d'une transcription déjà
+enregistrée. Elle utilise un moteur d'extraction distinct (`llama-cpp`), un
+modèle de langage au format GGUF et une sortie contrainte par grammaire.
+
+### Protocole et événements
+
+Le runner d'extraction (`engines/runner_extraction.py`) suit le même principe
+que le runner audio : un sous-processus émet des lignes préfixées
+`##TB-EVENT## ` suivies de JSON. Nouveaux types d'événements :
+
+- `extraction` : source terminée avec état (`conforme`, `non_conforme`,
+  `erreur`), cause de fin (`arret` pour token de fin, `limite` pour `sortie_max`
+  atteint), tokens d'entrée et de sortie, délai avant le premier token,
+  vitesses, temps CPU, pic mémoire.
+- `extraction_erreur` : source en erreur (contexte insuffisant, erreur moteur)
+  avec le motif.
+
+Les événements `chargement` et `fin` sont réutilisés. Les champs requis et la
+provenance factice/simulee suivent les règles des transcriptions.
+
+### Contrat d'adaptateur
+
+Un adaptateur d'extraction expose deux méthodes :
+
+- `charger(modele, threads_demandes, reglages, schema)` : charge le modèle et
+  compile la grammaire depuis le schéma JSON de la grille. Renvoie
+  `meta_moteur` (threads appliqués, mode de chargement des poids, architecture,
+  SHA-256 du gabarit embarqué, version du format local, décodage, graine).
+- `extraire(moteur, messages, reglages)` : génère une sortie contrainte pour
+  les messages donnés. Renvoie la sortie brute, les compteurs et les
+  chronométrages.
+
+L'adaptateur `llama_cpp.py` utilise l'API de bas niveau de llama-cpp-python
+(liaisons C), sans la classe `Llama` dont le constructeur compilerait les
+gabarits Jinja embarqués.
+
+### Stockage
+
+Les résultats d'extraction sont stockés sous `data/extractions/<AAAAMMJJ-HHMMSS>-<8hex>/` :
+
+| Fichier | Contenu |
+|---------|--------|
+| `run.json` | Métadonnées de l'exécution (`schema: 1`, `type: "extraction"`), état, mesures |
+| `run.log` | Journal de l'exécution (sans texte source ni sortie) |
+| `grille.md` | Copie exacte de la grille utilisée |
+| `schema.json` | Schéma JSON généré depuis la grille |
+| `consignes.json` | Message système, `version_consignes`, `version_format` |
+| `<n>-<libellé>/source.txt` | Copie de la transcription source |
+| `<n>-<libellé>/sortie_brute.txt` | Sortie brute du modèle (si au moins un token) |
+| `<n>-<libellé>/extraction.json` | Grille remplie (seulement si conforme au schéma) |
+| `<n>-<libellé>/result.json` | État de la source, motif, mesures, provenance (marqueur de publication) |
+
+Le fichier `result.json` est écrit en dernier pour chaque source ; une source
+sans ce fichier est considérée non traitée. Mêmes règles que pour les
+transcriptions : écriture atomique, état immuable après publication, aucun
+écrasement.
+
+### Mesures
+
+Par source, mesurées par le programme sur la génération token par token :
+
+- `tokens_entree` : tokens du prompt soumis (tokens spéciaux compris).
+- `tokens_sortie` : tokens générés (token de fin exclu).
+- `delai_premier_token_s` : du début de la génération au premier token généré
+  (lecture du prompt et calcul du premier token compris).
+- `duree_generation_s` : du premier au dernier token généré.
+- `duree_extraction_s` : génération, détokenisation et validation.
+- `vitesse_generation_tps` : (tokens_sortie − 1) / durée de génération, absente
+  si moins de deux tokens.
+- `vitesse_lecture_estimee_tps` : tokens_entree / délai avant le premier token
+  (étiquette « estimation » car elle inclut le premier token).
+- `temps_cpu_s`, pic mémoire cumulatif, cause de fin (`arret` ou `limite`),
+  conformité.
+
+Par exécution : temps de chargement, durée du processus moteur, durée totale,
+contexte système (méthode existante, facultative).
+
+Une mesure indisponible est absente, jamais remplacée par zéro. Les compteurs
+natifs de llama.cpp ne sont consignés, à part et sous leur nom, que s'ils ont
+été vérifiés lisibles et cohérents lors de l'essai minimal.
+
+### Formats de conversation locaux
+
+Le gabarit Jinja embarqué dans un fichier GGUF n'est pas interprété par le
+programme (« aucun code distant »). À la place, l'adaptateur maintient un
+format de conversation par architecture admise : un assemblage de chaînes et de
+tokens spéciaux, sans moteur de gabarits. Le gabarit embarqué est lu comme
+texte lors de la qualification pour vérifier la correspondance, et son SHA-256
+est consigné avec le résultat. Le mode raisonnement éventuel est désactivé.
+
+Liste blanche provisoire des architectures (fixée après qualification) :
+`mistral3`, `qwen35`, `granite`, `gemma4`. Une architecture sans format local
+n'est pas admise.
+
+### Grammaire et sortie contrainte
+
+Le schéma JSON de la grille est converti en grammaire GBNF par le convertisseur
+Python de llama-cpp-python (`json_schema_to_gbnf`), puis chargée nativement
+comme échantillonneur de grammaire. Un échec de conversion ou de chargement met
+l'exécution en échec avec ce motif, sans générer.
+
+La liaison 0.3.36 ne renvoie pas d'échec sur grammaire mal formée (repli
+silencieux vers aucune contrainte) : le refus est assuré par une **sonde de
+contrainte** appliquée au vocabulaire après chargement ; une grammaire chargée
+masque la quasi-totalité des tokens.
+
+La conformité de fond est validée par un validateur interne (une centaine de
+lignes, sans dépendance) après génération. Les clés JSON dupliquées sont
+refusées. Conformité ≠ exactitude : elle ne dit que la forme, pas si le
+contenu est médicalement correct.
+
+### Regroupement des extractions (D9)
+
+Les extractions sont regroupées par triplet (empreinte du texte source,
+empreinte de la grille, empreinte du schéma généré). Deux extractions d'une
+même source avec des grilles différentes ne sont pas comparables. Une
+différence de version des consignes au sein d'un groupe est signalée.
+
 ## Limites connues
 
 - Prototype non clinique, non destiné à un usage de soin.

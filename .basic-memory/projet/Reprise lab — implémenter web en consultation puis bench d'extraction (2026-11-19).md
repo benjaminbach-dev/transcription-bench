@@ -43,3 +43,11 @@ Point de reprise pour l'agent du lab (serveur de développement). Provenance : s
 
 ## Méthode
 - Une tâche à la fois via worker, revue advisor par lot, le principal coche `tasks.md` et corrige ; commit et push par lot sur demande explicite du propriétaire (accord du 2026-11-19 pour ce fil de travail ; pause demandée après le lot 3).
+
+
+## État au 2026-11-20 (fin de journée : lot 4 et lot 5 côté lab)
+
+- [validation] Lot 4 terminé et poussé : 4.3 relue (aucun défaut ; commentaires périmés corrigés), audit de couverture des scénarios (test des anciennes routes 404 ajouté), revue advisor Opus sans bloquant, 4.4 contrôle visuel fait par navigator sur données synthétiques (clair/sombre, 1280/360, aucun défilement horizontal).
+- [limit] 4.4 : le thème sombre n'a pas pu être émulé nativement (aucun outil Playwright MCP pour emulateMedia) ; contrôle fait via feuilles temporaires où prefers-color-scheme: dark devient all. Observation mineure non corrigée : noms de modèles coupés en milieu de mot dans les colonnes étroites de la comparaison à 1280 px.
+- [validation] 5.1 documentation (guide section 12 avec renumérotation, technique, licences des six candidats) rédigée par worker Opus puis revue advisor (une erreur corrigée : cause de fin « arret », pas « eog »). 5.3 : 9 exigences raccourcies, openspec validate --strict valide (2 INFO d'archivage attendus : dépendent de l'archivage préalable d'alleger-interface-web et ajouter-cli-agent). Suite complète 1659 OK.
+- [next] Archivage de ajouter-bench-extraction après alleger-interface-web (3.4/3.5) et ajouter-cli-agent ; tâches 6.2/6.3 restantes sur PC de test (statuer sur les écarts de gabarit Qwen et Granite). Dettes du lot 3 inchangées.
