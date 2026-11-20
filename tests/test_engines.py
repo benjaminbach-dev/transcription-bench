@@ -193,7 +193,11 @@ class DeclarationsFourniesTest(unittest.TestCase):
                     attendus[declaration.identifiant],
                 )
 
-    def test_seul_le_verrou_llama_cpp_est_marque_non_valide(self) -> None:
+    def test_tous_les_verrous_sont_valides_apres_essai_minimal(self) -> None:
+        # Le verrou llama-cpp, non résolu jusqu'à l'essai minimal 0.1 (PC de
+        # test, 2026-11-20), est désormais résolu et vérifié : toutes les
+        # déclarations livrées autorisent l'installation. Le refus drapeau
+        # baissé reste couvert par test_moteurs.InstallationLlamaCppTest.
         valides = {
             declaration.identifiant: declaration.verrou_valide
             for declaration in declarations_fournies()
@@ -204,7 +208,7 @@ class DeclarationsFourniesTest(unittest.TestCase):
                 "faster-whisper": True,
                 "transcribe-cpp": True,
                 "transformers": True,
-                "llama-cpp": False,
+                "llama-cpp": True,
                 "factice": True,
             },
         )

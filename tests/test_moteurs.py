@@ -706,9 +706,16 @@ class InstallationLlamaCppTest(SocleMoteurs):
     """
 
     def test_llama_cpp_refuse_tant_que_le_verrou_n_est_pas_valide(self) -> None:
+        """Garde-fou drapeau baissé, sans dépendre de l'état réel livré."""
+        registre = RegistreMoteurs()
+        registre.enregistrer(
+            replace(
+                creer_registre_fourni().obtenir("llama-cpp"), verrou_valide=False
+            )
+        )
         service = InstallationMoteurs(
             self.donnees,
-            creer_registre_fourni(),
+            registre,
             self.creneau,
             racine_projet=RACINE_PROJET,
             environ=ENVIRON_UV,

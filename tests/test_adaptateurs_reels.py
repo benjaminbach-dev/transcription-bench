@@ -498,11 +498,15 @@ class VerrouLlamaCppTest(unittest.TestCase):
         }
         self.assertLessEqual(attendues, set(self._lignes_actives(self.verrou)))
 
-    def test_statut_non_resolu_et_renvoi_au_pc_de_test(self) -> None:
-        self.assertIn("VERROU NON RÉSOLU NI VÉRIFIÉ", self.verrou)
-        self.assertIn("2026-11-19", self.verrou)
-        self.assertIn("PC de test", self.verrou)
+    def test_statut_resolu_et_verifie_sur_pc_de_test(self) -> None:
+        self.assertIn("résolu et vérifié sur PC de test", self.verrou)
+        self.assertIn("2026-11-20", self.verrou)
+        # Résolution universelle, mais l'installation Windows reste non vérifiée.
+        self.assertIn("installation Windows x64 n'est pas vérifiée", self.verrou)
+        self.assertIn("uv pip compile --universal", self.verrou)
         self.assertIn("--no-build", self.declaration)
+        # Le statut non résolu d'avant l'essai minimal n'est plus affiché.
+        self.assertNotIn("NON RÉSOLU", self.verrou)
 
 
 class EnvironnementNumbaTest(unittest.TestCase):

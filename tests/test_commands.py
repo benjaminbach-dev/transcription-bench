@@ -921,9 +921,10 @@ class EnginesListTest(CommandTestCase):
         self.assertIn("réinstallation", states["faster-whisper"]["note"])
         self.assertEqual(states["transcribe-cpp"]["etat"], "non-installe")
         self.assertEqual(states["transformers"]["etat"], "non-installe")
-        # Le moteur d'extraction est déclaré, mais non installé.
+        # Le moteur d'extraction est déclaré, non installé, mais installable
+        # depuis l'essai minimal 0.1 (verrou résolu et vérifié sur PC de test).
         self.assertEqual(states["llama-cpp"]["etat"], "non-installe")
-        self.assertFalse(states["llama-cpp"]["installable"])
+        self.assertTrue(states["llama-cpp"]["installable"])
         fake_state = states["factice"]
         self.assertEqual(list(fake_state.keys()), ENGINE_STATE_KEYS)
         self.assertEqual(fake_state["etat"], "pret")

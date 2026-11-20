@@ -507,10 +507,11 @@ DECLARATION_LLAMA_CPP = DeclarationAdaptateur(
     ),
     module_adaptateur="engines.adaptateurs.llama_cpp",
     modules_verification=("llama_cpp",),
-    # Verrou rédigé par consultation des métadonnées seulement (2026-11-19) : non
-    # résolu ni vérifié, donc installation refusée tant que la tâche 6.1 ne l'a pas
-    # validé sur le PC de test.
-    verrou_valide=False,
+    # Verrou résolu et vérifié sur le PC de test le 2026-11-20 (essai minimal 0.1) :
+    # uv pip compile --universal --no-build (pins identiques à la rédaction manuelle
+    # du 2026-11-19), uv pip sync --no-build sans compilation (roue CPU abetlen),
+    # contrôle d'import llama_cpp 0.3.36 OK. Installation Windows x64 non vérifiée.
+    verrou_valide=True,
 )
 
 DECLARATION_FACTICE = DeclarationAdaptateur(
