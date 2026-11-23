@@ -39,7 +39,9 @@ Règles reprises des specs et du design :
   runner exige un chemin non vide. Une famille d'une autre tâche que celle de
   la demande est affichée non exécutable, avec son motif, et refusée ;
 - sans mécanisme natif déclaré (`Famille.duree_native` absente), l'exécution
-  annonce le découpage en fenêtres fixes de 30 s sans recouvrement (D9). La
+  annonce le découpage en fenêtres fixes de 30 s sans recouvrement (D9) pour
+  une famille de transcription ; une famille d'extraction n'a pas de fenêtre
+  (`null`), chaque source étant traitée en un seul appel. La
   constante est tenue égale à celle du runner (`engines.runner.FENETRE_SECONDES`)
   par un test, sans importer le runner ici. Un mécanisme natif déclaré rend la
   famille non exécutable (voir ci-dessus) : `run options` ne l'annonce donc
@@ -205,8 +207,9 @@ class ModelePropose:
 
     `reglages` reprend, dans l'ordre de la déclaration, les réglages de la
     famille du modèle. `fenetre_fixe_secondes` vaut `None` quand la famille
-    déclare un mécanisme natif d'audio long, et `FENETRE_FIXE_SECONDES` sinon ;
-    une famille à mécanisme natif est justement non exécutable ici.
+    déclare un mécanisme natif d'audio long ou qu'elle est une famille
+    d'extraction, et `FENETRE_FIXE_SECONDES` sinon ; une famille à mécanisme
+    natif est justement non exécutable ici.
     `qualifiee` indique si la famille a été validée sur PC. `executable` résume
     la règle du runner : un modèle non exécutable est affiché avec son motif
     `motif_non_executable` et ne peut jamais être sélectionné ni validé.
@@ -604,8 +607,15 @@ def proposer_modele(
         qualifiee=famille.qualifiee,
         fichier_gguf=fichier_gguf,
         reglages=famille.reglages,
+        # Le découpage en fenêtres fixes est un concept de la transcription. Une
+        # famille d'extraction traite chaque source en un seul appel
+        # (engines/runner_extraction.py) : elle n'a donc pas de fenêtre, d'où
+        # `None`. Le critère est la tâche de la famille, non celle de la demande :
+        # une famille d'extraction listée côté transcription reste sans fenêtre.
         fenetre_fixe_secondes=(
-            None if famille.duree_native is not None else FENETRE_FIXE_SECONDES
+            None
+            if famille.duree_native is not None or famille.task == TASK_EXTRACTION
+            else FENETRE_FIXE_SECONDES
         ),
         executable=motif is None,
         motif_non_executable=motif,

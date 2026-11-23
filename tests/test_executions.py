@@ -17,7 +17,9 @@ from engines.declarations import (
     TYPE_CHOIX,
     TYPE_ENTIER,
     TYPE_TEXTE,
+    TASK_EXTRACTION,
     DECLARATION_FACTICE,
+    DECLARATION_LLAMA_CPP,
     DeclarationAdaptateur,
     DureeNative,
     Famille,
@@ -39,6 +41,7 @@ from transcription_bench.executions import (
     PREFIXE_CHAMP_REGLAGE,
     ConfigurationExecutions,
     ReglageValide,
+    proposer_modele,
     refuser_champs_repetes,
     reglages_depuis_champs,
     threads_par_defaut,
@@ -230,6 +233,43 @@ class ModelesProposesTest(SocleExecutionsTest):
         self.assertEqual(propose.fenetre_fixe_secondes, FENETRE_FIXE_SECONDES)
         self.assertEqual(FENETRE_FIXE_SECONDES, FENETRE_SECONDES)
 
+    def test_extraction_family_has_no_fixed_window(self) -> None:
+        # Extraction : chaque source fait un seul appel (engines/runner_extraction.py),
+        # donc aucune fenêtre de 30 s. Modèle prêt simulé : seule la déclaration
+        # réelle sert, aucun moteur n'est chargé.
+        famille = DECLARATION_LLAMA_CPP.familles[0]
+        self.assertEqual(famille.task, TASK_EXTRACTION)
+
+        propose = proposer_modele(
+            DECLARATION_LLAMA_CPP,
+            famille,
+            cle=CLE,
+            identifiant="org/modele",
+            id_resolu="org/modele",
+            commit=COMMIT,
+            fichier_gguf="modele.gguf",
+            tache=TASK_EXTRACTION,
+        )
+
+        self.assertIsNone(propose.fenetre_fixe_secondes)
+        self.assertTrue(propose.executable)
+        self.assertIsNone(propose.motif_non_executable)
+
+    def test_transcription_family_keeps_fixed_window(self) -> None:
+        famille = declaration_avec_reglages().familles[0]
+
+        propose = proposer_modele(
+            declaration_avec_reglages(),
+            famille,
+            cle=CLE,
+            identifiant="org/modele",
+            id_resolu="org/modele",
+            commit=COMMIT,
+            fichier_gguf=None,
+        )
+
+        self.assertEqual(propose.fenetre_fixe_secondes, FENETRE_FIXE_SECONDES)
+
     def test_mecanisme_natif_declare_sans_fenetre_fixe_et_executable(self) -> None:
         registre = RegistreMoteurs()
         registre.enregistrer(
@@ -298,6 +338,7 @@ class ModelesProposesTest(SocleExecutionsTest):
         self.assertEqual(extraction.famille, "factice-extraction")
         self.assertEqual(extraction.cle, CLE_MODELE_FACTICE_EXTRACTION)
         self.assertTrue(extraction.synthetique)
+        self.assertIsNone(extraction.fenetre_fixe_secondes)
         # Famille d'extraction proposée à une exécution de transcription : refusée.
         self.assertFalse(extraction.executable)
         self.assertIn("extraction", extraction.motif_non_executable or "")
