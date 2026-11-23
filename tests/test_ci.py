@@ -451,6 +451,20 @@ class CliWindowsDriverTests(DriverCliBase):
             cli.lancer_cli(["data", "check"], delai=5, sans_encodage=False)
             self.assertEqual(lancement.call_args.kwargs["env"]["PYTHONIOENCODING"], "utf-8")
 
+    def test_execution_terminee_exige_listes_vides(self):
+        # Schéma réel de `run start --json` : compteurs = listes d'audios, vides
+        # si aucun cas ; champ absent ou non vide = écart.
+        def objets(en_erreur, non_traites):
+            return [{"operation": "terminee", "execution": {
+                "etat": "terminee", "audios_en_erreur": en_erreur,
+                "audios_non_traites": non_traites}}]
+
+        ctx = cli.Contexte(phase="modele-execution")
+        cli.verifie_execution_terminee(objets([], []), ctx)
+        for cas in (["1:1"], []), ([], ["1:2"]), (None, None):
+            with self.subTest(cas=cas), self.assertRaises(cli.EtapeEnEcart):
+                cli.verifie_execution_terminee(objets(*cas), ctx)
+
     def test_arret_brutal_termine_l_arbre(self):
         code = ("import subprocess, sys, time; "
                 "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)']); time.sleep(60)")

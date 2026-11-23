@@ -605,9 +605,14 @@ def verifie_nombre_inchange(objets: list[dict[str, Any]], ctx: Contexte) -> None
 def verifie_execution_terminee(objets: list[dict[str, Any]], _: Contexte) -> None:
     sortie = objets[-1]
     execution = sortie.get("execution") or {}
+    en_erreur = execution.get("audios_en_erreur")
+    non_traites = execution.get("audios_non_traites")
+    # Schéma réel de `run start --json` : ces compteurs sont des listes d'audios,
+    # vides si aucun cas ; un champ absent ou non vide est un écart.
     exiger(sortie.get("operation") == ETAT_OPERATION_TERMINEE
-           and execution.get("audios_en_erreur") == 0
-           and execution.get("audios_non_traites") == 0, "exécution non terminée sans erreur")
+           and isinstance(en_erreur, list) and not en_erreur
+           and isinstance(non_traites, list) and not non_traites,
+           "exécution non terminée sans erreur")
 
 
 def capture_identifiant(objets: list[dict[str, Any]], ctx: Contexte) -> None:
