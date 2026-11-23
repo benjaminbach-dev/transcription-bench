@@ -1,0 +1,102 @@
+name: CLI Windows (manuel)
+
+on:
+  workflow_dispatch:
+    inputs:
+      lecture:
+        description: Commandes de lecture, refus de syntaxe, chemins Windows et verrou (sans réseau ni modèle)
+        type: boolean
+        default: true
+      modele:
+        description: Un seul modèle d'essai (transcribe-cpp, Whisper GGUF Q5_K_M) par les commandes CLI
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cli-windows-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHONIOENCODING: utf-8
+  HF_HUB_DISABLE_TELEMETRY: "1"
+  HF_HUB_DISABLE_IMPLICIT_TOKEN: "1"
+  HF_HOME: ${{ github.workspace }}/data/ci/hf
+  NUMBA_CACHE_DIR: ${{ github.workspace }}/data/ci/numba
+  TB_DEPOT_PUBLIC: ${{ github.event.repository.private == false && 'true' || 'false' }}
+
+jobs:
+  lecture:
+    # Gate de publication : un job ignoré n'est jamais une preuve Windows.
+    if: inputs.lecture && github.event.repository.private == false
+    runs-on: windows-2022
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.11.8"
+          enable-cache: "false"
+      - name: Installer les seules dépendances serveur verrouillées (comme tests.yml)
+        run: uv sync --locked
+      - name: Commandes de lecture, refus de syntaxe, chemins Windows, encodage et verrou (sans réseau)
+        env:
+          UV_OFFLINE: "1"
+          UV_PYTHON_DOWNLOADS: never
+          HF_HUB_OFFLINE: "1"
+        run: uv run --locked --no-sync python scripts/ci/cli_windows.py lecture
+      - name: Conserver uniquement les rapports JSON nettoyés
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: cli-lecture
+          # Ce dossier ne contient que les rapports de ce job (runner éphémère).
+          path: data/ci/rapports/*.json
+          retention-days: 14
+          if-no-files-found: error
+
+  modele:
+    # Un seul modèle d'essai ; téléchargement explicite à l'étape dédiée ; aucun audio personnel.
+    if: inputs.modele && github.event.repository.private == false
+    runs-on: windows-2022
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.11.8"
+          enable-cache: "false"
+      - name: Installer les seules dépendances serveur verrouillées (comme tests.yml)
+        run: uv sync --locked
+      - name: Vérifier la voix système locale et créer la parole synthétique AVANT tout téléchargement
+        shell: powershell
+        run: ./scripts/ci/generer-parole.ps1
+      - name: Installer transcribe-cpp par la CLI (roue explicite, aucun poids)
+        env:
+          HF_HUB_OFFLINE: "0"
+        run: uv run --locked --no-sync python scripts/ci/cli_windows.py modele-installation
+      - name: Vérifier puis télécharger explicitement le seul GGUF d'essai par la CLI
+        env:
+          HF_HUB_OFFLINE: "0"
+        run: uv run --locked --no-sync python scripts/ci/cli_windows.py modele-telechargement
+      - name: Exécuter hors ligne par la CLI (lancement, résultats, arrêt brutal, suppression)
+        env:
+          HF_HUB_OFFLINE: "1"
+          UV_OFFLINE: "1"
+          UV_PYTHON_DOWNLOADS: never
+        run: uv run --locked --no-sync python scripts/ci/cli_windows.py modele-execution
+      - name: Conserver uniquement les rapports JSON nettoyés
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: cli-modele
+          # Ce dossier ne contient que les rapports de ce job (runner éphémère).
+          path: data/ci/rapports/*.json
+          retention-days: 14
+          if-no-files-found: error

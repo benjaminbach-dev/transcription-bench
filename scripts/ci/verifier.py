@@ -79,6 +79,11 @@ CHAMPS_VERIFICATION = {
         "threads_appliques", "cpu_relu", "reglages_effectifs", "timings_natifs",
         "mode_hors_ligne_configure", "isolation_reseau_prouvee",
     }),
+    # Rapports de scripts/ci/cli_windows.py : résumé et étapes, sans sortie brute.
+    "cli": frozenset({
+        "phase", "conclusion", "resume", "etapes", "moteur", "revision", "versions",
+        "taille_totale_octets", "parole", "terminaison", "cpu_relu",
+    }),
 }
 
 
