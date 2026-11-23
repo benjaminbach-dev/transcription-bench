@@ -119,7 +119,7 @@ bouton du serveur après vérification de compatibilité.
 ## Parcours à froid du guide utilisateur — 2026-11-13
 
 PC de test Linux déclaré (Manjaro x86_64, noyau 6.18.55-1-MANJARO, T14s,
-Ryzen 7 PRO 6850U, 32 Gio de RAM), lot accepté par le propriétaire :
+Ryzen 7 PRO 6850U, 30 Gio de RAM), lot accepté par le propriétaire :
 transcribe.cpp, `handy-computer/whisper-large-v3-turbo-gguf` fichier
 `whisper-large-v3-turbo-Q5_K_M.gguf`, audio synthétique, copie vierge du
 dépôt (archive ZIP de 1,1 Mo téléchargée depuis GitHub, décompressée), dossier
