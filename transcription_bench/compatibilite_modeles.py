@@ -69,7 +69,7 @@ Règles implémentées ici, appelées par `DeclarationAdaptateur.regle_compatibi
   une architecture déclarée mais non qualifiée reste refusée comme en 5.1.
 - `llama-cpp-gguf` (llama.cpp) : même lecture de l'en-tête que transcribe.cpp
   (`general.architecture` du seul fichier choisi, lecteur borné). L'architecture
-  doit figurer dans la liste blanche provisoire `ARCHITECTURES_LLAMA_CPP`, c'est-à-dire
+  doit figurer dans la liste blanche définitive `ARCHITECTURES_LLAMA_CPP`, c'est-à-dire
   disposer d'un format de conversation local. Les fichiers auxiliaires (`mmproj-*`,
   `mtp-*`, architecture `clip`) ne sont jamais des variantes et sont refusés, comme
   les dépôts à accès restreint (`depot_restreint`, même avec un jeton). Ces deux
@@ -88,16 +88,17 @@ confirmer au jalon PC :
 
 Ces restrictions sont documentaires et ne constituent pas une qualification PC.
 
-État de qualification, à ne pas confondre avec un format reconnu : les trois
-moteurs réels déclarent leurs familles `qualifiee=False` et aucune durée native
-n'est annoncée. Une famille reconnue mais non qualifiée est donc refusée à
+État de qualification, à ne pas confondre avec un format reconnu : la posture
+par défaut est le refus. Une famille reconnue mais non qualifiée est refusée à
 l'ajout avec la raison stable `famille-non-qualifiee`, qui reste distincte des
 refus de format (`fichiers-manquants`, `whisper-non-converti`,
 `poids-safetensors-absents`, `famille-hors-perimetre`, ...) et laisse `famille`
 renseignée. Cette garde applique D9/D10 : une architecture non vérifiée reste
-refusée à l'ajout. Les tests couvrent les chemins de succès avec des
-déclarations synthétiques `qualifiee=True` ; aucune déclaration fournie ne
-change de qualification.
+refusée à l'ajout. Les déclarations fournies ne portent `qualifiee=True` que pour
+leurs familles validées sur PC Linux (transcription : tâches 8.x ; llama.cpp :
+tâche 6.2, `engines/declarations.py`). Les tests couvrent les chemins de succès avec
+des déclarations synthétiques `qualifiee=True`, et le refus avec une copie non
+qualifiée.
 
 Les listes de fichiers ci-dessous sont documentaires (documentation
 faster-whisper v1.2.1, arborescences publiques `openai/whisper-large-v3-turbo` et
@@ -154,21 +155,21 @@ FAMILLES_PAR_ARCHITECTURE_GGUF = {
 #: Famille déclarée par llama.cpp pour toutes ses architectures admises.
 FAMILLE_LLAMA_CPP = "llm-gguf"
 
-#: PROVISOIRE : architectures GGUF (`general.architecture`) admises pour llama.cpp,
-#: c'est-à-dire disposant d'un format de conversation maintenu localement (design
-#: D3 du change `ajouter-bench-extraction`). La liste sera figée seulement après la
-#: qualification Linux sur PC (tâche 6.2) ; toute autre architecture est refusée.
-#: Provenance, par métadonnées publiques seulement (aucun poids lu) :
-#: - `mistral3` : `gguf.architecture` de mistralai/Ministral-3-3B-Instruct-2512-GGUF
-#:   (API Hugging Face). Le 8B, même publication, n'a pas été relu directement ;
-#:   le registre llama.cpp (`LLM_ARCH_MISTRAL3`) confirme le nom.
-#: - `qwen35` : `gguf.architecture` de unsloth/Qwen3.5-4B-GGUF (API Hugging Face) ;
-#:   le 9B n'a pas été relu directement. Registre llama.cpp : `LLM_ARCH_QWEN35`.
-#: - `granite` : `gguf.architecture` de ibm-granite/granite-4.2-8b-GGUF (API Hugging
-#:   Face), cohérente avec `model_type` « granite » du config.json d'origine (dense).
-#: - `gemma4` : `gguf.architecture` de ggml-org/gemma-4-E4B-it-GGUF (API Hugging Face).
-#: Le nom d'architecture de chaque en-tête réel reste à confirmer en
-#: qualification (tâche 6.2).
+#: DÉFINITIVE (tâche 6.2, 2026-11-23) : architectures GGUF (`general.architecture`)
+#: admises pour llama.cpp, c'est-à-dire disposant d'un format de conversation local
+#: (design D3 du change `ajouter-bench-extraction`) et qualifiées sur le PC de test
+#: Linux déclaré. Toute autre architecture est refusée.
+#: Provenance (preuves locales sous data/feasibility/llama-cpp/qualification/) :
+#: - `mistral3` : Ministral-3-3B et 8B, lues dans les en-têtes des GGUF téléchargés
+#:   (preuves-6-2.json) ; qualifiées en 6.3 au format v1, rendu non rejoué en v2
+#:   (le commit 0e3ebdd ne modifie que les formats qwen35 et granite) ;
+#: - `qwen35` : Qwen3.5-4B et 9B, qualifiées en 6.3 puis rejouées en 6.3b au format v2
+#:   (2026-11-23) ;
+#: - `granite` : Granite 4.2 8B, qualifiée en 6.3 puis rejouée en 6.3b au format v2
+#:   (2026-11-23) ;
+#: - `gemma4` : gemma-4-E4B-it, lue en 6.2 et qualifiée en 6.3 au format v1 (non
+#:   rejouée en v2 ; le commit 0e3ebdd ne modifie pas son format).
+#: Qualification Linux uniquement ; Windows non vérifié (tâche 6.4).
 ARCHITECTURES_LLAMA_CPP: tuple[str, ...] = ("mistral3", "qwen35", "granite", "gemma4")
 
 #: Préfixes des fichiers auxiliaires refusés pour llama.cpp (projecteurs multimodaux
@@ -941,7 +942,7 @@ def _regle_llama_cpp(
     Le refus d'un dépôt restreint précède toute lecture de fichier. Les
     auxiliaires sont refusés par leur nom, puis par leur architecture `clip` lue
     dans l'en-tête du seul fichier retenu. Une architecture hors de la liste blanche
-    provisoire est refusée en nommant l'architecture lue.
+    est refusée en nommant l'architecture lue.
     """
     if depot_restreint:
         raise _Refus(RAISON_DEPOT_RESTREINT, MESSAGE_DEPOT_RESTREINT)
@@ -993,7 +994,7 @@ def _regle_llama_cpp(
         raise _Refus(
             RAISON_ARCHITECTURE_NON_ADMISE,
             f"architecture {architecture!r} lue dans l'en-tête de {choisi!r} absente "
-            "de la liste blanche provisoire de llama.cpp "
+            "de la liste blanche de llama.cpp "
             f"({', '.join(ARCHITECTURES_LLAMA_CPP)}) : seules les architectures "
             "disposant d'un format de conversation local sont admises"
             + _mention_moteur_suggere(architecture, moteur_suggere),

@@ -48,11 +48,24 @@ Vérification documentaire par l'API publique Hugging Face le 2026-11-19 (métad
 | 16 Go | `ibm-granite/granite-4.2-8b-GGUF` | `granite-4.2-8b-Q4_K_M.gguf` | 5,35 Go | `93f3f6a8…` | Apache-2.0 | libre |
 | 16 Go | `ggml-org/gemma-4-E4B-it-GGUF` | `gemma-4-E4B-it-Q8_0.gguf` | 8,03 Go | `8903cb40…` | Apache-2.0 | libre |
 
-Les révisions indiquées sont celles du design et n'ont pas été vérifiées comme complètes dans ce relevé. Le palier est une recommandation documentaire (poids + contexte + système), pas une règle du programme.
+Les révisions ci-dessus sont celles du design. Les révisions **complètes** ont été
+vérifiées lors du téléchargement des six fichiers (tâche 6.2, en-têtes GGUF lus,
+`preuves-6-2.json`) et concordent avec les préfixes du design :
+
+| Architecture | Dépôt | Fichier | Révision complète vérifiée |
+|---|---|---|---|
+| `mistral3` | `mistralai/Ministral-3-3B-Instruct-2512-GGUF` | `Ministral-3-3B-Instruct-2512-Q8_0.gguf` | `eb599d408350ea2bb60452cb86be7c7b2fc28227` |
+| `qwen35` | `unsloth/Qwen3.5-4B-GGUF` | `Qwen3.5-4B-Q4_K_M.gguf` | `e87f176479d0855a907a41277aca2f8ee7a09523` |
+| `mistral3` | `mistralai/Ministral-3-8B-Instruct-2512-GGUF` | `Ministral-3-8B-Instruct-2512-Q4_K_M.gguf` | `0102285ad796bd99af90f58de616092e5630e970` |
+| `qwen35` | `unsloth/Qwen3.5-9B-GGUF` | `Qwen3.5-9B-Q4_K_M.gguf` | `3885219b6810b007914f3a7950a8d1b469d598a5` |
+| `granite` | `ibm-granite/granite-4.2-8b-GGUF` | `granite-4.2-8b-Q4_K_M.gguf` | `93f3f6a8938ee922b784cf4e5b4203cd3428df8f` |
+| `gemma4` | `ggml-org/gemma-4-E4B-it-GGUF` | `gemma-4-E4B-it-Q8_0.gguf` | `8903cb408c7df39cde2ed15fac397e6d7be92951` |
+
+Le palier est une recommandation documentaire (poids + contexte + système), pas une règle du programme.
 
 **Modèles écartés.** MedGemma : accès restreint, entraînement majoritairement anglophone. LFM2.5 : licence limitée selon le chiffre d'affaires. EuroLLM-22B : trop lourd pour le palier 16 Go.
 
-**Qualification réelle.** Une qualification a eu lieu sur un PC de test Linux le 2026-11-20 (tasks.md, groupe 6) avec les six modèles et trois transcriptions des audios Gemini existants. Les preuves locales consignent six modèles chargés, 18 sorties structurellement conformes et les mesures RAM sur ce PC. Cela ne constitue pas une validation clinique et ne préjuge ni de la qualité médicale des extractions, ni des performances sur d'autres machines. La liste blanche des architectures reste provisoire tant que la qualification n'est pas close. Qualification Windows non vérifiée.
+**Qualification réelle.** Une qualification a eu lieu sur un PC de test Linux le 2026-11-20 (tasks.md, groupe 6) avec les six modèles et trois transcriptions des audios Gemini existants. Les preuves locales consignent six modèles chargés, 18 sorties structurellement conformes et les mesures RAM sur ce PC. Cela ne constitue pas une validation clinique et ne préjuge ni de la qualité médicale des extractions, ni des performances sur d'autres machines. Le 2026-11-23, Qwen3.5-4B, Qwen3.5-9B et Granite 4.2 8B ont été rejoués au format de conversation v2 (neuf sorties structurellement conformes, `preuves-6-3b.json`). La liste blanche des architectures est définitive depuis la tâche 6.2 : `mistral3`, `qwen35`, `granite`, `gemma4` (`preuves-6-2b.json`). Limites : pour Qwen, l'empreinte du gabarit embarqué diffère de la référence publique sans explication ; Granite est identique à sa référence. Qualification Windows non vérifiée.
 
 **Moteur d'extraction.** llama-cpp-python 0.3.36 (licence MIT), roues CPU précompilées Linux x64 et Windows x64 depuis l'index du projet (`https://abetlen.github.io/llama-cpp-python/whl/cpu/`).
 

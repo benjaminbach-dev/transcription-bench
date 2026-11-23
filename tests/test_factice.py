@@ -42,6 +42,7 @@ from engines.declarations import (
     DeclarationAdaptateur,
     Famille,
     declarations_fournies,
+    motif_famille_non_executable,
 )
 from engines.mesures_systeme import (
     PROVENANCE_REELLE,
@@ -303,10 +304,18 @@ class DeclarationFacticeTest(unittest.TestCase):
         # à ne demander aucune qualification ni aucun modèle.
         registre = RegistreMoteurs()
         for declaration in declarations_fournies():
-            # llama-cpp n'est pas encore qualifié sur PC (tâches 6.x).
-            if declaration.factice or declaration.identifiant == "llama-cpp":
+            if declaration.factice:
                 continue
             self.assertTrue(declaration.familles_qualifiees)
+            if declaration.identifiant == "llama-cpp":
+                # Contrôle de l'état livré : la famille réelle est qualifiée (tâche 6.2)
+                # et n'a aucun motif d'exécution en extraction.
+                for famille in declaration.familles:
+                    self.assertIsNone(
+                        motif_famille_non_executable(
+                            declaration, famille, TASK_EXTRACTION
+                        )
+                    )
             registre.enregistrer(
                 dataclasses.replace(
                     declaration,

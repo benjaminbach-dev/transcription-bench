@@ -2608,32 +2608,26 @@ class ExtractionIsolementTest(unittest.TestCase):
         self.assertEqual(resultat.returncode, 0, resultat.stderr)
         self.assertEqual(resultat.stdout.strip(), "ok")
 
-    def test_lancement_avec_registre_fourni_refuse_famille_non_qualifiee(self) -> None:
-        # Le vrai registre est utilisé : llm-gguf n'est pas qualifiée, donc refusée
-        # avant tout import d'adaptateur (aucune bibliothèque de moteur chargée).
+    def test_refus_famille_non_qualifiee_avant_tout_import_d_adaptateur(self) -> None:
+        # Éprouvette : copie non qualifiée de la déclaration réelle llama-cpp. La
+        # famille est refusée avant tout chargement d'adaptateur (code 3, stdout vide).
         chemin = ecrire_job_extraction(
             self.dossier,
             [("a.wav", "Texte.")],
             moteur="llama-cpp",
             famille="llm-gguf",
         )
-        resultat = subprocess.run(
-            [
-                sys.executable,
-                str(RACINE_PROJET / "engines" / "runner_extraction.py"),
-                str(chemin),
-            ],
-            cwd=self.dossier,
-            env={**os.environ, "PYTHONIOENCODING": "utf-8"},
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            timeout=60,
-            check=False,
-        )
-        self.assertEqual(resultat.returncode, 3, resultat.stderr)
-        self.assertEqual(resultat.stdout, "")
-        self.assertIn("non qualifiée", resultat.stderr)
+        registre = registre_non_qualifie("llama-cpp")
+        with mock.patch(
+            "engines.runner_extraction.creer_registre_fourni", lambda: registre
+        ), mock.patch.object(registre, "charger_adaptateur") as charger, redirect_stdout(
+            io.StringIO()
+        ) as sortie, redirect_stderr(io.StringIO()) as erreurs:
+            code = main_extraction([str(chemin)])
+        self.assertEqual(code, 3, erreurs.getvalue())
+        self.assertEqual(sortie.getvalue(), "")
+        self.assertIn("non qualifiée", erreurs.getvalue())
+        charger.assert_not_called()
 
 
 if __name__ == "__main__":

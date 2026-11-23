@@ -484,6 +484,12 @@ DECLARATION_LLAMA_CPP = DeclarationAdaptateur(
         Famille(
             "llm-gguf",
             "LLM GGUF",
+            # Qualifiée sur le PC de test Linux déclaré (tâche 6.2) : preuves 6.1 et
+            # 6.2 (2026-11-20), 6.3 (2026-11-20), rejeu 6.3b (2026-11-23), sous
+            # data/feasibility/llama-cpp/qualification/. Liste blanche définitive des
+            # architectures : transcription_bench/compatibilite_modeles.py. Windows x64
+            # non vérifié (tâche 6.4 : CI non étendue).
+            qualifiee=True,
             task=TASK_EXTRACTION,
             reglages=(
                 Reglage(

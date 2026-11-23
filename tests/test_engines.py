@@ -14,7 +14,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, replace
 from pathlib import Path
 
 from engines.declarations import (
@@ -43,9 +43,6 @@ from transcription_bench.paths import RACINE_PROJET
 
 MODULE_ADAPTATEUR_DE_TEST = "tests.adaptateur_de_test"
 MODULE_MOTEUR_FACTICE = "moteur_factice_stub"
-#: Moteur dont la validation PC n'a pas encore eu lieu (tâches 6.x) : toutes ses
-#: familles restent non qualifiées, comme celles du moteur factice.
-MOTEUR_NON_QUALIFIE = "llama-cpp"
 
 PAQUETS_INTERDITS = (
     "av",
@@ -135,7 +132,7 @@ class DeclarationsFourniesTest(unittest.TestCase):
         for declaration in declarations_fournies():
             with self.subTest(moteur=declaration.identifiant):
                 self.assertTrue(declaration.familles)
-                if declaration.factice or declaration.identifiant == MOTEUR_NON_QUALIFIE:
+                if declaration.factice:
                     self.assertEqual(declaration.familles_qualifiees, ())
                     for famille in declaration.familles:
                         self.assertFalse(famille.qualifiee)
@@ -149,11 +146,12 @@ class DeclarationsFourniesTest(unittest.TestCase):
                 )
                 for famille in declaration.familles:
                     self.assertTrue(famille.qualifiee)
-                    if (declaration.identifiant, famille.identifiant) == (
-                        "transcribe-cpp",
-                        "qwen3-asr",
+                    if (declaration.identifiant, famille.identifiant) in (
+                        ("transcribe-cpp", "qwen3-asr"),
+                        ("llama-cpp", "llm-gguf"),
                     ):
-                        # Aucune durée native prouvée (tâche 8.2).
+                        # Aucune durée native prouvée (tâche 8.2 ; llama.cpp : temps
+                        # natifs non consignés, tâche 6.3).
                         self.assertIsNone(famille.duree_native)
                     else:
                         self.assertIsNotNone(famille.duree_native)
@@ -373,16 +371,22 @@ class TachesTest(unittest.TestCase):
         self.assertIsNotNone(motif_inverse)
         self.assertIn("transcription", motif_inverse)
 
-    def test_famille_llama_cpp_refusee_en_transcription_puis_non_qualifiee(self) -> None:
+    def test_famille_llama_cpp_refusee_en_transcription_puis_qualifiee_en_extraction(
+        self,
+    ) -> None:
         llama = creer_registre_fourni().obtenir("llama-cpp")
         famille = llama.familles[0]
 
         motif_transcription = motif_famille_non_executable(llama, famille)
         self.assertIn("extraction", motif_transcription)
-        motif_extraction = motif_famille_non_executable(
-            llama, famille, TASK_EXTRACTION
+        # Famille qualifiée sur PC (tâche 6.2) : aucun motif en extraction.
+        self.assertIsNone(motif_famille_non_executable(llama, famille, TASK_EXTRACTION))
+        # Garde-fou conservé : une copie non qualifiée refuse en extraction.
+        non_qualifiee = replace(famille, qualifiee=False, duree_native=None)
+        motif_non_qualifiee = motif_famille_non_executable(
+            llama, non_qualifiee, TASK_EXTRACTION
         )
-        self.assertIn("non qualifiée", motif_extraction)
+        self.assertIn("non qualifiée", motif_non_qualifiee)
 
 
 class ValidationDeclarationTest(unittest.TestCase):

@@ -69,6 +69,7 @@ from engines.declarations import (
     DECLARATION_FACTICE,
     DeclarationAdaptateur,
     Famille,
+    declarations_fournies,
 )
 from engines.mesures_systeme import PROVENANCE_REELLE
 from engines.registre import RegistreMoteurs
@@ -3342,8 +3343,27 @@ class ExtractCommandTest(CommandTestCase):
 
     # -- outillage -----------------------------------------------------------
 
+    def registre_llama_non_qualifie(self) -> RegistreMoteurs:
+        """Registre fourni dont la seule famille llama.cpp est non qualifiée.
+
+        Éprouvette du refus « famille non qualifiée » : la famille réelle est
+        qualifiée depuis la tâche 6.2, sans que ce refus ne cesse d'être couvert.
+        """
+        registre = RegistreMoteurs()
+        for declaration in declarations_fournies():
+            if declaration.identifiant == self.LLAMA_ENGINE:
+                declaration = replace(
+                    declaration,
+                    familles=tuple(
+                        replace(famille, qualifiee=False, duree_native=None)
+                        for famille in declaration.familles
+                    ),
+                )
+            registre.enregistrer(declaration)
+        return registre
+
     def write_llama_model(self) -> str:
-        """Modèle GGUF local prêt sur disque, non qualifié sur PC donc non exécutable."""
+        """Modèle GGUF local prêt sur disque, famille llm-gguf qualifiée (exécutable)."""
         key = cle_stockage(self.LLAMA_REPO, self.LLAMA_COMMIT, self.LLAMA_FILE)
         model_dir = self.base / paths.NOM_DOSSIER_MODELES / self.LLAMA_ENGINE / key
         files_dir = model_dir / NOM_DOSSIER_FICHIERS
@@ -3466,11 +3486,12 @@ class ExtractCommandTest(CommandTestCase):
         self.assertEqual(factice["identifiant"], LIBELLE_MODELE_FACTICE)
         # Le moteur factice ne déclare aucun réglage : la liste est vide, jamais inventée.
         self.assertEqual(factice["reglages"], [])
-        # Modèle GGUF local : réglages et défauts de llama.cpp, non exécutable avec son motif.
+        # Modèle GGUF local : réglages et défauts de llama.cpp, exécutable (famille
+        # llm-gguf qualifiée sur PC, tâche 6.2) : aucun motif de refus.
         llama = next(m for m in data["models"] if m["moteur"] == self.LLAMA_ENGINE)
         self.assertEqual(llama["reference"], f"{self.LLAMA_ENGINE}/{self.llama_key}")
-        self.assertFalse(llama["executable"])
-        self.assertIn("non qualifiée sur PC", llama["motif_non_executable"])
+        self.assertTrue(llama["executable"])
+        self.assertIsNone(llama["motif_non_executable"])
         self.assertEqual(
             [(r["nom"], r["defaut"], r["type_valeur"]) for r in llama["reglages"]],
             [("contexte", 16384, "entier"), ("sortie_max", 4096, "entier")],
@@ -3512,7 +3533,7 @@ class ExtractCommandTest(CommandTestCase):
         self.assertIn("Modèles d'extraction :", stdout)
         self.assertIn(self.EXTRACTION_REFERENCE, stdout)
         self.assertIn("modèle synthétique (moteur factice)", stdout)
-        self.assertIn("NON EXÉCUTABLE", stdout)
+        self.assertNotIn("NON EXÉCUTABLE", stdout)
         self.assertIn("réglage contexte (Contexte) : 16384", stdout)
         self.assertIn("réglage sortie_max (Sortie maximale) : 4096", stdout)
         self.assertIn("Grilles :", stdout)
@@ -3621,7 +3642,20 @@ class ExtractCommandTest(CommandTestCase):
         for libelle, argv, motif in cas:
             for commande, options in (("check", argv), ("start", ["extract", "start", *argv[2:]])):
                 with self.subTest(refus=libelle, commande=commande):
-                    code, stdout, stderr = self.run_command(options)
+                    # Éprouvette, limitée au scénario qui l'exige : famille llama.cpp
+                    # non qualifiée, pour que le refus « modèle non exécutable » reste
+                    # couvert ; les autres scénarios gardent le registre livré.
+                    contexte_registre = (
+                        mock.patch.object(
+                            composition,
+                            "creer_registre_fourni",
+                            self.registre_llama_non_qualifie,
+                        )
+                        if libelle == "modèle non exécutable"
+                        else contextlib.nullcontext()
+                    )
+                    with contexte_registre:
+                        code, stdout, stderr = self.run_command(options)
 
                     self.assertEqual((code, stdout), (CODE_REFUS, ""))
                     self.assertIn(DIAGNOSTIC_PREFIX, stderr)

@@ -336,6 +336,7 @@ class ReglagesEtVerrousTest(unittest.TestCase):
             ("transcribe-cpp", "qwen3-asr"),
             ("transformers", "whisper"),
             ("transformers", "parakeet-tdt"),
+            ("llama-cpp", "llm-gguf"),
         }
         obtenus = set()
         for declaration in declarations_fournies():
@@ -345,11 +346,6 @@ class ReglagesEtVerrousTest(unittest.TestCase):
                     all(famille.duree_native is None for famille in declaration.familles)
                 )
                 continue
-            if declaration.identifiant == "llama-cpp":
-                # Qualification PC pas encore faite (tâches 6.x) : aucune
-                # famille qualifiée, donc aucune durée native.
-                self.assertEqual(declaration.familles_qualifiees, ())
-                continue
             for famille in declaration.familles:
                 self.assertTrue(famille.qualifiee)
                 obtenus.add((declaration.identifiant, famille.identifiant))
@@ -358,6 +354,15 @@ class ReglagesEtVerrousTest(unittest.TestCase):
                     "qwen3-asr",
                 ):
                     # Aucune durée native prouvée (tâche 8.2) : fenêtres de 30 s.
+                    self.assertIsNone(famille.duree_native)
+                    continue
+                if (declaration.identifiant, famille.identifiant) == (
+                    "llama-cpp",
+                    "llm-gguf",
+                ):
+                    # Extraction (tâche 6.3) : aucune durée native consignée ; le
+                    # fenêtrage de 30 s ne s'applique pas, le runner traite chaque
+                    # source en un seul appel.
                     self.assertIsNone(famille.duree_native)
                     continue
                 self.assertIsNotNone(famille.duree_native)

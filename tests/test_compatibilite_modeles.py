@@ -1184,7 +1184,7 @@ class LlamaCppCompatibiliteTest(AssertionsCompatibilite):
                 self.assertEqual(resultat.fichiers, ("modele-q8_0.gguf",))
                 self.assertEqual(journal, ["modele-q8_0.gguf"])
 
-    def test_liste_blanche_provisoire_sans_clip_ni_qwen3(self) -> None:
+    def test_liste_blanche_definitive_sans_clip_ni_qwen3(self) -> None:
         self.assertEqual(
             ARCHITECTURES_LLAMA_CPP, ("mistral3", "qwen35", "granite", "gemma4")
         )
@@ -1293,7 +1293,7 @@ class LlamaCppCompatibiliteTest(AssertionsCompatibilite):
                 )
                 refus = self.assertRefus(resultat, RAISON_ARCHITECTURE_NON_ADMISE)
                 self.assertIn(f"{architecture!r}", refus.message)
-                self.assertIn("liste blanche provisoire", refus.message)
+                self.assertIn("liste blanche de llama.cpp", refus.message)
 
     def test_depot_restreint_refuse_avant_lecture_meme_avec_jeton(self) -> None:
         journal: list[str] = []
@@ -1375,10 +1375,25 @@ class LlamaCppCompatibiliteTest(AssertionsCompatibilite):
         self.assertIn("'whisper'", refus.message)
         self.assertEqual(refus.moteur_suggere, "transcribe-cpp")
 
-    def test_declaration_llama_reelle_reste_non_qualifiee(self) -> None:
-        # Aucun modèle n'est accepté à l'ajout tant que la famille n'est pas qualifiée.
+    def test_declaration_llama_reelle_qualifiee_accepte_architecture_admise(
+        self,
+    ) -> None:
+        # Famille llm-gguf qualifiée sur PC Linux (tâche 6.2) : la déclaration de
+        # production accepte une architecture de la liste blanche.
         resultat = verifier_compatibilite(
             DECLARATION_LLAMA_CPP,
+            ("modele-q8_0.gguf",),
+            lecteur_entete_gguf=lecteur_gguf_de(octets_gguf("qwen35")),
+        )
+        self.assertAccepte(resultat, "llm-gguf")
+        self.assertEqual(resultat.fichiers, ("modele-q8_0.gguf",))
+
+    def test_copie_non_qualifiee_de_la_declaration_llama_refusee_a_l_ajout(
+        self,
+    ) -> None:
+        # Garde-fou « famille non qualifiée » conservé sur la déclaration réelle.
+        resultat = verifier_compatibilite(
+            declaration_non_qualifiee(DECLARATION_LLAMA_CPP),
             ("modele-q8_0.gguf",),
             lecteur_entete_gguf=lecteur_gguf_de(octets_gguf("qwen35")),
         )
@@ -1442,25 +1457,26 @@ class QualificationProductionTest(AssertionsCompatibilite):
         # Les familles de production sont qualifiées sur le PC Linux de test
         # (jalon 0 et tâches 8.x) ; la qualification Windows reste due à la CI.
         for declaration in declarations_fournies():
-            # llama-cpp n'est pas encore qualifié sur PC (tâches 6.x).
-            if declaration.factice or declaration.identifiant == "llama-cpp":
+            if declaration.factice:
                 continue
             for famille in declaration.familles:
                 with self.subTest(
                     moteur=declaration.identifiant, famille=famille.identifiant
                 ):
                     self.assertTrue(famille.qualifiee)
-                    if (declaration.identifiant, famille.identifiant) == (
-                        "transcribe-cpp",
-                        "qwen3-asr",
+                    if (declaration.identifiant, famille.identifiant) in (
+                        ("transcribe-cpp", "qwen3-asr"),
+                        ("llama-cpp", "llm-gguf"),
                     ):
-                        # Aucune durée native prouvée (tâche 8.2).
+                        # Aucune durée native prouvée (tâche 8.2 ; llama.cpp : temps
+                        # natifs non consignés, tâche 6.3).
                         self.assertIsNone(famille.duree_native)
                     else:
                         self.assertIsNotNone(famille.duree_native)
         self.assertTrue(DECLARATION_FASTER_WHISPER.familles_qualifiees)
         self.assertTrue(DECLARATION_TRANSCRIBE_CPP.familles_qualifiees)
         self.assertTrue(DECLARATION_TRANSFORMERS.familles_qualifiees)
+        self.assertTrue(DECLARATION_LLAMA_CPP.familles_qualifiees)
 
 
 class ResultatCompatibiliteTest(unittest.TestCase):

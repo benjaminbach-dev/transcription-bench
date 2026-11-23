@@ -21,9 +21,11 @@ une transcription médicalement correcte : aucun résultat produit ici ne doit
 | Validation Windows | CI exécutée : suite de tests, installation des trois moteurs et inférences courtes des quatre combinaisons passées sous `windows-2022` ; sous-commandes CLI, console interactive et coupure réseau non couvertes |
 
 Les familles exécutables sont Whisper pour les trois moteurs, Parakeet TDT
-pour Transformers et Qwen3-ASR (sans horodatage) pour transcribe.cpp ; Qwen3-ASR
-n'est qualifiée que sous Linux (aucun job CI). Les autres architectures GGUF restent non qualifiées dans
-cette version. Les timings natifs transcribe.cpp sont conservés et affichés par
+pour Transformers, Qwen3-ASR (sans horodatage) pour transcribe.cpp et la famille
+`llm-gguf` de llama.cpp (extraction) pour les architectures de la liste blanche
+(`mistral3`, `qwen35`, `granite`, `gemma4`) ; Qwen3-ASR et `llm-gguf` ne sont
+qualifiées que sous Linux (aucun job CI). Les autres architectures GGUF sont
+refusées à l'ajout. Les timings natifs transcribe.cpp sont conservés et affichés par
 appel, avec leur unité, sans addition ni confusion avec les mesures du runner.
 Le parcours réel Linux a été vérifié avec les environnements déjà présents,
 resynchronisés hors ligne sans changement de paquet, et les modèles locaux
@@ -534,9 +536,10 @@ tokens spéciaux, sans moteur de gabarits. Le gabarit embarqué est lu comme
 texte lors de la qualification pour vérifier la correspondance, et son SHA-256
 est consigné avec le résultat. Le mode raisonnement éventuel est désactivé.
 
-Liste blanche provisoire des architectures (fixée après qualification) :
-`mistral3`, `qwen35`, `granite`, `gemma4`. Une architecture sans format local
-n'est pas admise.
+Liste blanche définitive des architectures (fixée à la tâche 6.2, qualification
+Linux du 2026-11-20 au 2026-11-23) : `mistral3`, `qwen35`, `granite`, `gemma4`.
+Une architecture sans format local n'est pas admise. Qualification Linux seulement ;
+Windows non vérifié (tâche 6.4).
 
 ### Grammaire et sortie contrainte
 
