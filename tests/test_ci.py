@@ -463,6 +463,33 @@ class CliWindowsDriverTests(DriverCliBase):
         self.assertGreaterEqual(resultat["processus_arbre"], 2)
         self.assertEqual(resultat["survivants"], 0)
 
+    def test_survivant_transitoire_extincte_dans_la_fenetre(self):
+        # Terminaison asynchrone : un processus encore en extinction deux sondes
+        # après la racine n'est pas un orphelin ; la fenêtre bornée l'absorbe.
+        proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+        self.addCleanup(lambda: proc.poll() is None and proc.kill())
+        appels = {"n": 0}
+
+        def transitoire(pid, creation):
+            appels["n"] += 1
+            return appels["n"] < 3
+
+        with patch.object(cli, "_survit", side_effect=transitoire):
+            resultat = cli.arreter_arbre(proc)
+        self.assertEqual(resultat["survivants"], 0)
+        self.assertGreaterEqual(appels["n"], 3)
+        self.assertGreaterEqual(resultat["delai_reap_ms"], 0)
+
+    def test_orphinel_reel_reste_compte_apres_la_fenetre(self):
+        # Un survivant qui persiste au-delà de la fenêtre reste un écart.
+        proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+        self.addCleanup(lambda: proc.poll() is None and proc.kill())
+        with patch.object(cli, "_survit", return_value=True), \
+             patch.object(cli, "DELAI_EXTINCTION_S", 0.2):
+            resultat = cli.arreter_arbre(proc)
+        self.assertEqual(resultat["survivants"], 1)
+        self.assertGreaterEqual(resultat["delai_reap_ms"], 200)
+
     def test_interruption_observee_puis_arret_brutal(self):
         # Faux moteur : vrai processus qui affiche « Modèle chargé » puis un descendant.
         script = Path(tempfile.mkdtemp()) / "moteur_simule.py"

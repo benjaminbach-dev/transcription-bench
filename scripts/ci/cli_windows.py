@@ -76,6 +76,9 @@ DELAI_EXECUTION_S = 1200
 DELAI_CHARGEMENT_S = 900
 DELAI_SERVEUR_S = 120
 DELAI_ARRET_S = 60
+#: Fenêtre de récupération avant de compter les survivants : la terminaison Windows
+#: est asynchrone, un processus demandé à l'arrêt peut encore être en extinction.
+DELAI_EXTINCTION_S = 3
 PAUSE_APRES_CHARGEMENT_S = 2.0
 
 # Motifs fixes, relevés dans le code du programme (tests ou sorties réelles).
@@ -180,7 +183,11 @@ def arreter_arbre(proc: subprocess.Popen) -> dict[str, int]:
     """Termine le processus et ses descendants : terminaison brutale, pas un signal.
 
     Les descendants sont listés avant tout arrêt (sinon ils seraient réparentés).
-    Un survivant est un processus de même PID et même date de création encore vivant.
+    Un survivant est un processus de même PID et même date de création encore vivant
+    après la fenêtre d'extinction bornée (`DELAI_EXTINCTION_S`) : la terminaison
+    Windows étant asynchrone, un processus en cours d'extinction juste après la mort
+    de la racine n'est pas un orphelin ; `delai_reap_ms` consigne le temps d'attente
+    effectif, et un orphelin réel reste compté après la fenêtre.
     """
     processus: list[psutil.Process] = []
     if proc.poll() is None:
@@ -204,8 +211,18 @@ def arreter_arbre(proc: subprocess.Popen) -> dict[str, int]:
         code = proc.wait(timeout=DELAI_ARRET_S)
     except subprocess.TimeoutExpired:
         raise EtapeEnEcart("processus non arrêté dans le délai") from None
-    survivants = sum(1 for pid, creation in identites if _survit(pid, creation))
-    return {"code_brut": code, "processus_arbre": len(identites), "survivants": survivants}
+    debut = time.monotonic()
+    while True:
+        survivants = sum(1 for pid, creation in identites if _survit(pid, creation))
+        if survivants == 0 or time.monotonic() - debut >= DELAI_EXTINCTION_S:
+            break
+        time.sleep(0.05)
+    return {
+        "code_brut": code,
+        "processus_arbre": len(identites),
+        "survivants": survivants,
+        "delai_reap_ms": round((time.monotonic() - debut) * 1000, 1),
+    }
 
 
 def _survit(pid: int, creation: float) -> bool:
