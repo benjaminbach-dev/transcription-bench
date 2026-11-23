@@ -225,6 +225,27 @@ def attendre_fichier(chemin: Path, delai: float = DELAI_PROCESSUS) -> None:
     raise AssertionError(f"marqueur absent dans le délai imparti : {chemin}")
 
 
+def attendre_verrou_libere(base: Path, delai: float = DELAI_PROCESSUS) -> None:
+    """Attend que le système ait libéré le verrou d'instance du processus tué.
+
+    Le verrou reste tenu tant que le dernier handle du processus terminé n'est
+    pas fermé, ce qui peut arriver après le retour de `wait()` (hypothèse non
+    qualifiée sous Windows). Sonde non bloquante répétée jusqu'à une échéance,
+    sans délai fixe : une échéance dépassée échoue en nommant le verrou.
+    """
+    echeance = time.monotonic() + delai
+    while True:
+        try:
+            VerrouInstance(base).acquerir().liberer()
+            return
+        except InstanceDejaActive:
+            if time.monotonic() >= echeance:
+                raise AssertionError(
+                    f"verrou d'instance tenu {delai} s après terminaison : {base}"
+                ) from None
+            time.sleep(0.05)
+
+
 def vivant(pid: int) -> bool:
     """Vrai si le PID désigne encore un processus non zombie."""
     try:
@@ -548,6 +569,7 @@ class RecuperationTest(SessionTestCase):
 
         processus.kill()  # terminaison brutale : aucune clôture côté commande
         processus.wait(timeout=DELAI_PROCESSUS)
+        attendre_verrou_libere(self.base)
         observe: dict[str, object] = {}
 
         def action(services: DataServices, drapeau: SignalFlag) -> int:
@@ -555,10 +577,12 @@ class RecuperationTest(SessionTestCase):
             observe["moteur_vivant"] = vivant(moteur_pid)
             return 0
 
-        with contextlib.redirect_stderr(io.StringIO()):
+        erreur = io.StringIO()
+        with contextlib.redirect_stderr(erreur):
             code = run_session(self.base, action)
 
-        self.assertEqual(code, 0)
+        # Le motif d'un refus (verrou ou état antérieur) figure dans l'échec.
+        self.assertEqual(code, 0, erreur.getvalue())
         self.assertEqual(observe["etat"], ETAT_ABANDONNEE)
         self.assertFalse(observe["moteur_vivant"], "le moteur orphelin doit être terminé")
         self.assertLibre()
